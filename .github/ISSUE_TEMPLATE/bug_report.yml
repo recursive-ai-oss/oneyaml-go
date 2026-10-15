@@ -1,0 +1,35 @@
+name: Bug report
+description: The library gave a wrong result, returned a wrong error, or panicked.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A panic, a hang, or memory use out of proportion to the input is a bug, and so is an edit that changes anything but the value you set. If you think the problem is a security vulnerability, report it privately instead (see SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The module version or commit, and the Go version (`go version`).
+    validations:
+      required: true
+  - type: textarea
+    id: input
+    attributes:
+      label: Input
+      description: The smallest YAML (and patch, if any) that shows the problem.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: code
+    attributes:
+      label: Code
+      description: The calls you made, as a runnable Go program if you can.
+      render: go
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true

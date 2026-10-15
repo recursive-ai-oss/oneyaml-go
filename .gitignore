@@ -1,0 +1,44 @@
+# Public repository: allowlist.
+#
+# Everything at the top level is ignored unless it is listed below, so a new
+# file stays out of the repository until someone deliberately adds it here.
+/*
+!/.gitignore
+!/.github/
+!/go.mod
+!/go.sum
+!/*.go
+!/README.md
+!/CHANGELOG.md
+!/CONTRIBUTING.md
+!/CODE_OF_CONDUCT.md
+!/SECURITY.md
+!/LICENSE-APACHE
+!/LICENSE-MIT
+!/internal/
+!/compat/
+!/testdata/
+!/docs/
+!/bench/
+!/tools/
+
+# Never commit these anywhere in the tree.
+core
+core.[0-9]*
+vgcore.*
+*.core
+*.test
+*.out
+*.prof
+*.pprof
+cpu.*
+mem.*
+perf.data*
+testdata/fuzz/**/cache/
+.env
+.env.*
+*.pem
+*.key
+*.swp
+*~
+.DS_Store

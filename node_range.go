@@ -1,0 +1,269 @@
+package oneyaml
+
+import (
+	"strconv"
+
+	"oneyaml.dev/go/internal/cst"
+	"oneyaml.dev/go/internal/edit"
+	"oneyaml.dev/go/internal/pointer"
+)
+
+// A loop over the items or entries of a collection may edit the document it
+// walks. The edit replaces the tree, so the node numbers the loop holds mean
+// nothing afterwards; to go on, the loop needs the place of its collection as a
+// pointer, and that can only be worked out while the tree it belongs to is still
+// there. Each running loop therefore has a slot in the stream. An edit notes the
+// place of every loop whose collection is still valid before it starts (freeze),
+// moves that place along when the edit inserts or removes items of a sequence on
+// the way to it (noteEdit), and the loop finds its collection by it afterwards
+// (refind).
+//
+// The slots are a fixed array, so a loop that never edits costs no allocation.
+// A loop that finds all slots taken runs without one: it ends at the first edit.
+// A loop that is abandoned by a panic keeps its slot, which bounds what it can
+// cost; a deferred release would cost every loop, since a defer slows each
+// iteration.
+const rangeSlots = 3
+
+// rangeSlot is one running loop. id is 0 for a free slot; it tells loops apart, so
+// that a loop that ends late never frees the slot a later loop reuses.
+type rangeSlot struct {
+	id     uint32
+	epoch  uint32 // of the collection's node
+	i, doc int32  // the collection's node and document
+	kind   cst.Kind
+	st     uint8 // rangeFrozen, rangeOK
+}
+
+const (
+	rangeFrozen = 1 << iota // the place is noted in rngPath
+	rangeOK                 // and it still leads to the collection
+)
+
+// rangePath is the place of a collection: the reference tokens from the root, and
+// whether each of them indexes a sequence.
+type rangePath struct {
+	toks []string
+	seq  []bool
+}
+
+// savedRange is what a snapshot keeps of a slot whose place was already noted, so
+// that a patch that fails and is rolled back does not leave the place moved.
+type savedRange struct {
+	id   uint32
+	st   uint8
+	path rangePath
+}
+
+// watch gives the loop over n a slot. The handle it returns names the slot and the
+// loop; it is 0 when no slot is free. The ids have their top bit set, so that the
+// counter wrapping never gives a loop the id 0 of a free slot. A place left behind
+// in rngPath by an earlier loop is never read: freezeRanges writes it first.
+func (s *docStream) watch(n Node, kind cst.Kind) uint64 {
+	for i := range s.rng {
+		if e := &s.rng[i]; e.id == 0 {
+			s.rngID++
+			// Field by field: building the slot whole goes through a temporary whose
+			// vector copy waits for the narrow stores, which costs more than the loop.
+			e.id, e.epoch, e.i, e.doc, e.kind, e.st = s.rngID|1<<31, n.gen, n.i, n.doc, kind, 0
+			return uint64(i+1)<<32 | uint64(e.id)
+		}
+	}
+	return 0
+}
+
+// slot returns the slot a handle names, or nil if the loop no longer has it.
+func (s *docStream) slot(h uint64) *rangeSlot {
+	if h == 0 {
+		return nil
+	}
+	if i := int(h>>32) - 1; s.rng[i].id == uint32(h) {
+		return &s.rng[i]
+	}
+	return nil
+}
+
+// unwatch frees the slot of a loop, if it still has it. The place noted for it, if
+// any, is dropped when the slot is next used.
+func (s *docStream) unwatch(h uint64) {
+	if i := int(h>>32) - 1; i >= 0 && s.rng[i].id == uint32(h) {
+		s.rng[i].id = 0
+	}
+}
+
+// freezeRanges notes the place of the collection of each running loop, before an
+// edit changes the tree. A loop already noted is left alone, and so is one whose
+// node is already stale: its place is not known any more, and it ends.
+func (s *docStream) freezeRanges() {
+	for i := range s.rng {
+		e := &s.rng[i]
+		if e.id == 0 || e.st&rangeFrozen != 0 {
+			continue
+		}
+		e.st = rangeFrozen
+		if e.epoch != s.epoch() {
+			continue
+		}
+		n := Node{s: s, i: e.i, doc: e.doc, gen: e.epoch}
+		if toks, seq, err := n.path(true); err == nil {
+			s.es().rngPath[i] = rangePath{toks, seq}
+			e.st |= rangeOK
+		}
+	}
+}
+
+// resume is how a loop goes on after an edit made its collection stale. It finds
+// the collection of the loop again, in the edited document, and returns the epoch
+// of its nodes now together with the child at child index at, the one the loop
+// yielded last, which the loop steps on from. It fails when the loop has no slot,
+// had no place noted, or the place no longer leads to a collection of the same kind.
+func (s *docStream) resume(h uint64, at int) (gen uint32, child int32, ok bool) {
+	coll, ok := s.refind(h)
+	if !ok {
+		return 0, 0, false
+	}
+	return s.epoch(), s.childAt(coll, at), true
+}
+
+// refind finds the collection of the loop in slot h in the edited document and
+// records it in the slot as seen at the current epoch.
+func (s *docStream) refind(h uint64) (coll int32, ok bool) {
+	e := s.slot(h)
+	if e == nil || e.st != rangeFrozen|rangeOK {
+		return 0, false
+	}
+	slot := int(h>>32) - 1
+	c := edit.NewCtx(&s.tree, s.src, int(e.doc))
+	s.attach(c)
+	c.MaxAliasHops = s.cfg.limits.MaxAliasNodes
+	loc, err := c.Resolve(s.ed.rngPath[slot].toks, false)
+	if err != nil || loc.Node == 0 || s.tree.Nodes[loc.Node].Kind != e.kind {
+		return 0, false
+	}
+	e.i, e.epoch, e.st = loc.Node, s.epoch(), 0
+	s.ed.rngPath[slot] = rangePath{}
+	return loc.Node, true
+}
+
+// ranging reports whether any loop over a collection is running.
+func (s *docStream) ranging() bool {
+	return s.rng[0].id|s.rng[1].id|s.rng[2].id != 0
+}
+
+// noteEdit follows a successful edit with the places of the running loops. The
+// batched removal of keys is not noted: a loop whose key was removed finds
+// nothing there, and a key written again goes through edit.
+func (s *docStream) noteEdit(doc int, op editKindOp, ptr string) {
+	if toks, err := pointer.Parse(ptr); err == nil {
+		s.noteEditAt(doc, op, toks)
+	} else {
+		s.noteEditAt(doc, op, nil)
+	}
+}
+
+// noteEditAt moves the place of each loop whose collection the edit at toks
+// shifts, and drops the place of each loop whose collection it replaces or
+// removes. An edit below a collection leaves its place alone.
+func (s *docStream) noteEditAt(doc int, op editKindOp, toks []string) {
+	for i := range s.rng {
+		e := &s.rng[i]
+		if e.id == 0 || e.st != rangeFrozen|rangeOK || int(e.doc) != doc {
+			continue // not running, no place noted, or in another document
+		}
+		if !s.ed.rngPath[i].follow(op, toks) {
+			e.st &^= rangeOK
+		}
+	}
+}
+
+// follow moves the place p for the edit op at toks. It reports false when p no
+// longer names the collection it did, or when it cannot tell.
+func (p *rangePath) follow(op editKindOp, toks []string) bool {
+	if len(toks) == 0 {
+		return false // the root is replaced
+	}
+	if len(toks) > len(p.toks) {
+		return true // below the collection
+	}
+	d := len(toks) - 1
+	for j := 0; j < d; j++ {
+		if toks[j] != p.toks[j] {
+			return true // another branch
+		}
+	}
+	t := toks[d]
+	if !p.seq[d] {
+		return t != p.toks[d] // a mapping: the same key is replaced or removed
+	}
+	at, _ := strconv.Atoi(p.toks[d])
+	switch op {
+	case opAdd:
+		if t == "-" {
+			return true
+		}
+		idx, ok := pointer.Index(t)
+		if !ok {
+			return false
+		}
+		if idx <= at {
+			p.toks[d] = strconv.Itoa(at + 1)
+		}
+	case opRemove:
+		idx, ok := pointer.Index(t)
+		if !ok || idx == at {
+			return false
+		}
+		if idx < at {
+			p.toks[d] = strconv.Itoa(at - 1)
+		}
+	default: // set and replace put a value at an index; past the end it appends
+		if t == "-" {
+			return true
+		}
+		idx, ok := pointer.Index(t)
+		if !ok || idx == at {
+			return false
+		}
+	}
+	return true
+}
+
+// saveRanges keeps the noted places for a snapshot; it is nil when none is noted.
+func (s *docStream) saveRanges() []savedRange {
+	var out []savedRange
+	for i := range s.rng {
+		if e := &s.rng[i]; e.id != 0 && e.st&rangeFrozen != 0 {
+			p := rangePath{seq: s.ed.rngPath[i].seq} // never changed in place
+			p.toks = append(p.toks, s.ed.rngPath[i].toks...)
+			out = append(out, savedRange{e.id, e.st, p})
+		}
+	}
+	return out
+}
+
+// restoreRanges follows a rollback. A loop whose place was noted before the
+// snapshot gets it back as it was; one whose collection is valid again was only
+// noted by the edits that were undone, and is unfrozen.
+func (s *docStream) restoreRanges(sn docSnapshot) {
+	for i := range s.rng {
+		e := &s.rng[i]
+		if e.id == 0 {
+			continue
+		}
+		done := false
+		for _, sv := range sn.rng {
+			if sv.id == e.id {
+				e.st = sv.st
+				s.es().rngPath[i] = sv.path
+				done = true
+				break
+			}
+		}
+		if !done && e.epoch == s.epoch() {
+			e.st = 0
+			if s.ed != nil {
+				s.ed.rngPath[i] = rangePath{}
+			}
+		}
+	}
+}

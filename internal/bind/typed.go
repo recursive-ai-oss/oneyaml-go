@@ -1,0 +1,834 @@
+package bind
+
+import (
+	"encoding"
+	"encoding/base64"
+	"math"
+	"math/big"
+	"reflect"
+	"strconv"
+	"time"
+
+	"oneyaml.dev/go/internal/parse"
+	"oneyaml.dev/go/internal/resolve"
+	"oneyaml.dev/go/internal/scan"
+	"oneyaml.dev/go/internal/typeinfo"
+)
+
+func (b *Binder) typeErr(ev *parse.Event, t reflect.Type, msg string) error {
+	return &Error{Kind: KindType, Offset: ev.Start, GoType: t.String(), Msg: msg}
+}
+
+// nodeName names the YAML type of a node for messages.
+func nodeName(ev *parse.Event, r *resolve.Result, tag tagClass) string {
+	switch ev.Kind {
+	case parse.SequenceStart:
+		return "!!seq"
+	case parse.MappingStart:
+		return "!!map"
+	}
+	if tag != tagNone && tag != tagOther && tag != tagNonSpecific {
+		return tagNames[tag]
+	}
+	switch r.Kind {
+	case resolve.Null:
+		return "!!null"
+	case resolve.Bool:
+		return "!!bool"
+	case resolve.Int:
+		return "!!int"
+	case resolve.Float:
+		return "!!float"
+	}
+	return "!!str"
+}
+
+func (b *Binder) mismatch(ev *parse.Event, t reflect.Type, name string, text []byte) error {
+	msg := "cannot unmarshal " + name
+	if ev.Kind == parse.Scalar {
+		msg += " `" + abbrev(text) + "`"
+	}
+	return b.typeErr(ev, t, msg+" into "+t.String())
+}
+
+func deref(v reflect.Value) reflect.Value {
+	for v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			v.Set(reflect.New(v.Type().Elem()))
+		}
+		v = v.Elem()
+	}
+	return v
+}
+
+// value decodes the node that starts with ev into v, which must be settable.
+func (b *Binder) value(v reflect.Value, ev *parse.Event) error {
+	for ev.Kind == parse.Alias {
+		b.expand(ev)
+		e, err := b.next()
+		if err != nil {
+			return err
+		}
+		ev = &e
+	}
+	if ok, err := b.hook(v, ev); ok || err != nil {
+		return err
+	}
+	switch ev.Kind {
+	case parse.Scalar:
+		err := b.scalarInto(v, ev)
+		if err != nil && b.cfg.Dialect == DialectV3 && b.soft(err) {
+			return nil
+		}
+		return err
+	case parse.SequenceStart:
+		return b.seqInto(v, ev)
+	case parse.MappingStart:
+		return b.mapInto(v, ev)
+	}
+	return b.syntax(ev.Start, "syntax", "unexpected "+ev.Kind.String())
+}
+
+var (
+	byteType    = reflect.TypeFor[byte]()
+	timeLayouts = buildTimeLayouts()
+)
+
+func buildTimeLayouts() []string {
+	var out []string
+	for _, sep := range []string{"T", "t", " "} {
+		for _, zone := range []string{"Z07:00", "Z07", " Z07:00", " Z07", ""} {
+			out = append(out, "2006-1-2"+sep+"15:4:5"+zone)
+		}
+	}
+	return append(out, "2006-1-2")
+}
+
+func parseTimestamp(text string) (time.Time, bool) {
+	for _, l := range timeLayouts {
+		if t, err := time.Parse(l, text); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func (b *Binder) scalarInto(v reflect.Value, ev *parse.Event) error {
+	if b.cfg.Dialect == DialectV3 {
+		return b.scalarIntoV3(v, ev)
+	}
+	var tag tagClass
+	if ev.HasTag() {
+		var err error
+		if tag, err = b.tagOf(ev); err != nil {
+			return err
+		}
+	}
+	text, err := b.scalar(ev)
+	if err != nil {
+		return err
+	}
+	r, ok := classify(text, ev.Style, tag)
+	if !ok {
+		return b.tagMismatch(ev, text, tag)
+	}
+	null := r.Kind == resolve.Null
+	for v.Kind() == reflect.Pointer {
+		if null {
+			v.SetZero()
+			return nil
+		}
+		if v.IsNil() {
+			v.Set(reflect.New(v.Type().Elem()))
+		}
+		v = v.Elem()
+	}
+	t, k := v.Type(), v.Kind()
+	if k == reflect.Interface {
+		if null {
+			v.SetZero()
+			return nil
+		}
+		if v.NumMethod() != 0 {
+			return b.mismatch(ev, t, nodeName(ev, &r, tag), text)
+		}
+		var x any
+		if r.Kind == resolve.String {
+			x = string(text)
+		} else {
+			if err := b.numLimit(&r, text, ev.Start); err != nil {
+				return err
+			}
+			x = anyOf(text, &r, tag)
+		}
+		v.Set(reflect.ValueOf(x))
+		return nil
+	}
+	if null {
+		if k == reflect.Map || k == reflect.Slice {
+			v.SetZero()
+		}
+		return nil
+	}
+	var special typeinfo.Special
+	if t.PkgPath() != "" || k == reflect.Struct || k == reflect.Slice || k == reflect.Array || k == reflect.Map {
+		dp := b.plan(t)
+		special = dp.tp.Special
+		if special == typeinfo.SpecialNone && dp.textUnm {
+			if err := v.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText(text); err != nil {
+				return &Error{Kind: KindType, Offset: ev.Start, GoType: t.String(), Err: err,
+					Msg: "cannot unmarshal " + nodeName(ev, &r, tag) + " `" + abbrev(text) + "` into " + t.String() + ": " + err.Error()}
+			}
+			return nil
+		}
+	}
+	switch special {
+	case typeinfo.SpecialTime:
+		tm, ok := parseTimestamp(string(text))
+		if !ok {
+			return b.mismatch(ev, t, "timestamp", text)
+		}
+		v.Set(reflect.ValueOf(tm))
+		return nil
+	case typeinfo.SpecialBigInt:
+		if r.Kind != resolve.Int {
+			return b.mismatch(ev, t, nodeName(ev, &r, tag), text)
+		}
+		if err := b.numLimit(&r, text, ev.Start); err != nil {
+			return err
+		}
+		v.Addr().Interface().(*big.Int).Set(r.Big())
+		return nil
+	case typeinfo.SpecialDuration:
+		if r.Kind == resolve.Int && r.W == resolve.Fits64 {
+			v.SetInt(r.I)
+			return nil
+		}
+		d, err := time.ParseDuration(string(text))
+		if err != nil {
+			return b.mismatch(ev, t, nodeName(ev, &r, tag), text)
+		}
+		v.SetInt(int64(d))
+		return nil
+	case typeinfo.SpecialBytes:
+		if t.Elem() == byteType {
+			if tag == tagBinary {
+				bs, err := decodeBase64(text)
+				if err != nil {
+					return b.mismatch(ev, t, "!!binary", text)
+				}
+				v.SetBytes(bs)
+				return nil
+			}
+			v.SetBytes(append([]byte(nil), text...))
+			return nil
+		}
+	}
+	switch k {
+	case reflect.String:
+		v.SetString(string(text))
+	case reflect.Bool:
+		if r.Kind != resolve.Bool {
+			return b.mismatch(ev, t, nodeName(ev, &r, tag), text)
+		}
+		v.SetBool(r.B)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if r.Kind != resolve.Int {
+			return b.mismatch(ev, t, nodeName(ev, &r, tag), text)
+		}
+		if r.W != resolve.Fits64 || v.OverflowInt(r.I) {
+			return b.typeErr(ev, t, "value `"+abbrev(text)+"` overflows "+t.String())
+		}
+		v.SetInt(r.I)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		if r.Kind != resolve.Int {
+			return b.mismatch(ev, t, nodeName(ev, &r, tag), text)
+		}
+		var u uint64
+		switch {
+		case r.W == resolve.FitsU64:
+			u = r.U
+		case r.W == resolve.Fits64 && r.I >= 0:
+			u = uint64(r.I)
+		default:
+			return b.typeErr(ev, t, "value `"+abbrev(text)+"` overflows "+t.String())
+		}
+		if v.OverflowUint(u) {
+			return b.typeErr(ev, t, "value `"+abbrev(text)+"` overflows "+t.String())
+		}
+		v.SetUint(u)
+	case reflect.Float32, reflect.Float64:
+		var f float64
+		switch r.Kind {
+		case resolve.Float:
+			if err := b.numLimit(&r, text, ev.Start); err != nil {
+				return err
+			}
+			f = r.F
+		case resolve.Int:
+			if err := b.numLimit(&r, text, ev.Start); err != nil {
+				return err
+			}
+			f = intToFloat(&r)
+		default:
+			return b.mismatch(ev, t, nodeName(ev, &r, tag), text)
+		}
+		if k == reflect.Float32 && !math.IsInf(f, 0) && !math.IsNaN(f) && v.OverflowFloat(f) {
+			return b.typeErr(ev, t, "value `"+abbrev(text)+"` overflows "+t.String())
+		}
+		v.SetFloat(f)
+	default:
+		return b.mismatch(ev, t, nodeName(ev, &r, tag), text)
+	}
+	return nil
+}
+
+func decodeBase64(text []byte) ([]byte, error) {
+	clean := make([]byte, 0, len(text))
+	for _, c := range text {
+		if c != ' ' && c != '\n' && c != '\r' && c != '\t' {
+			clean = append(clean, c)
+		}
+	}
+	out, err := base64.StdEncoding.DecodeString(string(clean))
+	if err != nil {
+		out, err = base64.RawStdEncoding.DecodeString(string(clean))
+	}
+	return out, err
+}
+
+// enter counts one level of typed recursion. Unlike generic values, which are
+// built on an explicit stack, typed values recurse on the Go stack, so a ceiling
+// applies even when no depth limit is configured.
+func (b *Binder) enter(ev *parse.Event) error {
+	b.tdepth++
+	if b.tdepth > hardDepth {
+		return b.limit("depth", hardDepth, "", ev.Start)
+	}
+	return b.checkDepth(len(b.frames)+b.tdepth, ev.Start)
+}
+
+func (b *Binder) seqInto(v reflect.Value, ev *parse.Event) error {
+	v = deref(v)
+	t := v.Type()
+	switch v.Kind() {
+	case reflect.Interface:
+		return b.genericInto(v, ev)
+	case reflect.Slice:
+		if err := b.enter(ev); err != nil {
+			return err
+		}
+		n := 0
+		v.SetLen(0)
+		for {
+			e, err := b.next()
+			if err != nil {
+				return err
+			}
+			if e.Kind == parse.SequenceEnd {
+				break
+			}
+			if n >= v.Cap() {
+				v.Grow(1)
+			}
+			v.SetLen(n + 1)
+			el := v.Index(n)
+			el.SetZero()
+			if err := b.value(el, &e); err != nil {
+				return withIdx(err, n)
+			}
+			n++
+		}
+		b.tdepth--
+		if v.IsNil() {
+			v.Set(reflect.MakeSlice(t, 0, 0))
+		}
+		return nil
+	case reflect.Array:
+		if err := b.enter(ev); err != nil {
+			return err
+		}
+		i := 0
+		for {
+			e, err := b.next()
+			if err != nil {
+				return err
+			}
+			if e.Kind == parse.SequenceEnd {
+				break
+			}
+			if i < v.Len() {
+				el := v.Index(i)
+				el.SetZero()
+				if err := b.value(el, &e); err != nil {
+					return withIdx(err, i)
+				}
+			} else if err := b.skip(&e); err != nil {
+				return err
+			}
+			i++
+		}
+		for j := i; j < v.Len(); j++ {
+			v.Index(j).SetZero()
+		}
+		if i != v.Len() && b.cfg.Dialect == DialectV3 {
+			return &Error{Kind: KindType, Offset: ev.Start, GoType: t.String(), Category: "decode",
+				Msg: "invalid array: want " + strconv.Itoa(v.Len()) + " elements but got " + strconv.Itoa(i)}
+		}
+		b.tdepth--
+		return nil
+	}
+	return b.collMismatch(ev, t, "!!seq")
+}
+
+// genericInto decodes the collection at ev as a generic value into the empty
+// interface v.
+func (b *Binder) genericInto(v reflect.Value, ev *parse.Event) error {
+	if v.NumMethod() != 0 {
+		kind := "!!map"
+		if ev.Kind == parse.SequenceStart {
+			kind = "!!seq"
+		}
+		return b.collMismatch(ev, v.Type(), kind)
+	}
+	x, err := b.generic(ev)
+	if err != nil {
+		return err
+	}
+	v.Set(reflect.ValueOf(x))
+	return nil
+}
+
+func (b *Binder) mapInto(v reflect.Value, ev *parse.Event) error {
+	v = deref(v)
+	t := v.Type()
+	switch v.Kind() {
+	case reflect.Interface:
+		return b.genericInto(v, ev)
+	case reflect.Struct:
+		dp := b.plan(t)
+		if dp.tp.Err != nil {
+			return &Error{Kind: KindType, Offset: ev.Start, GoType: t.String(), Category: "decode", Msg: dp.tp.Err.Error()}
+		}
+		if dp.tp.Special == typeinfo.SpecialNone || (b.cfg.Dialect == DialectV3 && dp.tp.Special == typeinfo.SpecialTime) {
+			// yaml.v3 treats time.Time as a struct without fields here: a mapping
+			// reads without error and sets nothing.
+			if err := b.enter(ev); err != nil {
+				return err
+			}
+			var st structState
+			if err := b.structPairs(v, dp, &st, false); err != nil {
+				return err
+			}
+			b.tdepth--
+			return nil
+		}
+	case reflect.Map:
+		if err := b.enter(ev); err != nil {
+			return err
+		}
+		if err := b.mapTyped(v); err != nil {
+			return err
+		}
+		b.tdepth--
+		return nil
+	}
+	return b.collMismatch(ev, t, "!!map")
+}
+
+// nextKey reads a key event, following aliases.
+func (b *Binder) nextKey() (parse.Event, error) {
+	ke, err := b.next()
+	for err == nil && ke.Kind == parse.Alias {
+		b.expand(&ke)
+		ke, err = b.next()
+	}
+	return ke, err
+}
+
+func (b *Binder) isMergeKey(ke *parse.Event) bool {
+	return b.cfg.MergeKeys && ke.Style == scan.Plain && !ke.HasTag() && ke.End-ke.Start == 2 &&
+		b.src[ke.Start] == '<' && b.src[ke.Start+1] == '<'
+}
+
+// keyText returns the text of a key node as a string key: the scalar itself, or
+// for a !!binary key under the yaml.v3 dialect the bytes it decodes to.
+func (b *Binder) keyText(ke *parse.Event) ([]byte, error) {
+	if b.cfg.Dialect == DialectV3 && ke.HasTag() {
+		var s scalarV3
+		if err := b.readV3(ke, &s); err != nil {
+			return nil, err
+		}
+		return s.txt, nil
+	}
+	return b.scalar(ke)
+}
+
+func (b *Binder) keyLabel(ke *parse.Event) string {
+	t, err := b.scalar(ke)
+	if err != nil {
+		return "?"
+	}
+	return string(t)
+}
+
+type structState struct {
+	seen, weak bits
+	merged     bool
+}
+
+// structPairs reads the pairs of a mapping, whose start event is consumed, into
+// the struct v until the mapping ends. With weak set the pairs come from a merge
+// source: they fill only fields no explicit key sets.
+func (b *Binder) structPairs(v reflect.Value, dp *dplan, st *structState, weak bool) error {
+	for {
+		ke, err := b.nextKey()
+		if err != nil {
+			return err
+		}
+		if ke.Kind == parse.MappingEnd {
+			return nil
+		}
+		if ke.Kind != parse.Scalar {
+			return b.typeErr(&ke, v.Type(), "mapping keys must be scalars to decode into "+v.Type().String())
+		}
+		merge := b.isMergeKey(&ke)
+		var kb []byte
+		if !merge {
+			if kb, err = b.keyText(&ke); err != nil {
+				return err
+			}
+		}
+		ve, err := b.next()
+		if err != nil {
+			return err
+		}
+		if merge {
+			if !weak {
+				if st.merged {
+					return b.dupKey(ke.Start)
+				}
+				st.merged = true
+			}
+			if err := b.mergeStruct(v, dp, st, &ve); err != nil {
+				return withSeg(err, "<<")
+			}
+			continue
+		}
+		idx := dp.lookup(kb)
+		if idx < 0 {
+			if err := b.structExtra(v, dp, &ke, kb, &ve, weak); err != nil {
+				return err
+			}
+			continue
+		}
+		f := &dp.fields[idx]
+		clearFirst := false
+		if weak {
+			if st.seen.has(idx) || st.weak.has(idx) {
+				if err := b.skip(&ve); err != nil {
+					return err
+				}
+				continue
+			}
+			st.weak.set(idx)
+		} else {
+			if st.seen.has(idx) {
+				return withSeg(b.dupKey(ke.Start), f.Name)
+			}
+			st.seen.set(idx)
+			if st.weak.has(idx) {
+				st.weak.clear(idx)
+				clearFirst = true
+			}
+		}
+		fv, ok := fieldValue(v, f)
+		if !ok {
+			if err := b.skip(&ve); err != nil {
+				return err
+			}
+			continue
+		}
+		if clearFirst {
+			fv.SetZero()
+		}
+		if err := b.value(fv, &ve); err != nil {
+			return withSeg(err, f.Name)
+		}
+	}
+}
+
+// mergeStruct applies the value of a "<<" key: a mapping, or a sequence of
+// mappings, usually aliases.
+func (b *Binder) mergeStruct(v reflect.Value, dp *dplan, st *structState, ve *parse.Event) error {
+	one := func(e *parse.Event) error {
+		for e.Kind == parse.Alias {
+			b.expand(e)
+			n, err := b.next()
+			if err != nil {
+				return err
+			}
+			*e = n
+		}
+		if e.Kind != parse.MappingStart {
+			return b.typeErr(e, v.Type(), "a merge key needs a mapping or a sequence of mappings")
+		}
+		if err := b.enter(e); err != nil {
+			return err
+		}
+		if err := b.structPairs(v, dp, st, true); err != nil {
+			return err
+		}
+		b.tdepth--
+		return nil
+	}
+	e := *ve
+	if e.Kind == parse.Alias {
+		b.expand(&e)
+		var err error
+		if e, err = b.next(); err != nil {
+			return err
+		}
+	}
+	if e.Kind != parse.SequenceStart {
+		return one(&e)
+	}
+	for {
+		el, err := b.next()
+		if err != nil {
+			return err
+		}
+		if el.Kind == parse.SequenceEnd {
+			return nil
+		}
+		if err := one(&el); err != nil {
+			return err
+		}
+	}
+}
+
+// structExtra handles a key that names no field: it goes to the inline map, is
+// an error under KnownFields, or is skipped.
+func (b *Binder) structExtra(v reflect.Value, dp *dplan, ke *parse.Event, kb []byte, ve *parse.Event, weak bool) error {
+	if im := dp.inline; im != nil {
+		mv, ok := fieldByIndexAlloc(v, im.Index)
+		if ok {
+			if mv.IsNil() {
+				mv.Set(reflect.MakeMap(mv.Type()))
+			}
+			mt := mv.Type()
+			key := reflect.ValueOf(b.internKey(kb))
+			if key.Type() != mt.Key() {
+				key = key.Convert(mt.Key())
+			}
+			if mv.MapIndex(key).IsValid() {
+				if weak {
+					return b.skip(ve)
+				}
+				return withSeg(b.dupKey(ke.Start), key.String())
+			}
+			el := reflect.New(mt.Elem()).Elem()
+			if err := b.value(el, ve); err != nil {
+				return withSeg(err, key.String())
+			}
+			mv.SetMapIndex(key, el)
+			return nil
+		}
+	}
+	if b.cfg.KnownFields {
+		if b.cfg.Dialect == DialectV3 {
+			b.terrs = append(b.terrs, b.typeErr(ke, v.Type(), "field "+string(kb)+" not found in type "+v.Type().String()).(*Error))
+			return b.skip(ve)
+		}
+		e := b.typeErr(ke, v.Type(), "field "+strconv.Quote(string(kb))+" not found in type "+v.Type().String())
+		return withSeg(e, string(kb))
+	}
+	return b.skip(ve)
+}
+
+func fieldByIndexAlloc(v reflect.Value, idx []int) (reflect.Value, bool) {
+	for i, x := range idx {
+		if i > 0 && v.Kind() == reflect.Pointer {
+			if v.IsNil() {
+				if !v.CanSet() {
+					return reflect.Value{}, false
+				}
+				v.Set(reflect.New(v.Type().Elem()))
+			}
+			v = v.Elem()
+		}
+		v = v.Field(x)
+	}
+	return v, true
+}
+
+type mapState struct {
+	kv, ev      reflect.Value
+	fresh       bool
+	seen, weak  map[any]struct{}
+	track       bool
+	merged      bool
+	keyIsString bool
+}
+
+func (b *Binder) mapTyped(v reflect.Value) error {
+	t := v.Type()
+	if v.IsNil() {
+		v.Set(reflect.MakeMap(t))
+	}
+	st := mapState{
+		kv: reflect.New(t.Key()).Elem(), ev: reflect.New(t.Elem()).Elem(),
+		fresh: v.Len() == 0,
+	}
+	st.keyIsString = t.Key().Kind() == reflect.String && t.Key().PkgPath() == ""
+	st.track = !st.fresh || b.cfg.MergeKeys
+	return b.mapPairs(v, &st, false)
+}
+
+func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
+	for {
+		ke, err := b.nextKey()
+		if err != nil {
+			return err
+		}
+		if ke.Kind == parse.MappingEnd {
+			return nil
+		}
+		if ke.Kind != parse.Scalar {
+			return b.typeErr(&ke, v.Type().Key(), "mapping keys must be scalars to decode into "+v.Type().String())
+		}
+		merge := b.isMergeKey(&ke)
+		var ki any
+		if !merge {
+			st.kv.SetZero()
+			if st.keyIsString {
+				kb, err := b.keyText(&ke)
+				if err != nil {
+					return err
+				}
+				st.kv.SetString(b.internKey(kb))
+			} else if err := b.scalarInto(st.kv, &ke); err != nil {
+				if b.cfg.Dialect == DialectV3 && b.soft(err) {
+					// The key is lost, so its value is skipped.
+					ve, err := b.next()
+					if err == nil {
+						err = b.skip(&ve)
+					}
+					if err != nil {
+						return err
+					}
+					continue
+				}
+				return err
+			}
+			if st.track {
+				ki = st.kv.Interface()
+			}
+		}
+		ve, err := b.next()
+		if err != nil {
+			return err
+		}
+		if merge {
+			if !weak {
+				if st.merged {
+					return b.dupKey(ke.Start)
+				}
+				st.merged = true
+			}
+			if err := b.mergeMap(v, st, &ve); err != nil {
+				return withSeg(err, "<<")
+			}
+			continue
+		}
+		if st.track {
+			if weak {
+				if _, ok := st.seen[ki]; ok {
+					if err := b.skip(&ve); err != nil {
+						return err
+					}
+					continue
+				}
+				if _, ok := st.weak[ki]; ok {
+					if err := b.skip(&ve); err != nil {
+						return err
+					}
+					continue
+				}
+				if st.weak == nil {
+					st.weak = map[any]struct{}{}
+				}
+				st.weak[ki] = struct{}{}
+			} else {
+				if _, ok := st.seen[ki]; ok {
+					return withSeg(b.dupKey(ke.Start), b.keyLabel(&ke))
+				}
+				if st.seen == nil {
+					st.seen = map[any]struct{}{}
+				}
+				st.seen[ki] = struct{}{}
+				delete(st.weak, ki)
+			}
+		}
+		st.ev.SetZero()
+		if err := b.value(st.ev, &ve); err != nil {
+			return withSeg(err, b.keyLabel(&ke))
+		}
+		if st.track {
+			v.SetMapIndex(st.kv, st.ev)
+			continue
+		}
+		n := v.Len()
+		v.SetMapIndex(st.kv, st.ev)
+		if v.Len() == n {
+			return withSeg(b.dupKey(ke.Start), b.keyLabel(&ke))
+		}
+	}
+}
+
+func (b *Binder) mergeMap(v reflect.Value, st *mapState, ve *parse.Event) error {
+	one := func(e *parse.Event) error {
+		for e.Kind == parse.Alias {
+			b.expand(e)
+			n, err := b.next()
+			if err != nil {
+				return err
+			}
+			*e = n
+		}
+		if e.Kind != parse.MappingStart {
+			return b.typeErr(e, v.Type(), "a merge key needs a mapping or a sequence of mappings")
+		}
+		if err := b.enter(e); err != nil {
+			return err
+		}
+		if err := b.mapPairs(v, st, true); err != nil {
+			return err
+		}
+		b.tdepth--
+		return nil
+	}
+	e := *ve
+	if e.Kind == parse.Alias {
+		b.expand(&e)
+		var err error
+		if e, err = b.next(); err != nil {
+			return err
+		}
+	}
+	if e.Kind != parse.SequenceStart {
+		return one(&e)
+	}
+	for {
+		el, err := b.next()
+		if err != nil {
+			return err
+		}
+		if el.Kind == parse.SequenceEnd {
+			return nil
+		}
+		if err := one(&el); err != nil {
+			return err
+		}
+	}
+}

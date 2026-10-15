@@ -1,0 +1,161 @@
+# Limits
+
+Limits stop input from using more time or memory than you intended. By default, nesting depth, alias expansion, the digits of a number and the work of a patch are bounded. Input size, documents per stream and scalar length are bounded only when you select `Untrusted()`; select it, and size it for your data, for any input you do not control. This page lists each limit, the presets, how options combine, and what the limits do not cover: your own hooks and the compat packages among them.
+
+Every call that reads input is limited: `Unmarshal`, `Decoder`, `Parse` and the `Document` methods that follow aliases or apply patches. Aliases are counted wherever they are followed, so reading from a `Document` is bounded in the same way as decoding. The options are:
+
+| Option | Effect |
+|---|---|
+| none | `DefaultLimits()`: generous bounds that real documents do not reach but that stop alias bombs and runaway nesting |
+| `Untrusted()` | `UntrustedLimits()`: tighter bounds, and caps on input, scalar and stream size. Use it for input from a source you do not control |
+| `Limits(LimitSet)` | changes only the fields you set, on top of the options before it (the defaults when there are none). A field left at zero keeps the bound it had, and `NoBound` (or any negative value) lifts that one bound. `Limits(LimitSet{})` changes nothing |
+| `NoLimits()` | no bound at all, including depth when writing. Use it only for input you trust |
+
+Options apply in order. `Untrusted()` and `NoLimits()` replace every bound; a `Limits` after them changes only the fields it sets. So `Untrusted(), Limits(LimitSet{MaxDepth: 50})` keeps every untrusted bound and tightens depth, and `NoLimits(), Limits(LimitSet{MaxInputBytes: 1 << 20})` bounds the input size and nothing else.
+
+The presets side by side, as the code defines them. A field that shows 0 has no bound in that preset:
+
+<!-- example: ExampleDefaultLimits -->
+```go
+fmt.Printf("%+v\n", oneyaml.DefaultLimits())
+fmt.Printf("%+v\n", oneyaml.UntrustedLimits())
+// Output:
+// {MaxDepth:10000 MaxAliasNodes:1000000 MaxAliasBytes:67108864 MaxInputBytes:0 MaxScalarBytes:0 MaxDocuments:0 MaxNumberDigits:100000 MaxPatchWorkRatio:256}
+// {MaxDepth:1000 MaxAliasNodes:100000 MaxAliasBytes:8388608 MaxInputBytes:67108864 MaxScalarBytes:16777216 MaxDocuments:10000 MaxNumberDigits:4300 MaxPatchWorkRatio:32}
+```
+
+## Each limit
+
+| `LimitSet` field | What it bounds | If it is exceeded |
+|---|---|---|
+| `MaxDepth` | nesting of collections, in input and when writing | `*LimitError`, `Limit` is `depth` |
+| `MaxAliasNodes` | nodes produced by expanding aliases | `*LimitError` |
+| `MaxAliasBytes` | scalar bytes produced by expanding aliases; also the bytes a patch copies | `*LimitError` |
+| `MaxInputBytes` | the size of the input | `*LimitError` |
+| `MaxScalarBytes` | the length of one scalar | `*LimitError` |
+| `MaxDocuments` | documents in one stream | `*LimitError` |
+| `MaxNumberDigits` | digits of an integer or float scalar when it is converted to a number; text kept as text is never limited | `*LimitError` |
+| `MaxPatchWorkRatio` | text that one patch's edits may read again, as a multiple of the document plus the patch (and 16 MiB on top) | `*LimitError`, the document is unchanged |
+
+An alias bound left at its default rises with the document: it is at least the figure shown above and at least ten times the document's own nodes or bytes (two times with `Untrusted`), so a large document that reuses its anchors is not refused. An alias bound you set with `Limits` applies exactly as given.
+
+A bound that is hit is a `*LimitError`. It names the limit and the option that raises it.
+
+<!-- example: ExampleLimits -->
+```go
+bomb := "a: &a [x, x, x, x]\nb: &b [*a, *a, *a, *a]\nc: [*b, *b, *b, *b]\n"
+var v any
+err := oneyaml.Unmarshal([]byte(bomb), &v, oneyaml.Limits(oneyaml.LimitSet{MaxAliasNodes: 20}))
+var le *oneyaml.LimitError
+if errors.As(err, &le) {
+	fmt.Println(le.Limit, le.Max)
+}
+// Output: alias expansion nodes 20
+```
+
+## Changing one bound
+
+A `LimitSet` passed to `Limits` changes only the fields you set. Here `MaxInputBytes` adds a bound on input size, and the default depth bound stays in force:
+
+<!-- example: ExampleLimits_addBound -->
+```go
+opt := oneyaml.Limits(oneyaml.LimitSet{MaxInputBytes: 1 << 20})
+large := []byte("a: " + strings.Repeat("x", 2<<20) + "\n")
+deep := []byte(strings.Repeat("[", 10001) + strings.Repeat("]", 10001))
+var v any
+var le *oneyaml.LimitError
+
+err := oneyaml.Unmarshal(large, &v, opt)
+if errors.As(err, &le) {
+	fmt.Println(le.Limit, le.Max)
+}
+err = oneyaml.Unmarshal(deep, &v, opt)
+if errors.As(err, &le) {
+	fmt.Println(le.Limit, le.Max)
+}
+// Output:
+// input size 1048576
+// depth 10000
+```
+
+`NoBound` lifts one bound and keeps the rest. Any negative value does the same; `NoBound` names it:
+
+<!-- example: ExampleNoBound -->
+```go
+deep := []byte(strings.Repeat("[", 10001) + strings.Repeat("]", 10001))
+var v any
+
+err := oneyaml.Unmarshal(deep, &v, oneyaml.Limits(oneyaml.LimitSet{MaxDepth: oneyaml.NoBound}))
+fmt.Println(err)
+// Output: <nil>
+```
+
+`Limits` after `Untrusted()` keeps the untrusted bounds and changes only what it names. Here depth is tightened to 50, and the untrusted bound of 4300 digits on a number still applies:
+
+<!-- example: ExampleUntrusted_tighten -->
+```go
+opts := []oneyaml.Option{oneyaml.Untrusted(), oneyaml.Limits(oneyaml.LimitSet{MaxDepth: 50})}
+deep := strings.Repeat("[", 100) + strings.Repeat("]", 100)
+long := strings.Repeat("9", 5000)
+var v any
+var le *oneyaml.LimitError
+
+for _, in := range []string{deep, long} {
+	err := oneyaml.Unmarshal([]byte(in), &v, opts...)
+	if errors.As(err, &le) {
+		fmt.Println(le.Limit, le.Max)
+	}
+}
+// Output:
+// depth 50
+// number digits 4300
+```
+
+## Untrusted input
+
+`Untrusted()` lowers the depth and alias bounds and adds a cap on input size, scalar size, documents per stream, the digits of a number and the work of a patch. In the example, 2000 nested sequences pass under the default limits and fail under `Untrusted()`:
+
+<!-- example: ExampleUntrusted -->
+```go
+deep := strings.Repeat("[", 2000) + strings.Repeat("]", 2000)
+var v any
+
+// The default depth limit lets this through; Untrusted does not.
+fmt.Println(oneyaml.Unmarshal([]byte(deep), &v))
+err := oneyaml.Unmarshal([]byte(deep), &v, oneyaml.Untrusted())
+var le *oneyaml.LimitError
+if errors.As(err, &le) {
+	fmt.Println(le.Limit, le.Max, le.Option)
+}
+// Output:
+// <nil>
+// depth 1000 Limits
+```
+
+## Trusted input
+
+`NoLimits()` removes every bound. Nesting that the default depth limit refuses is read once it is off:
+
+<!-- example: ExampleNoLimits -->
+```go
+deep := strings.Repeat("[", 10001) + strings.Repeat("]", 10001)
+var v any
+
+err := oneyaml.Unmarshal([]byte(deep), &v)
+var le *oneyaml.LimitError
+fmt.Println(errors.As(err, &le))
+fmt.Println(oneyaml.Unmarshal([]byte(deep), &v, oneyaml.NoLimits()))
+// Output:
+// true
+// <nil>
+```
+
+## What limits do not cover
+
+- **Memory held by a `Document`.** A `Document` keeps the text and an index of it. For ordinary files that is a few times the text; for dense input, such as long lists of tiny scalars, it is an order of magnitude more. Without `MaxInputBytes` nothing caps it, so set it (or use `Untrusted()`) for outside input.
+- **Documents of 2 GiB or more.** A `Document` addresses its text with 32-bit offsets, and `Parse` refuses input of 2 GiB or more. Keep documents far below that.
+- **`Marshal` output.** `Marshal` writes a value that is shared in several places once per place, as `encoding/json` does, so the output can be far larger than the value in memory. A value that contains itself is an error. When writing, `MaxDepth` bounds nesting and `MaxNumberDigits` bounds the numbers a `MarshalJSON` method returns; no other limit applies.
+- **The compat packages.** `compat/yamlv3` and `compat/k8syaml` always run with the default limits and have no `Untrusted()` mode or other option to change them. For input from outside, read with the `oneyaml` package and `Untrusted()`.
+- **Your own hooks.** An `Unmarshaler` that calls `Node.Decode`, or a func-style `UnmarshalYAML` that calls the function it is given, shares the alias budget of the call that invoked it. The code you write in a hook, including `UnmarshalText` and `UnmarshalJSON`, is not limited.
+
+The safety posture and how to report a problem are in [SECURITY.md](../SECURITY.md).

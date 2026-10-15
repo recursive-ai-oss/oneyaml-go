@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# tools/gate: the pre-merge check. Run it from anywhere in the checkout: tools/gate
+# Steps: gofmt -l, go vet, staticcheck and go test -short in every Go module of the
+# tree (modules are found by their go.mod, so new ones are picked up), then the
+# public-text check over files changed against main plus untracked files.
+# Environment: GATE_BASE (default main) is the comparison branch; GOCACHE, GOTMPDIR
+# and the rest of the Go environment are used as given. Fails if it takes over 180 s.
+# PUBLICTEXT_PATTERNS (a file of patterns for the public-text step) is passed through
+# when set; without it that step runs only its generic rules and says so.
+set -u
+cd "$(dirname "$0")/.." || exit 2
+base=${GATE_BASE:-main}
+git rev-parse --verify --quiet "$base" >/dev/null || base=origin/$base
+
+failed=()
+start=$SECONDS
+
+step() { # step <name> <command...>
+	local name=$1 t0=$SECONDS
+	shift
+	echo "== $name"
+	if "$@"; then
+		echo "-- ok: $name ($((SECONDS - t0)) s)"
+	else
+		echo "-- FAIL: $name"
+		failed+=("$name")
+	fi
+}
+
+fmt_check() {
+	local out
+	out=$(gofmt -l .) || return 1
+	if [ -n "$out" ]; then
+		echo "gofmt would change:"
+		echo "$out"
+		return 1
+	fi
+}
+
+in_module() { # in_module <dir> <command...>
+	local dir=$1
+	shift
+	(cd "$dir" && "$@")
+}
+
+step "gofmt" fmt_check
+
+mapfile -t modules < <(find . -name go.mod -not -path './.git/*' -exec dirname {} \; | sort)
+for m in "${modules[@]}"; do
+	step "go vet ($m)" in_module "$m" go vet ./...
+	step "staticcheck ($m)" in_module "$m" staticcheck ./...
+	step "go test -short ($m)" in_module "$m" go test -short ./...
+done
+
+step "public text (changed against $base)" in_module tools go run ./cmd/publictext -changed "$base"
+
+total=$((SECONDS - start))
+echo "== total ${total} s"
+if [ "$total" -gt 180 ]; then
+	echo "FAIL: the check took over 180 s"
+	failed+=("time budget")
+fi
+if [ ${#failed[@]} -gt 0 ]; then
+	echo "CHECK RED: ${failed[*]}"
+	exit 1
+fi
+echo "CHECK GREEN"

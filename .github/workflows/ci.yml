@@ -1,0 +1,200 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+# Every step that loops over modules covers each directory that holds a go.mod.
+jobs:
+  # Formatting, static analysis, vulnerability scan and the public-repository guards.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            tools/go.mod
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt would change:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: |
+          for m in $(git ls-files '*go.mod' | xargs -n1 dirname); do
+            echo "== $m"; (cd "$m" && go vet ./...)
+          done
+      - name: staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
+          for m in $(git ls-files '*go.mod' | xargs -n1 dirname); do
+            echo "== $m"; (cd "$m" && staticcheck ./...)
+          done
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          for m in $(git ls-files '*go.mod' | xargs -n1 dirname); do
+            echo "== $m"; (cd "$m" && govulncheck ./...)
+          done
+      - name: Pushed range
+        id: range
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          # A pull request checks base..head. A push checks before..after, or the
+          # whole history for a new branch or a before commit that is gone.
+          range=HEAD
+          if [ "$EVENT" = pull_request ]; then
+            range="$BASE_SHA..$HEAD_SHA"
+          elif [ -n "$BEFORE" ] && [ -n "${BEFORE//0/}" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            range="$BEFORE..$PUSH_SHA"
+          fi
+          echo "range=$range" >> "$GITHUB_OUTPUT"
+          echo "checking $range"
+      - name: Public-text patterns
+        env:
+          PATTERNS: ${{ secrets.PUBLICTEXT_PATTERNS }}
+          FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
+        run: |
+          # The patterns are not in the repository. Without the secret the next
+          # steps fail on purpose rather than pass unchecked, with one exception: a
+          # pull request from a fork gets no secrets, so there the private patterns
+          # are skipped with a notice and only the generic checks run.
+          if [ -n "$PATTERNS" ]; then
+            f="$RUNNER_TEMP/publictext-patterns.txt"
+            printf '%s\n' "$PATTERNS" > "$f"
+            echo "PUBLICTEXT_PATTERNS=$f" >> "$GITHUB_ENV"
+          elif [ "$FORK_PR" = true ]; then
+            echo "PUBLICTEXT_ALLOW_MISSING=true" >> "$GITHUB_ENV"
+            echo "::notice::Pull request from a fork: the private public-text patterns are not available, so only the generic checks ran. A maintainer runs the full check."
+          else
+            echo "::error::The PUBLICTEXT_PATTERNS secret is not available"
+          fi
+      - name: Public text, whole tree
+        working-directory: tools
+        run: go run ./cmd/publictext -tree
+      - name: Public text, commit messages
+        working-directory: tools
+        run: go run ./cmd/publictext -commits "${{ steps.range.outputs.range }}"
+      - name: Secret scan
+        working-directory: tools
+        run: go run ./cmd/secretscan -range "${{ steps.range.outputs.range }}"
+
+  # The tests on every supported Go version, without the shared test cases (the
+  # conformance job runs those); the race detector on the newest.
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.24', '1.25', '1.26', '1.27']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            tools/go.mod
+      - name: go vet
+        run: |
+          for m in $(git ls-files '*go.mod' | xargs -n1 dirname); do
+            need=$(cd "$m" && go mod edit -json | sed -n 's/^\t"Go": "\(.*\)",$/\1/p')
+            have=$(go env GOVERSION | sed 's/^go//')
+            # A test-only module may need a newer Go than the library's minimum.
+            if ! printf '%s\n%s\n' "$need" "$have" | sort -V -C; then echo "== $m skipped: needs go $need"; continue; fi
+            (cd "$m" && go vet ./...)
+          done
+      - name: go test
+        run: |
+          for m in $(git ls-files '*go.mod' | xargs -n1 dirname); do
+            need=$(cd "$m" && go mod edit -json | sed -n 's/^\t"Go": "\(.*\)",$/\1/p')
+            have=$(go env GOVERSION | sed 's/^go//')
+            # A test-only module may need a newer Go than the library's minimum.
+            if ! printf '%s\n%s\n' "$need" "$have" | sort -V -C; then echo "== $m skipped: needs go $need"; continue; fi
+            echo "== $m"; (cd "$m" && go test ./...)
+          done
+      - name: go test -race
+        if: matrix.go == '1.27'
+        run: |
+          for m in $(git ls-files '*go.mod' | xargs -n1 dirname); do
+            echo "== $m"; (cd "$m" && go test -race ./...)
+          done
+
+  # Other operating systems on the newest supported Go; the short tier is enough here.
+  portable:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            tools/go.mod
+      - name: go test -short
+        run: |
+          for m in $(git ls-files '*go.mod' | xargs -n1 dirname); do
+            echo "== $m"; (cd "$m" && go test -short ./...)
+          done
+
+  # The test cases shared with the other oneyaml libraries (the kit) and the
+  # yaml-test-suite data inside it. The kit is checked out at a fixed commit, so
+  # a change in the kit cannot turn this job red by itself; move the commit on
+  # purpose. The runners in this repository skip these cases when the variables
+  # below are not set.
+  conformance:
+    runs-on: ubuntu-latest
+    env:
+      ONEYAML_KIT: ${{ github.workspace }}/oneyaml-kit
+      ONEYAML_YTS_DIR: ${{ github.workspace }}/oneyaml-kit/suites/yaml-test-suite/data-2022-01-17
+      ONEYAML_YTS_CORRECTIONS: ${{ github.workspace }}/oneyaml-kit/suites/yaml-test-suite/corrections.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: oneyaml-go
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: recursive-ai-oss/oneyaml-kit
+          ref: a465447790225ab184a64f2c22d4571405082086 # oneyaml-kit main, 2026-10-15
+          path: oneyaml-kit
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27'
+          cache: true
+          cache-dependency-path: |
+            oneyaml-go/go.mod
+            oneyaml-go/bench/go.sum
+      - name: go test with the kit
+        working-directory: oneyaml-go
+        run: |
+          for m in . bench; do
+            echo "== $m"; (cd "$m" && go test -count=1 ./...)
+          done
