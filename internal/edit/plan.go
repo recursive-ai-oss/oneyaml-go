@@ -661,8 +661,9 @@ func (c *Ctx) blockReplace(n int32, v *Value, l *layout) []Repl {
 		if nd.Start == nd.End {
 			if le := c.lineEnd(int(nd.Start)); c.commentAhead(int(nd.Start), le) {
 				// "- # c": the comment ends the item's line and stays there; the
-				// collection goes on the lines below, under the dash.
-				body := render(c.col(c.dashOf(n))+2, true)
+				// collection goes on the lines below, where the text of an item
+				// starts (the siblings' gap after the dash).
+				body := render(c.col(c.dashOf(n))+1+c.siblingGap(n), true)
 				at := c.afterBreak(le)
 				if at >= len(c.Src) && (len(c.Src) == 0 || !isBreak(c.Src[len(c.Src)-1])) {
 					body = append([]byte(l.nl), trimNL(body, l.nl)...)
@@ -811,6 +812,21 @@ func (c *Ctx) rootInsert(nd *cst.Node, text string, block bool) []Repl {
 		suffix = c.nlAt(at)
 	}
 	return []Repl{{Start: at, End: at, Text: []byte(prefix + text + suffix)}}
+}
+
+// siblingGap returns the spaces between the dash and the text in the items next
+// to item n (the first that has text on its dash line), or 1.
+func (c *Ctx) siblingGap(n int32) int {
+	for _, s := range [2]int32{c.T.Nodes[n].Next, c.T.Prev(n)} {
+		if s == 0 {
+			continue
+		}
+		ds := c.dashOf(s)
+		if fs := int(c.T.FullStart(s)); fs > ds+1 && !containsBreak(c.Src[ds:fs]) {
+			return fs - ds - 1
+		}
+	}
+	return 1
 }
 
 // commentAhead reports whether the text from a to b (on one line) is blanks

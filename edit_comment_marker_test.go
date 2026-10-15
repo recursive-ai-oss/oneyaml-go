@@ -81,6 +81,7 @@ func TestReplaceEmptyItemKeepsItsComment(t *testing.T) {
 		{"- # c", "/0", "- # c\n  k:\n    - 1\n    - 2"},
 		{"- # c\r\n- x\r\n", "/0", "- # c\r\n  k:\r\n    - 1\r\n    - 2\r\n- x\r\n"},
 		{"a:\n  - # c\n  - x\n", "/a/0", "a:\n  - # c\n    k:\n      - 1\n      - 2\n  - x\n"},
+		{"-   # c\n-   x\n", "/0", "-   # c\n    k:\n      - 1\n      - 2\n-   x\n"},
 		{"-\n- x\n", "/0", "- k:\n    - 1\n    - 2\n- x\n"},
 	} {
 		d, err := Parse([]byte(c.in))

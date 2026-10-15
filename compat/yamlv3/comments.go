@@ -166,18 +166,36 @@ func (b *builder) commentBlockAbove(src []byte, ls int, dst []span) (block []spa
 			break
 		}
 		t := bytes.TrimSpace(l)
-		if len(t) > 0 && t[0] == '-' && !bytes.HasPrefix(t, []byte("---")) {
+		dash := false
+		if len(t) > 0 && t[0] == '-' {
 			// An item with no value and a comment, "- # c": yaml.v3 hands the
 			// comment to whatever comes next, as if it stood on a line of its own.
-			t = bytes.TrimLeft(t, "- 	")
+			// A dash counts only when a space follows it or it ends the line:
+			// "-# c" is a plain scalar.
+			// Known differences from yaml.v3: a tab after the dash (it reads the
+			// document as null), a second dash on the line ("- - # c", which it
+			// turns into a foot comment) and a mapping item ("- # c" over "  k: v",
+			// where it heads the key).
+			u := t
+			for len(u) > 0 && u[0] == '-' && (len(u) == 1 || u[1] == ' ') {
+				u = bytes.TrimLeft(u[1:], " ")
+				dash = true
+			}
+			if dash {
+				t = u
+			}
 		}
-		if len(t) == 0 || t[0] != '#' || b.insideScalar(ps) {
+		if len(t) == 0 || t[0] != '#' || b.insideScalar(ps+cap(l)-cap(t)) {
 			break
 		}
 		lead := cap(l) - cap(t)
 		block = append(block, span{ps + lead, ps + lead + len(t)})
 		i = ps
 		start = i
+		if dash {
+			// The lines above belong to the item on this line, not to the next.
+			break
+		}
 	}
 	// The lines were found bottom up.
 	for x, y := 0, len(block)-1; x < y; x, y = x+1, y-1 {

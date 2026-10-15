@@ -277,6 +277,35 @@ func TestCommentAfterEmptyItemHeadsNext(t *testing.T) {
 	}
 }
 
+// A dash with no space after it starts a plain scalar, so what follows is not a
+// comment; and a comment is never written twice when comment lines sit above a
+// dash line.
+func TestDashLineCommentsStayWhole(t *testing.T) {
+	for _, c := range []struct{ in, out string }{
+		{"- -# c\n- x\n", "- -# c\n- x\n"},
+		{"# a\n- # c\n- x\n", "# a\n-\n# c\n- x\n"},
+		{"- # c\n- x\n", "-\n# c\n- x\n"},
+	} {
+		var n yaml.Node
+		if err := yaml.Unmarshal([]byte(c.in), &n); err != nil {
+			t.Fatal(err)
+		}
+		out, err := yaml.Marshal(&n)
+		if err != nil || string(out) != c.out {
+			t.Errorf("%q: wrote %q (%v), want %q", c.in, out, err, c.out)
+		}
+	}
+	var n yaml.Node
+	if err := yaml.Unmarshal([]byte("- -# c\n- x\n"), &n); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range n.Content[0].Content {
+		if it.HeadComment != "" || it.LineComment != "" || it.FootComment != "" {
+			t.Errorf("item %q has comments %q %q %q", it.Value, it.HeadComment, it.LineComment, it.FootComment)
+		}
+	}
+}
+
 // A document with a "---" marker and no content has nothing to hold its comments,
 // so the comment on the marker line and the ones after it are its foot comment, as
 // yaml.v3 reads it.
