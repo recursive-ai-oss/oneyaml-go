@@ -4,7 +4,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
-## [0.1.0] - YYYY-MM-DD
+## [0.1.0] - 2026-10-15
 
 The first release. It has no benchmark results; those come in a later update.
 
