@@ -38,6 +38,42 @@ func (c *Ctx) endsWithKeep(n int32) bool {
 	return isBlockScalarNode(&c.T.Nodes[n]) && c.blockChomp(n) == '+'
 }
 
+// endingBlockIndent returns the indentation of the text of the block scalar that
+// ends node n, or -1 when n does not end with one or the scalar has no text line.
+func (c *Ctx) endingBlockIndent(n int32) int {
+	for {
+		l := c.T.Last(n)
+		if l == 0 || c.T.Nodes[n].Flow {
+			break
+		}
+		n = l
+	}
+	nd := &c.T.Nodes[n]
+	if !isBlockScalarNode(nd) {
+		return -1
+	}
+	for ls := c.afterBreak(int(nd.Start)); ls < int(nd.End); {
+		if !c.blankLine(ls) {
+			return c.spacesAt(ls)
+		}
+		next := c.afterBreak(ls)
+		if next <= ls {
+			break
+		}
+		ls = next
+	}
+	return -1
+}
+
+// spacesAt counts the spaces that start the line at ls.
+func (c *Ctx) spacesAt(ls int) int {
+	i := ls
+	for i < len(c.Src) && c.Src[i] == ' ' {
+		i++
+	}
+	return i - ls
+}
+
 // stripFix returns the repair needed when text is appended after node n and the
 // source has no final line break: a block scalar that ends the file then gains
 // the break the new text starts with, so its header becomes "strip" to keep its
@@ -293,6 +329,14 @@ func (c *Ctx) Remove(loc Loc) ([]Repl, error) {
 			// lines that now follow it would change its value, so they go too.
 			for to < len(c.Src) && c.blankLine(to) {
 				to = c.afterBreak(to)
+			}
+		} else if prev != 0 {
+			// A line of spaces indented deeper than a block scalar's text is text
+			// of the scalar once nothing stands between them, so it goes too.
+			if ind := c.endingBlockIndent(prev); ind >= 0 {
+				for to < len(c.Src) && c.blankLine(to) && c.spacesAt(to) > ind {
+					to = c.afterBreak(to)
+				}
 			}
 		}
 		return []Repl{{Start: from, End: to}}, nil

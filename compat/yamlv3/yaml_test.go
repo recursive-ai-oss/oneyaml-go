@@ -263,3 +263,16 @@ func TestLimitsStillApply(t *testing.T) {
 		t.Fatal("alias bomb was expanded")
 	}
 }
+
+// A comment after a dash that has no value is the head comment of the next item,
+// as yaml.v3 reads it.
+func TestCommentAfterEmptyItemHeadsNext(t *testing.T) {
+	var n yaml.Node
+	if err := yaml.Unmarshal([]byte("- # c\n- x\n"), &n); err != nil {
+		t.Fatal(err)
+	}
+	items := n.Content[0].Content
+	if len(items) != 2 || items[0].HeadComment != "" || items[0].LineComment != "" || items[1].HeadComment != "# c" {
+		t.Errorf("comments: %q %q / %q", items[0].HeadComment, items[0].LineComment, items[1].HeadComment)
+	}
+}

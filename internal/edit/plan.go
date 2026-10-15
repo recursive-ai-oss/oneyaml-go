@@ -659,6 +659,16 @@ func (c *Ctx) blockReplace(n int32, v *Value, l *layout) []Repl {
 			text = trimNL(text, l.nl)
 		}
 		if nd.Start == nd.End {
+			if le := c.lineEnd(int(nd.Start)); c.commentAhead(int(nd.Start), le) {
+				// "- # c": the comment ends the item's line and stays there; the
+				// collection goes on the lines below, under the dash.
+				body := render(c.col(c.dashOf(n))+2, true)
+				at := c.afterBreak(le)
+				if at >= len(c.Src) && (len(c.Src) == 0 || !isBreak(c.Src[len(c.Src)-1])) {
+					body = append([]byte(l.nl), trimNL(body, l.nl)...)
+				}
+				return []Repl{{Start: at, End: at, Text: body}}
+			}
 			return []Repl{{Start: int(nd.Start), End: int(nd.End), Text: append([]byte(" "), text...)}}
 		}
 		return []Repl{{Start: int(nd.Start), End: int(nd.End), Text: text}}
@@ -775,7 +785,15 @@ func (c *Ctx) rootInsert(nd *cst.Node, text string, block bool) []Repl {
 		// The empty node is reported where the next token starts, which can be
 		// after comments; the value belongs right after the "---" marker.
 		at = int(d.StartMarker[1])
-		if le := c.lineEnd(at); block && le > at && c.onlyCommentBetween(at, le) {
+		from := at
+		if nd.Prop != 0 {
+			// A tag or anchor on the marker line is not text before the comment.
+			q := &c.T.Props[nd.Prop]
+			if e := int(max(q.AnchorEnd, q.TagEnd)); e > from && e <= c.lineEnd(at) {
+				from = e
+			}
+		}
+		if le := c.lineEnd(at); block && le > at && c.onlyCommentBetween(from, le) {
 			// A comment ends the marker line: the block goes below it, so that the
 			// comment stays on the marker's line.
 			at = le
@@ -793,6 +811,21 @@ func (c *Ctx) rootInsert(nd *cst.Node, text string, block bool) []Repl {
 		suffix = c.nlAt(at)
 	}
 	return []Repl{{Start: at, End: at, Text: []byte(prefix + text + suffix)}}
+}
+
+// commentAhead reports whether the text from a to b (on one line) is blanks
+// followed by a comment.
+func (c *Ctx) commentAhead(a, b int) bool {
+	for ; a < b; a++ {
+		switch c.Src[a] {
+		case ' ', '	':
+		case '#':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 // onlyCommentBetween reports whether the text from a to b (on one line) is blanks,

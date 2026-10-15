@@ -166,6 +166,11 @@ func (b *builder) commentBlockAbove(src []byte, ls int, dst []span) (block []spa
 			break
 		}
 		t := bytes.TrimSpace(l)
+		if len(t) > 0 && t[0] == '-' && !bytes.HasPrefix(t, []byte("---")) {
+			// An item with no value and a comment, "- # c": yaml.v3 hands the
+			// comment to whatever comes next, as if it stood on a line of its own.
+			t = bytes.TrimLeft(t, "- 	")
+		}
 		if len(t) == 0 || t[0] != '#' || b.insideScalar(ps) {
 			break
 		}
