@@ -394,6 +394,47 @@ func duplicateKeysDifferByTag(data []byte) bool {
 	return false
 }
 
+// floatKeysRoundTogether reports whether some mapping of the text has two float
+// keys written differently that round to the same double (1e-400 and 2e-400 are
+// both 0). yaml.v3 compares keys by their text and then loses one of the two
+// values in the Go map; the shim cannot keep both either and refuses.
+func floatKeysRoundTogether(data []byte) bool {
+	var root compat.Node
+	if compat.Unmarshal(data, &root) != nil {
+		return false
+	}
+	stack := []*compat.Node{&root}
+	seen := map[*compat.Node]bool{}
+	for len(stack) > 0 {
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		stack = append(stack, n.Content...)
+		if n.Kind != compat.MappingNode {
+			continue
+		}
+		texts := map[float64]string{}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k := n.Content[i]
+			if k.Kind != compat.ScalarNode || k.Tag != "!!float" {
+				continue
+			}
+			f, err := strconv.ParseFloat(strings.ReplaceAll(k.Value, "_", ""), 64)
+			if err != nil && !errors.Is(err, strconv.ErrRange) {
+				continue
+			}
+			if text, ok := texts[f]; ok && text != k.Value {
+				return true
+			}
+			texts[f] = k.Value
+		}
+	}
+	return false
+}
+
 var yamlv3ErrorLine = regexp.MustCompile(`line (\d+)`)
 
 // errorAfterFirstDocument reports whether yaml.v3's error names a line after the
@@ -508,6 +549,7 @@ func matchesJSON(v any, j any) bool {
 // readExceptions are single inputs where yaml.v3 gives a wrong value and the kit has
 // no expected JSON to show it.
 var readExceptions = map[string]string{
+	"suites/own/cases/parse/directive-lookalike-line-in-a-block-scalar-before-a-document/input.yaml": "yaml.v3 takes a '%' line inside a top-level block scalar for a directive and reads the scalar as empty; it is text of the scalar",
 	"4ABK/in.yaml": "yaml.v3 keeps the colon in the flow key 'omitted value:'",
 	"suites/own/cases/parse/top-level-literal-with-indentation-indicator/input.yaml": "yaml.v3 drops the space that belongs to a top-level block scalar with an indentation indicator (the kit expects it)",
 }
@@ -522,6 +564,8 @@ func readDifference(it corpusItem, ya, ca any, yerr, cerr error) string {
 		return "the shim enforces the alias-expansion and depth limits (yaml.v3 allows more)"
 	case yerr != nil && cerr == nil && strings.Contains(yerr.Error(), "already defined") && duplicateKeysDifferByTag(it.data):
 		return "yaml.v3 calls true and \"true\" (or 80 and \"80\") the same key"
+	case yerr == nil && cerr != nil && strings.Contains(cerr.Error(), "defined more than once") && floatKeysRoundTogether(it.data):
+		return "two float keys that round to the same double: yaml.v3 silently keeps the last value, the shim refuses"
 	case yerr != nil && cerr == nil && vd == verdictInvalid && errorAfterFirstDocument(it.data, yerr):
 		return "the shim reads one document, so a later syntax error is not reached"
 	case cerr == nil && yerr == nil && readExceptions[strings.TrimPrefix(it.name, "suites/yaml-test-suite/data-2022-01-17/")] != "":

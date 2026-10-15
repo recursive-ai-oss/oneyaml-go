@@ -329,6 +329,9 @@ func (b *builder) documentComments(d *Node) {
 	if !b.cs.on {
 		return
 	}
+	if b.emptyDocumentFoot(d) {
+		return
+	}
 	src := b.ref.Src
 	until := directivesStart(src, b.ref.DocStart)
 	if firstContent(src) >= lineStart(src, until) {
@@ -373,6 +376,87 @@ func (b *builder) documentComments(d *Node) {
 		return
 	}
 	b.footFor(strings.Join(block, "\n"), indentOf(block[0], src, first))
+}
+
+// emptyDocumentFoot handles a document that has a "---" marker and no content.
+// yaml.v3 has nothing to attach the comments to there, so the comment on the
+// marker line and the comment lines after it (blank lines between them kept) all
+// become the foot comment of the document node. It reports whether it did so.
+func (b *builder) emptyDocumentFoot(d *Node) bool {
+	t := b.ref.Tree
+	src := b.ref.Src
+	if nd := &t.Nodes[b.ref.Node]; nd.Kind != cst.Scalar || nd.Start != nd.End || nd.Prop != 0 {
+		return false
+	}
+	at := b.ref.DocStart
+	if at < 0 || at+3 > len(src) || string(src[at:at+3]) != "---" {
+		return false
+	}
+	var lines []string
+	pending := 0 // blank lines seen since the last comment line
+	// Comment lines before the marker of the first document come first.
+	for i := 0; i < at; {
+		e := lineEnd(src, i)
+		l := bytes.TrimSpace(src[i:e])
+		if i == 0 && bytes.HasPrefix(l, []byte("\xEF\xBB\xBF")) {
+			l = bytes.TrimSpace(l[3:])
+		}
+		switch {
+		case len(l) == 0:
+			pending++
+		case l[0] == '#':
+			if len(lines) > 0 {
+				for ; pending > 0; pending-- {
+					lines = append(lines, "")
+				}
+			}
+			pending = 0
+			lines = append(lines, string(l))
+		default:
+			// Another document's text, or a directive, comes before the marker.
+			return false
+		}
+		i = e + 1
+	}
+	first := true
+	for i := at; i < len(src); {
+		e := lineEnd(src, i)
+		l := bytes.TrimSpace(src[i:e])
+		if first {
+			// The marker line: only a comment after "---" counts.
+			l = bytes.TrimSpace(src[i+3 : e])
+			if len(l) > 0 && l[0] != '#' {
+				return false
+			}
+			first = false
+		}
+		switch {
+		case len(l) == 0:
+			pending++
+		case l[0] == '#':
+			if len(lines) > 0 {
+				for ; pending > 0; pending-- {
+					lines = append(lines, "")
+				}
+			}
+			pending = 0
+			lines = append(lines, string(l))
+		default:
+			// The next document marker or other text ends the region.
+			i = len(src)
+			continue
+		}
+		i = e + 1
+	}
+	if len(lines) == 0 {
+		return false
+	}
+	d.FootComment = strings.Join(lines, "\n")
+	if len(d.Content) == 1 {
+		// The empty root keeps none of them.
+		d.Content[0].HeadComment, d.Content[0].LineComment, d.Content[0].FootComment = "", "", ""
+	}
+	return true
 }
 
 // regionEnd returns where the text that belongs to the document ends: the end of

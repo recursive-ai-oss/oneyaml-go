@@ -117,7 +117,8 @@ func kitInvalid(name string) bool {
 var k8sIntended = map[string]string{
 	// The reader behind sigs mis-parses valid YAML 1.2; our output equals the
 	// suite's expected JSON (checked below).
-	"suites/own/cases/parse/top-level-literal-with-indentation-indicator/input.yaml": "literal block scalar: sigs drops the space that belongs to a top-level scalar with an indentation indicator",
+	"suites/own/cases/parse/top-level-literal-with-indentation-indicator/input.yaml":                 "literal block scalar: sigs drops the space that belongs to a top-level scalar with an indentation indicator",
+	"suites/own/cases/parse/directive-lookalike-line-in-a-block-scalar-before-a-document/input.yaml": "literal block scalar: a '%' line inside a top-level scalar is taken for a directive and the scalar is read as empty",
 	ytsPrefix + "4ABK/in.yaml":    "flow mapping: a key before ':' with no value keeps the colon in the key",
 	ytsPrefix + "652Z/in.yaml":    "flow mapping: '?foo' is a plain key, not an explicit-key indicator",
 	ytsPrefix + "DK3J/in.yaml":    "folded block scalar with '#' in a text line is read as empty",

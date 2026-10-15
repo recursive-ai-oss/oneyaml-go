@@ -276,3 +276,25 @@ func TestCommentAfterEmptyItemHeadsNext(t *testing.T) {
 		t.Errorf("comments: %q %q / %q", items[0].HeadComment, items[0].LineComment, items[1].HeadComment)
 	}
 }
+
+// A document with a "---" marker and no content has nothing to hold its comments,
+// so the comment on the marker line and the ones after it are its foot comment, as
+// yaml.v3 reads it.
+func TestCommentsOfEmptyDocumentAreItsFoot(t *testing.T) {
+	for _, c := range []struct{ in, foot string }{
+		{"--- # c\n", "# c"},
+		{"--- # c", "# c"},
+		{"--- # c\n\n# d\n", "# c\n\n# d"},
+		{"--- # c\n# d\n", "# c\n# d"},
+		{"# a\n--- # c\n", "# a\n# c"},
+	} {
+		var n yaml.Node
+		if err := yaml.Unmarshal([]byte(c.in), &n); err != nil {
+			t.Fatal(err)
+		}
+		r := n.Content[0]
+		if n.FootComment != c.foot || r.HeadComment != "" || r.FootComment != "" || r.LineComment != "" {
+			t.Errorf("%q: foot %q, root comments %q %q %q", c.in, n.FootComment, r.HeadComment, r.LineComment, r.FootComment)
+		}
+	}
+}
