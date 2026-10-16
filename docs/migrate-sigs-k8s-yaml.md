@@ -10,7 +10,7 @@ Two ways to move from `sigs.k8s.io/yaml` (and its parent `ghodss/yaml`): keep yo
 go get oneyaml.dev/go@latest
 ```
 
-The package is named `yaml`, as the original is, so call sites compile unchanged. It is a compatibility adapter with listed differences, not a copy. `Marshal`, `Unmarshal`, `UnmarshalStrict`, `YAMLToJSON`, `YAMLToJSONStrict`, `JSONToYAML`, `JSONOpt` and `DisallowUnknownFields` keep their names and signatures. Like sigs.k8s.io/yaml, it reads YAML 1.1 scalars (`yes`, `on` and `0755`), expands merge keys, reads the first document only, and binds through the `json` tags of your types:
+The package is named `yaml`, as the original is, so call sites compile unchanged. It is a compatibility adapter with listed differences, not a copy. `Marshal`, `Unmarshal`, `UnmarshalStrict`, `YAMLToJSON`, `YAMLToJSONStrict`, `JSONToYAML`, `JSONOpt` and `DisallowUnknownFields` keep their names and signatures. The adapter does not provide `JSONObjectToYAMLObject`, which returns a type of the yaml.v2 module, or the `kyaml`, `yamlfmt`, `goyaml.v2` and `goyaml.v3` subpackages of sigs.k8s.io/yaml; code that uses them keeps its sigs.k8s.io/yaml import for those calls. Like sigs.k8s.io/yaml, it reads YAML 1.1 scalars (`yes`, `on` and `0755`), expands merge keys, reads the first document only, and binds through the `json` tags of your types:
 
 <!-- example: compat/k8syaml ExampleUnmarshal -->
 ```go

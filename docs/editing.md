@@ -397,7 +397,7 @@ fmt.Print(string(doc.Bytes()))
 
 ## Merge keys
 
-With `MergeKeys()`, a pointer also finds the keys that a `<<` merge brings into a mapping, with the precedence decoding gives them: a key the mapping has itself wins, and an earlier merge source wins over a later one. `Get`, the patch `test` operation and `Node.Lookup` read such keys. `Entries`, `Items` and `Len` describe the mapping as written, and `Get` of the merge key itself (`/web/<<`) reads the merge source as written.
+With `MergeKeys()`, a pointer also finds the keys that a `<<` merge brings into a mapping, with the precedence decoding gives them: a key the mapping has itself wins, and an earlier merge source wins over a later one. `Get`, the patch `test` operation, the `from` of a patch `copy`, `Node.Find` and `Node.Lookup` read such keys. `Entries`, `Items` and `Len` describe the mapping as written, and `Get` of the merge key itself (`/web/<<`) reads the merge source as written.
 
 A merged key belongs to its merge source, and changing it there would change every mapping that merges the source, as a write through an alias would. So:
 
@@ -441,7 +441,37 @@ fmt.Print(string(doc.Bytes()))
 //   image: caddy
 ```
 
-Merge sources are searched depth-first, each mapping once, so a source that merges itself, directly or through others, does not loop. The keys a search reads count against `MaxAliasNodes` ([Limits](limits.md#each-limit)). A search past it fails with a `*LimitError`, whether it serves `Get`, a patch or an edit, and `Node.Lookup` then finds nothing, because its false result cannot say why; `Node.Find` returns the `*LimitError`. Adding a new key with `Set` does not search merge sources.
+Merge sources are searched depth-first, each mapping once, so a source that merges itself, directly or through others, does not loop. The keys a search reads count against `MaxAliasNodes` ([Limits](limits.md#each-limit)). A search past it fails with a `*LimitError`, whether it serves `Get`, `Node.Find`, a patch or an edit. `Node.Lookup` reports such a search as `false`, the same as an absent key, so use `Node.Find` when the difference matters, as before you fall back to a default. Adding a new key with `Set` does not search merge sources.
+
+<!-- example: ExampleNode_Find -->
+```go
+// With MergeKeys, a search through merge sources is bounded by MaxAliasNodes.
+// Find tells a refused search from an absent key; Lookup reports both as false.
+src := "base: &base {a: 1, b: 2, c: 3, d: 4}\nuse:\n  <<: *base\n  own: 5\n"
+limits := oneyaml.DefaultLimits()
+limits.MaxAliasNodes = 2
+doc, err := oneyaml.Parse([]byte(src), oneyaml.MergeKeys(), oneyaml.Limits(limits))
+if err != nil {
+	log.Fatal(err)
+}
+var use oneyaml.Node
+if err := doc.Get("/use", &use); err != nil {
+	log.Fatal(err)
+}
+own, err := use.Find("own")
+fmt.Println(own.Value(), err)
+// Neither "missing" nor "d" is a key of use itself, so both need the merge
+// search, which reads more keys than the bound allows. The answer is the
+// *LimitError, not ErrNotFound: whether the key exists is unknown.
+_, err = use.Find("missing")
+fmt.Println(errors.Is(err, oneyaml.ErrNotFound), errors.As(err, new(*oneyaml.LimitError)))
+_, err = use.Find("d")
+fmt.Println(errors.Is(err, oneyaml.ErrNotFound), errors.As(err, new(*oneyaml.LimitError)))
+// Output:
+// 5 <nil>
+// false true
+// false true
+```
 
 Without `MergeKeys()`, `<<` is an ordinary key, and pointers address only the keys as written.
 
@@ -466,7 +496,7 @@ if errors.As(err, &ee) {
 
 ## Reading while you edit
 
-A `Node` is a view of the document as it was when you read it. An edit makes every `Node` read before it stale: `Stale` reports `true`, `Decode` and `Pointer` return an error matching `ErrStaleNode`, and the other methods return zero values. A zero value looks like an answer (`Value` of a stale node is `""`, the same as an empty scalar), so `Node.Err` is the check: it is `nil` for a node you can read, matches `ErrStaleNode` for a stale one, and matches `ErrNotFound` for the zero `Node`, such as the one a failed `Lookup` returns. `Lookup` returns only a boolean, so a false result cannot say whether the key is absent, the node is stale or a merge search was refused by a limit; `Node.Find(key)` returns the same node with an error that does (`ErrNotFound`, `ErrStaleNode` or a `*LimitError`). Reading the node again after an edit is still the better habit.
+A `Node` is a view of the document as it was when you read it. An edit makes every `Node` read before it stale: `Stale` reports `true`, `Decode` and `Pointer` return an error matching `ErrStaleNode`, and the other methods return zero values. A zero value looks like an answer (`Value` of a stale node is `""`, the same as an empty scalar), so `Node.Err` is the check: it is `nil` for a node you can read, matches `ErrStaleNode` for a stale one, and matches `ErrNotFound` for the zero `Node`, such as the one a failed `Lookup` returns. To look up a key, use `Node.Find(key)`: it returns the value and a `nil` error, or an error that says why there is no value. The error matches `ErrNotFound` when the key is absent, `ErrStaleNode` when the node was read before an edit, and `ErrAmbiguousKey` when a merge brings the key in from two places of one source, and it is a `*LimitError` when a merge search was refused ([Merge keys](#merge-keys)). `Node.Lookup` is the short form for when any miss means "no value": it returns `false` in all of these cases. Reading the node again after an edit is still the better habit.
 
 <!-- example: ExampleNode_Err -->
 ```go

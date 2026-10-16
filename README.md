@@ -17,7 +17,7 @@ Benchmark results will come in a later update, measured with the [oneyaml-kit](h
 - **Minimal-diff edits.** `Document.Set` rewrites one value in its own style and falls back to the nearest style that can hold the new value. Reading it back with this package always gives exactly the value you set. Plainness follows the Core schema, so a new plain `yes` is a string here but a boolean to a YAML 1.1 reader; pass [`YAML11Strings()`](docs/editing.md#when-the-style-cannot-hold-the-value) when such programs also read the file. `Rename` changes a key in place, and `SetHeadComment` and `SetLineComment` write comments. See [Editing](docs/editing.md).
 - **Patches.** JSON Patch operations (RFC 6902) with YAML equality for `test`, so `1` and `1.0` [differ](docs/patches.md#the-test-operation), plus RFC 6901 pointers and RFC 7396 merge patch. They apply to a YAML file atomically and keep its layout. See [Patches](docs/patches.md).
 - **Bounded by default.** Nesting depth, alias expansion, the digits of a number and the work of a patch are bounded unless you pass `NoLimits()`. Input size, documents per stream and scalar length are bounded only with `Untrusted()`; select it, and size it with `Limits`, for input you do not control. Your own hooks run outside these bounds, and the compat packages have no `Untrusted()` mode. A panic caused by input is treated as a [security bug](SECURITY.md). No `unsafe` and no cgo. See [Limits](docs/limits.md).
-- **Compatibility adapters for yaml.v3 and sigs.k8s.io/yaml.** One import change keeps your call sites; the [known differences](#compatibility-adapters-for-yamlv3-and-sigsk8sioyaml) are listed. See [Migrating from yaml.v3](docs/migrate-yaml-v3.md) and [from sigs.k8s.io/yaml](docs/migrate-sigs-k8s-yaml.md).
+- **Compatibility adapters for yaml.v3 and sigs.k8s.io/yaml.** For the common API listed in each migration guide, one import change keeps your call sites; the [known differences](#compatibility-adapters-for-yamlv3-and-sigsk8sioyaml) are listed. See [Migrating from yaml.v3](docs/migrate-yaml-v3.md) and [from sigs.k8s.io/yaml](docs/migrate-sigs-k8s-yaml.md).
 - **No dependencies** outside the standard library.
 
 ## Install
@@ -118,16 +118,19 @@ The library is fuzzed with Go's native fuzzing, and its patch and compat package
 
 ## Compatibility adapters for yaml.v3 and sigs.k8s.io/yaml
 
-The compat packages are adapters with the same names and signatures as their targets, so changing the import path keeps your call sites; the package name stays `yaml`.
+The compat packages are adapters for the common API of their targets, listed in each migration guide. If your code uses that API, changing the import path keeps your call sites; the package name stays `yaml`.
 
 ```sh
 # gopkg.in/yaml.v3  ->  oneyaml.dev/go/compat/yamlv3
 # sigs.k8s.io/yaml  ->  oneyaml.dev/go/compat/k8syaml
 ```
 
+Swapping your import does not change the code of your dependencies. A type from another module whose `UnmarshalYAML` takes gopkg.in/yaml.v3's `*yaml.Node` cannot be called by `compat/yamlv3`, so reading into it returns an error that names the type. (yaml.v3 itself would skip such a method and fill the type field by field, without what the method checks.) Read that part through a wrapper type in your own code whose hook the adapter can call, or decode that part with yaml.v3. [Hooks you do not own](docs/migrate-yaml-v3.md#check-after-the-swap) has the details.
+
 They read YAML 1.1 forms the way their targets do, but they are not identical. Known gaps and differences:
 
-- **yaml.v3:** comments land on the same nodes as in yaml.v3 in the common layouts, but comment lines inside a flow collection are not written back.
+- **yaml.v3 comments:** comments land on the same nodes as in yaml.v3 in the common layouts, and are written back where yaml.v3 writes them, inside flow collections too. A comment line just before the closing bracket of a flow collection is not read, so it is lost. Where yaml.v3 writes text that does not read back, the adapter writes text that does.
+- **sigs.k8s.io/yaml:** `JSONObjectToYAMLObject` and the subpackages of sigs.k8s.io/yaml are not provided.
 - **Numbers:** in `compat/yamlv3`, a plain `3.5` read into an integer field is a type error instead of being truncated. In `compat/k8syaml`, a float read into a string field keeps its full precision, where sigs.k8s.io/yaml rounds it to 32 bits.
 - **Valid and invalid input:** both read valid YAML that their targets refuse, `compat/yamlv3` refuses invalid YAML that yaml.v3 accepts, and both return errors where their targets panic.
 - **Limits:** both always run with the default limits and have no `Untrusted()` mode.

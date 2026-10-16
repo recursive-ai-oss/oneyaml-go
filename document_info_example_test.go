@@ -84,6 +84,9 @@ func ExampleNode_Find() {
 	}
 	own, err := use.Find("own")
 	fmt.Println(own.Value(), err)
+	// Neither "missing" nor "d" is a key of use itself, so both need the merge
+	// search, which reads more keys than the bound allows. The answer is the
+	// *LimitError, not ErrNotFound: whether the key exists is unknown.
 	_, err = use.Find("missing")
 	fmt.Println(errors.Is(err, oneyaml.ErrNotFound), errors.As(err, new(*oneyaml.LimitError)))
 	_, err = use.Find("d")

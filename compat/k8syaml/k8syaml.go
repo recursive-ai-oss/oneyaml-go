@@ -1,6 +1,7 @@
 // Package yaml is a compatibility adapter for sigs.k8s.io/yaml (and its parent
-// ghodss/yaml) built on oneyaml. It has the same names and signatures, and the
-// differences are listed below.
+// ghodss/yaml) built on oneyaml. Its functions have the names and signatures of
+// the original's, which it covers except for what "Not covered" lists at the
+// end, and the differences are listed below.
 //
 // # Migrating
 //

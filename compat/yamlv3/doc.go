@@ -69,8 +69,10 @@
 //     own Node again counts against the same budget, which yaml.v3 starts afresh;
 //   - what yaml.v3 writes but cannot read back is written correctly: a block
 //     scalar that starts with a space or a line break gets the right indentation
-//     indicator, the key << is quoted, and U+2028 or U+2029 inside a quoted scalar
-//     is not followed by indentation;
+//     indicator, the key << is quoted, U+2028 or U+2029 inside a quoted scalar
+//     is not followed by indentation, and after a comment inside a flow
+//     collection that sits in a block collection, a closing bracket or comma
+//     that yaml.v3 would start a line with, outside the collection, is indented;
 //   - a top-level block scalar's indentation indicator counts from column -1, as
 //     the specification says, where yaml.v3 counts from 0;
 //   - Encoder.SetIndent takes effect before the first Encode, which is when

@@ -29,12 +29,12 @@ fmt.Printf("%+v\n", oneyaml.UntrustedLimits())
 | `LimitSet` field | What it bounds | If it is exceeded |
 |---|---|---|
 | `MaxDepth` | nesting of collections, in input and when writing | `*LimitError`, `Limit` is `depth` |
-| `MaxAliasNodes` | nodes produced by expanding aliases; with `MergeKeys()`, also the keys one pointer lookup or `Node.Lookup` reads in `<<` merge sources ([Merge keys](editing.md#merge-keys)) | `*LimitError`; `Node.Lookup` finds nothing; `Node.Find` returns the `*LimitError` |
+| `MaxAliasNodes` | nodes produced by expanding aliases; with `MergeKeys()`, also the keys one pointer lookup, `Node.Find` or `Node.Lookup` reads in `<<` merge sources ([Merge keys](editing.md#merge-keys)) | `*LimitError`, also from `Node.Find`; `Node.Lookup` reports it as `false`, like an absent key, so use `Node.Find` to tell the two apart |
 | `MaxAliasBytes` | scalar bytes produced by expanding aliases; also the bytes a patch copies | `*LimitError` |
 | `MaxInputBytes` | the size of the input, and the size of a document after a patch; the text of one patch or merge patch may be an eighth of it, but never less than 64 KiB and never more than the limit ([Bounds](patches.md#bounds)) | `*LimitError` |
 | `MaxScalarBytes` | the length of one scalar | `*LimitError` |
 | `MaxDocuments` | documents in one stream | `*LimitError` |
-| `MaxNumberDigits` | digits of an integer or float scalar when it is converted to a number; text kept as text is never limited | `*LimitError` |
+| `MaxNumberDigits` | digits of an integer or float scalar when it is converted to a number, including a plain number used as a key in a part of the input the target ignores, because such keys are compared as numbers to find repeated keys; text kept as text is never limited | `*LimitError` |
 | `MaxPatchWorkRatio` | text that one patch's edits may read again, as a multiple of the document plus the patch (and 16 MiB on top) | `*LimitError`, the document is unchanged |
 
 An alias bound left at its default rises with the document: it is at least the figure shown above and at least ten times the document's own nodes or bytes (two times with `Untrusted`), so a large document that reuses its anchors is not refused. An alias bound you set with `Limits` applies exactly as given.

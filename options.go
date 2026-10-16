@@ -50,6 +50,8 @@ type LimitSet struct {
 	// very long decimal into a big.Int takes time that grows with the square of
 	// its length, so a few megabytes of digits could otherwise keep a call busy
 	// for minutes. A longer number makes the call fail with a *LimitError.
+	// A plain number used as a mapping key is converted to find repeated keys,
+	// even in a part of the input the target ignores, so it is limited too.
 	// Reading the scalar as a string, or keeping its text in a Node or Document,
 	// is never limited because no conversion happens.
 	MaxNumberDigits int
