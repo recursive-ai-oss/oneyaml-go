@@ -22,6 +22,9 @@ import (
 // null in the target is kept unless the patch names it. Merging an object into a
 // mapping that is an alias is refused (ErrAliasWrite) because it would change
 // every other use of the anchor; an alias to something else is replaced.
+// With MergeKeys, a null member for a key that only a "<<" merge source has is
+// refused (ErrAliasWrite) for the same reason; a member that sets such a key
+// adds a key of the mapping's own.
 //
 // Text whose first significant byte is "{" or "[" is read as JSON only, with JSON
 // errors, and so is any text that is valid JSON. Other text is read as one YAML

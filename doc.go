@@ -56,7 +56,8 @@
 // Document prints as its text. An edit that cannot be made, such as one that would write through an
 // alias, returns an [*EditError] and leaves the document unchanged.
 //
-// An edit makes every [Node] read before it stale ([Node.Stale]). A range over
+// An edit makes every [Node] read before it stale; [Node.Err] says when a node
+// reads as zero values because it is stale or was not found. A range over
 // [Node.Items] or [Node.Entries] may edit the document, as a loop over a map may
 // change the map: it finds its collection again and goes on with fresh nodes.
 // Edits that add or remove entries may make such a loop skip or repeat some; for

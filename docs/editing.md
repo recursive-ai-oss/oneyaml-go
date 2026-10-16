@@ -226,7 +226,7 @@ fmt.Println(errors.Is(err, oneyaml.ErrKeyExists))
 - the key carries an anchor that an alias uses (`ErrAnchorInUse`), because the alias would read the new key too. This is the same rule as for `Remove`. An anchor on the value does not count;
 - the key is empty, a collection, an alias or a block scalar, or is the merge key `<<`; the new key is longer than 1000 bytes or is not valid UTF-8; or a tag on the key does not fit the new key (`ErrUnsupportedEdit`).
 
-A rename re-parses only the lines around the key, but it reads every key of the mapping to check that the new key is not already there, so many renames in a very wide mapping cost more than the same number of `Set` calls.
+Like `Set`, a rename parses again only the entries around the key where it can, rather than the whole document; inside a flow collection, for one, it parses the whole document again. To check that the new key is not already there, it uses an index of the mapping's keys, built the first time it is needed and kept up to date by later renames, so a run of renames through one wide mapping does not read every key again for each rename.
 
 ## Comments
 
@@ -315,6 +315,8 @@ Some places cannot hold a comment, and the setters refuse them with `ErrUnsuppor
 
 Text that is not valid UTF-8, that holds a control character or a line separator other than the line feed, or, for a line comment, that holds a line break, is refused with `ErrInvalidComment`. In every case the document reads back with the same values, and only the comment lines change.
 
+Like `Set` and `Rename`, the comment setters parse again only the entries around the comment where they can, so a run of comment edits in a large document does not read the whole document for each one. Inside a flow collection, for one, they parse the whole document again.
+
 ## Anchors, aliases and tags
 
 An anchor stays on a replaced value, so every alias reads the new value. A tag stays when the new value reads back as exactly that value under it, and is dropped otherwise. Replacing an alias node itself writes the new value in its place.
@@ -351,8 +353,6 @@ fmt.Print(string(doc.Bytes()))
 // b: 9
 // t: !custom bar
 ```
-
-With `MergeKeys()`, pointers also read the keys a `<<` merge brings into a mapping, with the precedence decoding uses: a key the mapping has itself wins, and an earlier merge source wins over a later one. In `use: {<<: *base, z: 3}`, `Get("/use/x")` finds the `x` of `base`, and a patch `test` reads it too. Merge sources are searched depth-first, each mapping once; the keys read count against `MaxAliasNodes`, and a search past it fails with a `*LimitError` (`Node.Lookup` finds nothing). `Node.Lookup` follows merges the same way; `Entries`, `Items` and `Len` describe the mapping as written. Writes never go into a merge source, which would be a write through an alias. `Set("/use/x", v)` adds an explicit `x` to `use`, which takes precedence over the merged one. `Remove` and patch `remove` or `replace` of a key that only a merge has are refused with `ErrAliasWrite`, as is a write below it (`/use/x/y`) or through the merge key (`/use/<</x`). Without `MergeKeys()` the `<<` key is an ordinary key and pointers address only the keys as written.
 
 Two edits are refused because they would change a value you did not address:
 
@@ -395,6 +395,56 @@ fmt.Print(string(doc.Bytes()))
 // copy: *b
 ```
 
+## Merge keys
+
+With `MergeKeys()`, a pointer also finds the keys that a `<<` merge brings into a mapping, with the precedence decoding gives them: a key the mapping has itself wins, and an earlier merge source wins over a later one. `Get`, the patch `test` operation and `Node.Lookup` read such keys. `Entries`, `Items` and `Len` describe the mapping as written, and `Get` of the merge key itself (`/web/<<`) reads the merge source as written.
+
+A merged key belongs to its merge source, and changing it there would change every mapping that merges the source, as a write through an alias would. So:
+
+- `Set` on a key that only a merge source has adds an explicit key to the mapping, which overrides the merged one;
+- `Remove`, the patch operations `remove`, `replace` and `move`, and a merge patch member `null`, of such a key are refused with `ErrAliasWrite`, as is any write below it (`/web/image/tag`) or through the merge key (`/web/<</image`). A patch `add` or a merge patch member that sets such a key adds an explicit key, as `Set` does;
+- a patch `copy` reads its `from` as written, so a `copy` from such a key fails with `ErrNotFound`.
+
+<!-- example: ExampleMergeKeys_pointer -->
+```go
+src := "base: &base {image: nginx, port: 80}\nweb:\n  <<: *base\n  port: 8080\n"
+doc, err := oneyaml.Parse([]byte(src), oneyaml.MergeKeys())
+if err != nil {
+	log.Fatal(err)
+}
+var image string
+var port int
+if err := doc.Get("/web/image", &image); err != nil { // from the merge
+	log.Fatal(err)
+}
+if err := doc.Get("/web/port", &port); err != nil { // the mapping's own key wins
+	log.Fatal(err)
+}
+fmt.Println(image, port)
+
+// Remove would have to write into the merge source, so it is refused.
+err = doc.Remove("/web/image")
+fmt.Println(errors.Is(err, oneyaml.ErrAliasWrite))
+
+// Set adds a key of its own to web, which overrides the merged one.
+if err := doc.Set("/web/image", "caddy"); err != nil {
+	log.Fatal(err)
+}
+fmt.Print(string(doc.Bytes()))
+// Output:
+// nginx 8080
+// true
+// base: &base {image: nginx, port: 80}
+// web:
+//   <<: *base
+//   port: 8080
+//   image: caddy
+```
+
+Merge sources are searched depth-first, each mapping once, so a source that merges itself, directly or through others, does not loop. The keys a search reads count against `MaxAliasNodes` ([Limits](limits.md#each-limit)). A search past it fails with a `*LimitError`, whether it serves `Get`, a patch or an edit, and `Node.Lookup` then finds nothing. Adding a new key with `Set` does not search merge sources.
+
+Without `MergeKeys()`, `<<` is an ordinary key, and pointers address only the keys as written.
+
 ## Errors
 
 An edit that cannot be made leaves the document unchanged and returns an `*EditError`. It names the operation and the pointer, and `errors.Is` matches its kind against `ErrNotFound`, `ErrAliasWrite`, `ErrAmbiguousKey`, `ErrAnchorInUse`, `ErrUnsupportedEdit`, `ErrKeyExists`, `ErrNotAnEntry`, `ErrInvalidComment` and the other sentinel errors.
@@ -416,7 +466,30 @@ if errors.As(err, &ee) {
 
 ## Reading while you edit
 
-A `Node` is a view of the document as it was when you read it. An edit makes every `Node` read before it stale: `Stale` reports `true`, `Decode` and `Pointer` return an error matching `ErrStaleNode`, and the other methods return zero values. A zero value looks like an answer (`Value` of a stale node is `""`, the same as an empty scalar), so `Node.Err` is the check: it is `nil` for a readable node and matches `ErrStaleNode` for a stale one. Reading the node again after an edit is still the better habit.
+A `Node` is a view of the document as it was when you read it. An edit makes every `Node` read before it stale: `Stale` reports `true`, `Decode` and `Pointer` return an error matching `ErrStaleNode`, and the other methods return zero values. A zero value looks like an answer (`Value` of a stale node is `""`, the same as an empty scalar), so `Node.Err` is the check: it is `nil` for a node you can read, matches `ErrStaleNode` for a stale one, and matches `ErrNotFound` for the zero `Node`, such as the one a failed `Lookup` returns. Reading the node again after an edit is still the better habit.
+
+<!-- example: ExampleNode_Err -->
+```go
+doc, err := oneyaml.Parse([]byte("title: ''\nsize: 3\n"))
+if err != nil {
+	log.Fatal(err)
+}
+var title oneyaml.Node
+if err := doc.Get("/title", &title); err != nil {
+	log.Fatal(err)
+}
+fmt.Printf("%q %v\n", title.Value(), title.Err())
+
+if err := doc.Set("/size", 4); err != nil {
+	log.Fatal(err)
+}
+// The edit made title stale. Value is "" again, as for an empty scalar,
+// and only Err says the node can no longer be read.
+fmt.Printf("%q %v\n", title.Value(), errors.Is(title.Err(), oneyaml.ErrStaleNode))
+// Output:
+// "" <nil>
+// "" true
+```
 
 A `range` over `Items` or `Entries` may edit the document, as a loop over a Go map may change the map. After an edit, the loop finds its collection again by the pointer it had before the edit (an edit that inserts or removes items of a list on the way to it moves the pointer along), and goes on at the next position with fresh nodes. The loop ends if the collection is removed or replaced, is no longer the same kind, or has no pointer. Entries added at the end during the loop are yielded, so a body that adds one on every pass never ends. Any number of loops, over one collection or several, can follow edits at once. Changing values as you go is the simple case:
 

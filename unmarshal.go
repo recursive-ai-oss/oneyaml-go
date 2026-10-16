@@ -76,10 +76,10 @@ func (s *session) release() {
 // scalar, then json.Unmarshaler. A json.Unmarshaler is given the value as JSON
 // text, so types written for encoding/json (Kubernetes quantities, say) need no
 // YAML code; a value JSON cannot hold, such as a mapping with a key that is not a
-// string or .nan, is a *TypeError. A plain number is passed with the digits as
-// written, so 12345678901234567890.5 reaches UnmarshalJSON unrounded; inside a
-// mapping or sequence, integers keep every digit and floats are rounded to
-// float64. A type with an UnmarshalYAML method of any other form, yaml.v3's
+// string or .nan, is a *TypeError. Numbers are passed with the digits as
+// written, on their own or inside a mapping or sequence, so
+// 12345678901234567890.5 reaches UnmarshalJSON unrounded; a form JSON cannot
+// spell, such as 0x1F or .5, is rewritten as a JSON number. A type with an UnmarshalYAML method of any other form, yaml.v3's
 // UnmarshalYAML(*yaml.Node) error for one, is a *TypeError and is not filled by
 // its fields. A null value clears a pointer target without
 // calling any hook; of the other targets, only an Unmarshaler is called for a
@@ -99,10 +99,14 @@ func (s *session) release() {
 // .nan keys are one key, except in a map with string keys, whose keys are
 // compared as text. A key that no field of a struct target has counts too, as do
 // the keys inside a value the target ignores, so a: 1 twice is refused even
-// when the struct has no field a. A key written as an alias is reported at the
-// alias.
-// Merge keys are ordinary keys unless the MergeKeys option is given. Unknown
-// struct keys are skipped unless KnownFields is given.
+// when the struct has no field a. A repeated key written as an alias is
+// reported at the alias. Merge keys are ordinary keys unless the MergeKeys
+// option is given. Unknown struct keys are skipped unless KnownFields is given.
+//
+// A \u or \U escape in a double-quoted scalar must name a Unicode scalar
+// value. An escaped UTF-16 surrogate pair, as JSON writes a character past
+// U+FFFF, is one character ("\ud83d\ude00" is U+1F600); a lone or mismatched
+// surrogate, or a value past U+10FFFF, is a *SyntaxError.
 //
 // Aliases are decoded by replaying the anchored node; the alias limits bound
 // how much that may produce. If data holds more than one document only the

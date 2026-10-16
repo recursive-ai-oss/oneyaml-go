@@ -80,14 +80,22 @@ func ExampleMergeKeys_pointer() {
 	}
 	var image string
 	var port int
-	_ = doc.Get("/web/image", &image) // from the merge
-	_ = doc.Get("/web/port", &port)   // the mapping's own key wins
+	if err := doc.Get("/web/image", &image); err != nil { // from the merge
+		log.Fatal(err)
+	}
+	if err := doc.Get("/web/port", &port); err != nil { // the mapping's own key wins
+		log.Fatal(err)
+	}
 	fmt.Println(image, port)
 
 	// Remove would have to write into the merge source, so it is refused.
-	fmt.Println(errors.Is(doc.Remove("/web/image"), oneyaml.ErrAliasWrite))
+	err = doc.Remove("/web/image")
+	fmt.Println(errors.Is(err, oneyaml.ErrAliasWrite))
+
 	// Set adds a key of its own to web, which overrides the merged one.
-	_ = doc.Set("/web/image", "caddy")
+	if err := doc.Set("/web/image", "caddy"); err != nil {
+		log.Fatal(err)
+	}
 	fmt.Print(string(doc.Bytes()))
 	// Output:
 	// nginx 8080

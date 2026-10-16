@@ -14,7 +14,8 @@ var (
 	// ErrNilDocument means a method that changes or decodes a document was called on
 	// a nil *Document, which is what a failed Parse returns.
 	ErrNilDocument = errors.New("oneyaml: nil Document")
-	// ErrAliasWrite means an edit would write through an alias.
+	// ErrAliasWrite means an edit would write through an alias, or, with
+	// MergeKeys, into the "<<" merge source a key comes from.
 	ErrAliasWrite = errors.New("oneyaml: write through an alias")
 	// ErrAmbiguousKey means a key occurs more than once, so an edit cannot choose.
 	ErrAmbiguousKey = errors.New("oneyaml: ambiguous key")

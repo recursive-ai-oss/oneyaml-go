@@ -76,7 +76,13 @@ func PatchTest(path string, v any) PatchOp { return PatchOp{Op: "test", Path: pa
 //     patch past either bound fails with a *LimitError and changes nothing.
 //     The text its edits have to parse again is bounded too (MaxPatchWorkRatio),
 //     and with a MaxInputBytes limit the patch text itself may not be longer than
-//     an eighth of it (but up to 64 KiB, and never more than the limit). NoLimits removes the bounds.
+//     an eighth of it (never less than 64 KiB, and never more than the limit).
+//     NoLimits removes the bounds.
+//   - With MergeKeys, "test" reads a key that a "<<" merge brings in, as Get
+//     does. "remove", "replace" and "move" of a key that only a merge source
+//     has, and writes below it, are refused (ErrAliasWrite), because they would
+//     change the source; "add" of such a key adds a key of the mapping's own.
+//     The "from" of "copy" addresses only keys as written.
 //   - New members go at the end of their mapping, in the style of their
 //     siblings; comments outside the edited values stay.
 //

@@ -155,6 +155,9 @@ type editWork struct {
 //
 // A stream with no documents (empty input) yields a Document of length 0.
 // Syntax errors are reported as *SyntaxError and exceeded limits as *LimitError.
+// A \u or \U escape that is not a Unicode scalar value, such as a lone
+// surrogate, is a *SyntaxError, as it is for [Unmarshal]; an escaped surrogate
+// pair, as JSON writes, is one character.
 func Parse(data []byte, opts ...Option) (*Document, error) {
 	cfg := newConfig(opts)
 	if m := cfg.limits.MaxInputBytes; m > 0 && len(data) > m {
@@ -339,8 +342,10 @@ func (d *Document) Root() Node {
 // siblings. Reading the document back gives exactly v.
 //
 // Set refuses to write below an alias (ErrAliasWrite) and a key that occurs twice
-// (ErrAmbiguousKey). Replacing the alias node itself is allowed. On any error the
-// document is unchanged and the error is an *EditError.
+// (ErrAmbiguousKey). Replacing the alias node itself is allowed. With MergeKeys,
+// setting a key that only a "<<" merge source has adds a key of the mapping's
+// own, which overrides the merged one; the source is not changed. On any error
+// the document is unchanged and the error is an *EditError.
 func (d *Document) Set(ptr string, v any) error {
 	if d.isNil() {
 		return &EditError{Op: "set", Pointer: ptr, Kind: ErrNilDocument}
@@ -356,7 +361,8 @@ func (d *Document) Set(ptr string, v any) error {
 // comment on the line of the entry, a comment directly above it and a comment
 // inside its value go with it. Removing the last entry of a nested collection
 // leaves {} or []. Removing an anchored node that an alias still uses is refused
-// (ErrAnchorInUse).
+// (ErrAnchorInUse). With MergeKeys, removing a key that only a "<<" merge source
+// has is refused (ErrAliasWrite), because it would change the source.
 func (d *Document) Remove(ptr string) error {
 	if d.isNil() {
 		return &EditError{Op: "remove", Pointer: ptr, Kind: ErrNilDocument}

@@ -107,7 +107,7 @@ fmt.Print(string(doc.Bytes()))
 // "2": dos
 ```
 
-A pointer addresses the keys written in the file, so a key that a `<<` merge brings in is not found; [Editing](editing.md#anchors-aliases-and-tags) has the merge-key rules. If two keys have the same text the pointer is ambiguous and the operation fails with `ErrAmbiguousKey`. A key that is itself a collection cannot be addressed by a pointer. A pointer that is not valid fails with `ErrInvalidPointer`; a patch that is not valid fails with `ErrInvalidPatch`. Patch text must be UTF-8.
+A pointer addresses the keys written in the file. With `MergeKeys()`, `test` also reads a key that a `<<` merge brings in, and `remove`, `replace` and `move` of such a key are refused with `ErrAliasWrite`; [Merge keys](editing.md#merge-keys) has the rules. If two keys have the same text the pointer is ambiguous and the operation fails with `ErrAmbiguousKey`. A key that is itself a collection cannot be addressed by a pointer. A pointer that is not valid fails with `ErrInvalidPointer`; a patch that is not valid fails with `ErrInvalidPatch`. Patch text must be UTF-8.
 
 ## Patches written in YAML
 
@@ -151,7 +151,33 @@ A YAML patch fails with `ErrInvalidPatch` when it:
 
 A YAML patch nested deeper than the depth limit fails with a `*LimitError`.
 
-`ApplyMergePatch` reads YAML the same way: text that starts with `{` or `[`, or is valid JSON, is JSON, and any other text is one YAML document of any kind (a mapping, usually) with the same refusals as a YAML list of operations.
+`ApplyMergePatch` reads YAML the same way: text that starts with `{` or `[`, or is valid JSON, is JSON, and any other text is one YAML document of any kind (a mapping, usually) with the same refusals as a YAML list of operations. The members of a merge patch are named by strings, so a mapping key that is not a string, such as `1: 5`, `true: 5` or an empty key, is refused with `ErrInvalidPatch` at any depth, with its line and column. Quote it (`"1": 5`) to name the member `1`.
+
+<!-- example: ExampleDocument_ApplyMergePatch_yaml -->
+```go
+doc, err := oneyaml.Parse([]byte(`name: api
+limits:
+  cpu: 1   # cores
+  mem: 2
+`))
+if err != nil {
+	log.Fatal(err)
+}
+err = doc.ApplyMergePatch([]byte(`limits:
+  cpu: 4
+  mem: null
+tier: gold
+`))
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Print(string(doc.Bytes()))
+// Output:
+// name: api
+// limits:
+//   cpu: 4   # cores
+// tier: gold
+```
 
 ## Aliases
 
@@ -218,7 +244,7 @@ fmt.Println(errors.Is(err, oneyaml.ErrTestFailed))
 
 ## Merge patches
 
-A merge patch deletes a member with `null`, merges an object into the mapping it meets and replaces anything else, so an array replaces the whole sequence. An empty object changes nothing. Deletions are applied after the other members of the same mapping. Merging an object into an alias is refused:
+A merge patch deletes a member with `null`, merges an object into the mapping it meets and replaces anything else, so an array replaces the whole sequence. An empty object changes nothing. Deletions are applied after the other members of the same mapping. With `MergeKeys()`, a member `null` for a key that only a `<<` merge source has is refused with `ErrAliasWrite` ([Merge keys](editing.md#merge-keys)). Merging an object into an alias is refused:
 
 <!-- example: ExampleDocument_ApplyMergePatch_alias -->
 ```go

@@ -29,9 +29,9 @@ fmt.Printf("%+v\n", oneyaml.UntrustedLimits())
 | `LimitSet` field | What it bounds | If it is exceeded |
 |---|---|---|
 | `MaxDepth` | nesting of collections, in input and when writing | `*LimitError`, `Limit` is `depth` |
-| `MaxAliasNodes` | nodes produced by expanding aliases | `*LimitError` |
+| `MaxAliasNodes` | nodes produced by expanding aliases; with `MergeKeys()`, also the keys one pointer lookup or `Node.Lookup` reads in `<<` merge sources ([Merge keys](editing.md#merge-keys)) | `*LimitError`; `Node.Lookup` finds nothing |
 | `MaxAliasBytes` | scalar bytes produced by expanding aliases; also the bytes a patch copies | `*LimitError` |
-| `MaxInputBytes` | the size of the input; the text of one patch may use an eighth of it (at least 64 KiB) | `*LimitError` |
+| `MaxInputBytes` | the size of the input, and the size of a document after a patch; the text of one patch or merge patch may be an eighth of it, but never less than 64 KiB and never more than the limit ([Bounds](patches.md#bounds)) | `*LimitError` |
 | `MaxScalarBytes` | the length of one scalar | `*LimitError` |
 | `MaxDocuments` | documents in one stream | `*LimitError` |
 | `MaxNumberDigits` | digits of an integer or float scalar when it is converted to a number; text kept as text is never limited | `*LimitError` |
@@ -113,7 +113,7 @@ for _, in := range []string{deep, long} {
 
 ## Untrusted input
 
-`Untrusted()` lowers the depth and alias bounds and adds a cap on input size, scalar size, documents per stream, the digits of a number and the work of a patch. In the example, 2000 nested sequences pass under the default limits and fail under `Untrusted()`:
+`Untrusted()` lowers the depth and alias bounds and adds a cap on input size, scalar size, documents per stream, the digits of a number, and the work and text size of a patch. In the example, 2000 nested sequences pass under the default limits and fail under `Untrusted()`:
 
 <!-- example: ExampleUntrusted -->
 ```go

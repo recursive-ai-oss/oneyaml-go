@@ -6,13 +6,34 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ### Added
 
-- `ApplyMergePatch` also reads a merge patch written in YAML, with the same rules and refusals as a YAML `ApplyPatch`. Text that starts with `{` or `[`, or is valid JSON, is still read as JSON. A mapping key that is not a string (`1: 5`, `true: 5`, an empty key) is refused at any depth, with its line and column, because a merge patch is a JSON object; quote the name to use it.
+- `Node.Err` says why a `Node` reads as zero values: it is `nil` for a node you can read, matches `ErrStaleNode` when the document was edited after the node was read, and matches `ErrNotFound` for the zero `Node`, such as the one a failed `Lookup` returns. `Value` of a stale node is `""`, the same as an empty scalar, so `Err` is the check to make. See [Reading while you edit](docs/editing.md#reading-while-you-edit).
+- With `MergeKeys()`, a pointer also finds the keys a `<<` merge brings into a mapping, with the precedence decoding gives them: `Document.Get`, the patch `test` operation and `Node.Lookup` read them. `Set` on such a key adds an explicit key that overrides the merged one. Each merge source is searched once, and the keys read count against `MaxAliasNodes`. See [Merge keys](docs/editing.md#merge-keys) and the Changed entry below.
+- `ApplyMergePatch` also reads a merge patch written in YAML, with the same refusals as a YAML `ApplyPatch`. Text that starts with `{` or `[`, or is valid JSON, is still read as JSON. A mapping key that is not a string (`1: 5`, `true: 5`, an empty key) is refused at any depth with its line and column, because merge patch members are named by strings; quote the name to use it. See [Patches written in YAML](docs/patches.md#patches-written-in-yaml).
 
 ### Changed
 
-- Under a `MaxInputBytes` limit (`Untrusted()` sets one), the text of a patch or merge patch may be at most an eighth of it, though never less than 64 KiB. A 40 MiB patch into a small document used to be read, at about 35 times its size in memory.
+- **Breaking:** more repeated mapping keys are duplicate-key errors, so some input that used to load is refused:
+  - repeated `.nan` keys, in any spelling (`.nan` and `.NaN` are one key), read into `any`, a `map[float64]T` or another map whose keys are not strings. A map with string keys still compares keys as text;
+  - a repeated key that no field of a struct target has, and a key repeated inside a value the target ignores. `a: 1` twice into a struct with no field `a` used to load;
+  - `compat/yamlv3` reports a key repeated at the top of a mapping its target ignores, as yaml.v3 does. This removes a listed gap.
+
+  Fix such input by removing the repeated key. The rules are in the [`Unmarshal` reference](https://pkg.go.dev/oneyaml.dev/go#Unmarshal).
+- **Breaking:** `Parse` refuses a `\u` or `\U` escape that is not a Unicode scalar value, such as a lone surrogate (`"\ud83d"`), a low surrogate before a high one, or a value past `U+10FFFF`, with a `*SyntaxError`. `Parse` used to accept such a document, and only `Get` or `Decode` of the value failed. `Unmarshal` already refused it. An escaped surrogate pair is now read as one character (see Fixed).
+- **Breaking:** with `MergeKeys()`, an edit that would change a key only a merge source has is refused with `ErrAliasWrite`, because it would write into the source through an alias: `Remove`, the patch operations `remove`, `replace` and `move`, a merge patch member `null` that would delete it, and any write below such a key or through the merge key itself (`/use/<</x`). These used to fail with `ErrNotFound`, and the merge patch used to succeed without changing anything. A `copy` whose `from` is such a key still fails with `ErrNotFound`. Without `MergeKeys()` nothing changes. See [Merge keys](docs/editing.md#merge-keys).
+- Under a `MaxInputBytes` limit (`Untrusted()` sets one), the text of a patch or merge patch may be at most an eighth of it, though never less than 64 KiB and never more than the limit. Any patch text used to be read in full, into a list of operations that takes far more memory than the text. See [Bounds](docs/patches.md#bounds).
+- With `MergeKeys()`, a search through merge sources that reads more keys than `MaxAliasNodes` allows fails with a `*LimitError`, whether it serves `Get`, a patch or an edit, and `Node.Lookup` then finds nothing. Adding a new key with `Set` does not search merge sources.
 - A map key that does not fit the key type is collected like a value that does not fit: its entry is skipped and the read goes on, instead of stopping at the first such key.
-- A `json.Unmarshaler` receives the numbers inside a collection as written, as it already did for a number at the top, so `3.14159265358979323846` is not rounded to a `float64` on the way.
+- A `json.Unmarshaler` receives the numbers inside a mapping or sequence as written, as it already did for a number on its own, so `3.14159265358979323846` is no longer rounded to a `float64` on the way.
+- The integer key `0x10` followed by `16` is a duplicate-key `*SyntaxError` that names both keys, as `16` followed by `0x10` already was. It used to be a `*TypeError` saying the two numbers round to the same `float64`.
+- A syntax error after a value that does not fit its target, such as the stray `}` in `{a: x}}` read into an `int` field, is reported as the `*SyntaxError` it is. It used to be hidden behind the `*TypeError` for the value.
+- A key written as an alias that repeats an earlier key is reported at the alias, and the message says so. It used to be reported at the anchor.
+- The message for an unclosed `[` or `{` says where it was opened, as the message for an unclosed quoted scalar does, and the one for a quoted scalar that runs into the next line says which quote to add.
+- `Rename`, `SetHeadComment` and `SetLineComment` parse again only the entries around the edit where they can, as `Set` does, instead of the whole document; inside a flow collection, for one, the whole document is still parsed again. A `range` loop that edits as it goes keeps its place instead of counting again from the first item, a run of `Set` calls through a wide mapping no longer slows down with every call, renames in one mapping keep its index of keys, and a removal of many items in one pass holds one copy of the document's index. These change the work and memory an edit takes, not its result. Benchmark results come in a later update.
+
+### Fixed
+
+- An escaped UTF-16 surrogate pair in a double-quoted scalar, as JSON writes characters outside the Basic Multilingual Plane, is one character: `"\ud83d\ude00"` reads as 😀. It used to be refused as an escape that is not a Unicode scalar value.
+- `compat/yamlv3` places head, line and foot comments on the same nodes as yaml.v3 in many more layouts: a comment after `---`, after a lone dash, after an anchor or tag on a collection, or after an explicit key (`? k # c`), and comment lines between a key and its value. These comments used to be dropped. A value's head comment is written below its line, at the column of its key, as yaml.v3 writes it. See [Migrating from yaml.v3](docs/migrate-yaml-v3.md#check-after-the-swap) for the layouts that still differ.
 
 ## [0.2.0] - 2026-10-16
 

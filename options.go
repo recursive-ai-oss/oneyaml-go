@@ -164,7 +164,12 @@ func YAML11Strings() Option { return func(c *config) { c.yaml11 = true } }
 func KnownFields() Option { return func(c *config) { c.knownFields = true } }
 
 // MergeKeys makes reading treat the "<<" key as a YAML merge key instead of an
-// ordinary key. It applies to reads and is ignored when writing.
+// ordinary key. It applies to reads and is ignored by Marshal and Encoder.
+//
+// Given to Parse, it also makes the Document's pointers find merged keys:
+// [Document.Get], a patch "test" and [Node.Lookup] read them, [Document.Set]
+// on such a key adds a key of the mapping's own, and an edit that would change
+// a key only a merge source has is refused with [ErrAliasWrite].
 func MergeKeys() Option { return func(c *config) { c.mergeKeys = true } }
 
 // Limits sets the bounds that l names and leaves the others as the options

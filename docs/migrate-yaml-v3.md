@@ -64,7 +64,7 @@ fmt.Println(v.Name)
 // api
 ```
 
-The package differs from yaml.v3 where yaml.v3 is wrong: it reads valid YAML that yaml.v3's scanner refuses, returns an error where yaml.v3 panics, never turns a comment into content, and keeps the default limits of the `oneyaml` package. The [package documentation](https://pkg.go.dev/oneyaml.dev/go/compat/yamlv3) lists each difference and each gap, including the comment layouts it does not place the way yaml.v3 does. Reading with `yaml.Node` and writing it back works for the common comment layouts; to edit a file, see below.
+The package differs from yaml.v3 where yaml.v3 is wrong: it reads valid YAML that yaml.v3's scanner refuses, returns an error where yaml.v3 panics, never turns a comment into content, and keeps the default limits of the `oneyaml` package. The [package documentation](https://pkg.go.dev/oneyaml.dev/go/compat/yamlv3) lists each difference and each gap, including the comments it does not write back the way yaml.v3 does. Reading with `yaml.Node` and writing it back puts comments on the same nodes as yaml.v3 in the common layouts; to edit a file, see below.
 
 ### Check after the swap
 
@@ -72,8 +72,7 @@ Run your tests, and look at these places in particular:
 
 - **Hooks.** `UnmarshalYAML(*yaml.Node) error`, the older `UnmarshalYAML(func(interface{}) error) error` and `MarshalYAML` work as in yaml.v3, with the adapter's own `yaml.Node`. A method that takes the original package's `*yaml.Node`, for example in a package of yours that still imports `gopkg.in/yaml.v3`, does not match and is not called, as yaml.v3 itself skips a method of the wrong type; change that import too.
 - **Hooks you do not own.** A type from a module you do not control, whose `UnmarshalYAML` takes `gopkg.in/yaml.v3`'s `*yaml.Node`, keeps that signature after you swap your own import. The adapter does not call the method, so the type is filled field by field and skips whatever the method checked or converted. The `oneyaml` package reports it as a `*TypeError`. Swapping the import does not fix this. Read such a type through a wrapper type of your own: give the wrapper a hook the adapter or the `oneyaml` package calls, and build the dependency's value inside it. Or keep reading that type with yaml.v3 until its module moves. List the third-party types your configuration reads and check each one.
-- **Node and comment round trips.** Decoding into a `yaml.Node`, changing it and encoding it again keeps line comments, comments directly above a key or item, foot comments and document comments. Other layouts, such as comment lines inside a flow collection, are not placed on the same node or are not written back. If you diff files written this way, check one.
-- **Repeated keys.** A key that occurs twice in a mapping the target ignores (a struct with no such field) is not reported, where yaml.v3 reports it.
+- **Node and comment round trips.** Decoding into a `yaml.Node` puts head, line and foot comments on the same nodes as yaml.v3: line comments, comments directly above a key or item, foot comments and document comments, and also a comment after a `---` marker, after a lone dash, after an anchor or tag on a collection or after an explicit key (`? k # c`), and comment lines between a key and its value. Encoding the node again writes them where yaml.v3 writes them, with two exceptions. Comment lines inside a flow collection are read, but the flow collection is written back without them. A folded scalar that starts with a line break is written so that it reads back the same, where yaml.v3 writes one that loses the line break. If you diff files written this way, check one.
 - **Invalid and unusual input.** Valid YAML that yaml.v3 refuses is read, invalid YAML that yaml.v3 accepts is refused, and inputs that make yaml.v3 panic return an error. Tests that pin yaml.v3's behaviour on such input will change.
 - **Numeric conversions.** A plain `3.5` read into an integer field is a type error instead of being truncated to 3; a float with no fraction (`3.0`, `1e3`) is accepted. In a sequence of numbers, a null leaves a zero in its place instead of being dropped.
 - **Limits.** Reading runs under the default limits of the `oneyaml` package, which yaml.v3 does not have, and there is no `Untrusted()` mode. Very deep or alias-heavy input that yaml.v3 read may now return an error. For input you do not control, read with the `oneyaml` package and `Untrusted()`.
@@ -146,7 +145,7 @@ if errors.As(err, &te) {
 - **The `<<` key is an ordinary key** unless you pass `MergeKeys()`.
 - **A nil slice is written as `null`**, not `[]`. The default indentation is two spaces, not four.
 - **Type errors are collected**, as in yaml.v3: a value that does not fit is skipped, the rest is read, and one `*TypeError` reports every mismatch; the read stops at the 100th, and fewer are reported when their paths are very long. A syntax error, a limit error or an error from your own hook stops the read at once and is returned alone.
-- **A duplicate key is an error**, as in yaml.v3.
+- **A duplicate key is an error**, as in yaml.v3, and more keys count as duplicates. Keys are compared by value, so `1` and `0x1` clash, which yaml.v3 allows. A key repeated inside a value the target ignores, such as `x: {y: 1, y: 2}` read into a struct with no field `x`, is refused too; yaml.v3 does not look there. The rules are in the [`Unmarshal` reference](https://pkg.go.dev/oneyaml.dev/go#Unmarshal).
 
 <!-- example: Example_fromYAMLv3Forms -->
 ```go
@@ -185,7 +184,7 @@ When it reads a value, the `oneyaml` package tries a type's methods in this orde
 | `MarshalYAML() (interface{}, error)` | called as yaml.v3 calls it |
 | `MarshalYAML` or `UnmarshalYAML` with any other signature | a `*TypeError` |
 | `UnmarshalText` and `MarshalText` | used for scalars, as in yaml.v3 |
-| `UnmarshalJSON` and `MarshalJSON`, and no YAML or text method | used, with the value passed as JSON text; yaml.v3 ignores them. A plain number arrives with its digits as written; inside a mapping or sequence, a float is rounded to `float64` |
+| `UnmarshalJSON` and `MarshalJSON`, and no YAML or text method | used, with the value passed as JSON text; yaml.v3 ignores them. Numbers arrive with their digits as written, on their own or inside a mapping or sequence; forms JSON cannot spell, such as `0x1F` or `.5`, are rewritten (`31`, `0.5`) |
 
 A method with a signature the package does not call is reported, not skipped, so a type is never quietly filled field by field when you meant it to read itself. The compat package keeps yaml.v3's own form: with the import swapped, `UnmarshalYAML(*yaml.Node) error` works unchanged in your own code. Hooks in other modules need the steps under [hooks you do not own](#check-after-the-swap).
 

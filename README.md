@@ -127,7 +127,7 @@ The compat packages are adapters with the same names and signatures as their tar
 
 They read YAML 1.1 forms the way their targets do, but they are not identical. Known gaps and differences:
 
-- **yaml.v3:** a repeated key in a mapping that the target ignores (a struct with no such field) is not reported. Some comment layouts, such as comment lines inside a flow collection, are not placed or written back as yaml.v3 does.
+- **yaml.v3:** comments land on the same nodes as in yaml.v3 in the common layouts, but comment lines inside a flow collection are not written back.
 - **Numbers:** in `compat/yamlv3`, a plain `3.5` read into an integer field is a type error instead of being truncated. In `compat/k8syaml`, a float read into a string field keeps its full precision, where sigs.k8s.io/yaml rounds it to 32 bits.
 - **Valid and invalid input:** both read valid YAML that their targets refuse, `compat/yamlv3` refuses invalid YAML that yaml.v3 accepts, and both return errors where their targets panic.
 - **Limits:** both always run with the default limits and have no `Untrusted()` mode.

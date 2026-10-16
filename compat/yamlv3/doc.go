@@ -82,12 +82,12 @@
 //
 // These are places where the shim does less than yaml.v3, not places where
 // yaml.v3 is wrong:
-//   - a repeated key in a mapping that the target ignores (a struct with no such
-//     field, say) is not reported, where yaml.v3 reports it; a repeated key that
-//     is reported carries no line number for its first occurrence;
-//   - comments are recovered from the text for the common layouts: line comments,
-//     comments directly above a key or item, foot comments and the comments of a
-//     document. Other layouts (for example comment lines inside a flow collection)
-//     are not placed on the same node as yaml.v3 places them, or are not written
-//     back.
+//   - a repeated key is sometimes reported without the line of its first
+//     occurrence, as when the repeated key is written as an alias;
+//   - comments are recovered from the text and placed on the nodes where
+//     yaml.v3 places them in the common layouts: line comments, comments
+//     directly above a key or item, foot comments, the comments of a document,
+//     and comments after a "---" marker, a lone dash, an anchor or tag on a
+//     collection, or an explicit key. Comment lines inside a flow collection
+//     are read, but a flow collection is written back without them.
 package yaml
