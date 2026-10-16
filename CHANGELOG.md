@@ -4,6 +4,8 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-16
+
 ### Added
 
 - `Document.Rename` changes the key of a mapping entry in place, keeping the value, its position and its comments. It refuses a key that already exists (`ErrKeyExists`), a pointer that is not a mapping entry (`ErrNotAnEntry`), and a key whose anchor an alias uses (`ErrAnchorInUse`). See [Renaming a key](docs/editing.md#renaming-a-key).
@@ -57,6 +59,7 @@ The first release. It has no benchmark results; those come in a later update.
 - Conformance: the tests that run the [oneyaml-kit](https://github.com/recursive-ai-oss/oneyaml-kit) cases run in CI against a pinned kit revision. See [Conformance](docs/conformance.md).
 - Documentation: [Editing](docs/editing.md), [Patches](docs/patches.md), [Limits](docs/limits.md), [Conformance](docs/conformance.md), [Comparison](docs/comparison.md) and the two migration guides.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/recursive-ai-oss/oneyaml-go/releases/tag/v0.1.0
