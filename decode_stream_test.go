@@ -158,7 +158,7 @@ func TestParseStopsAtDocumentLimit(t *testing.T) {
 	_, err := Parse(in, Untrusted())
 	runtime.ReadMemStats(&m1)
 	var le *LimitError
-	if !errors.As(err, &le) || le.Limit != "documents" {
+	if !errors.As(err, &le) || le.Limit != LimitMaxDocuments {
 		t.Fatalf("want a documents limit error, got %v", err)
 	}
 	if grown := m1.TotalAlloc - m0.TotalAlloc; grown > 3*uint64(len(in)) {

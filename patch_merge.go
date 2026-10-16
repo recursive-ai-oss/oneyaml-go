@@ -88,7 +88,7 @@ func (s *docStream) mergePatch(doc int, v *edit.Value, patchLen int) error {
 		if rerr := s.rollback(snap); rerr != nil {
 			return fail(nil, rerr)
 		}
-		return &EditError{Op: "merge-patch", Kind: &LimitError{Limit: "patch output size", Max: max, Option: "Limits (MaxInputBytes)"}}
+		return &EditError{Op: "merge-patch", Kind: limitErr(LimitMaxInputBytes, "patch output size", max, "")}
 	}
 	return nil
 }

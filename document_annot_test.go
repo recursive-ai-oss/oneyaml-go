@@ -1105,7 +1105,7 @@ func TestYAMLPatchDepthLimit(t *testing.T) {
 	d, _ := Parse([]byte(doc), Limits(LimitSet{MaxDepth: 10}))
 	err := d.ApplyPatch([]byte("- op: add\n  path: /z\n  value: " + deep + "\n"))
 	var le *LimitError
-	if !errors.As(err, &le) || le.Limit != "depth" {
+	if !errors.As(err, &le) || le.Limit != LimitMaxDepth {
 		t.Errorf("error %v, want a depth LimitError", err)
 	}
 	if d.String() != doc {

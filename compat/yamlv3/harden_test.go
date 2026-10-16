@@ -182,7 +182,7 @@ func TestCyclesAndSharedNodes(t *testing.T) {
 	for i := 0; i < 20000; i++ {
 		deep = sequence(deep)
 	}
-	if err := deep.Decode(&v); !errors.As(err, &le) || le.Limit != "depth" {
+	if err := deep.Decode(&v); !errors.As(err, &le) || le.Limit != oneyaml.LimitMaxDepth {
 		t.Errorf("deep tree: %v", err)
 	}
 }
@@ -379,7 +379,7 @@ func TestNumberDigitsLimit(t *testing.T) {
 	var v interface{}
 	err := yaml.Unmarshal(in, &v)
 	var le *oneyaml.LimitError
-	if !errors.As(err, &le) || le.Limit != "number digits" {
+	if !errors.As(err, &le) || le.Limit != oneyaml.LimitMaxNumberDigits {
 		t.Fatalf("any: %v", err)
 	}
 	var f float64

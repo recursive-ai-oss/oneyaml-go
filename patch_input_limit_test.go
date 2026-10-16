@@ -22,7 +22,7 @@ func TestUntrustedPatchTextShare(t *testing.T) {
 		d := mustParse(t, "a: 1\n", Untrusted())
 		err := call(d)
 		var le *LimitError
-		if !errors.As(err, &le) || le.Limit != "patch size" || le.Max != share {
+		if !errors.As(err, &le) || le.Limit != LimitMaxInputBytes || le.Max != share {
 			t.Errorf("%s: got %v", name, err)
 		}
 		if string(d.Bytes()) != "a: 1\n" {

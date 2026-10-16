@@ -42,7 +42,7 @@ func editKind(err error) error {
 	var mb *edit.MergeBudgetError
 	switch {
 	case errors.As(err, &mb):
-		return &LimitError{Limit: "alias expansion nodes", Max: mb.Max, Option: "Limits (MaxAliasNodes)"}
+		return limitErr(LimitMaxAliasNodes, "alias expansion nodes", mb.Max, "")
 	case errors.Is(err, edit.ErrAlias):
 		return wrapKind(ErrAliasWrite, detail)
 	case errors.Is(err, edit.ErrAmbiguous):
@@ -58,7 +58,7 @@ func editKind(err error) error {
 	case errors.Is(err, edit.ErrNotFound):
 		return wrapKind(ErrNotFound, detail)
 	case errors.Is(err, edit.ErrDepth):
-		return &LimitError{Limit: "depth", Max: edit.MaxValueDepth}
+		return fixedLimitErr(LimitMaxDepth, "depth", edit.MaxValueDepth)
 	case errors.Is(err, edit.ErrUnsupported):
 		return wrapKind(ErrUnsupportedEdit, detail)
 	}
@@ -89,7 +89,7 @@ func docSyntaxError(err error, limits LimitSet) error {
 		return err
 	}
 	if se.Category == scan.Limit {
-		return &LimitError{Limit: "depth", Max: limits.MaxDepth, Option: "Limits or NoLimits"}
+		return limitErr(LimitMaxDepth, "depth", limits.MaxDepth, "")
 	}
-	return &SyntaxError{Line: se.Line, Column: se.Column, Offset: se.Offset, Category: se.Category.String(), Msg: se.Msg}
+	return &SyntaxError{Line: se.Line, Column: se.Column, Offset: se.Offset, Category: Category(se.Category.String()), Msg: se.Msg}
 }

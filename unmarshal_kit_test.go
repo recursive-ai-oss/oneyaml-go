@@ -95,7 +95,7 @@ func kitCategory(err error) string {
 	switch {
 	case errors.As(err, &se):
 		if se.Category == "encoding" || se.Category == "duplicate-key" {
-			return se.Category
+			return string(se.Category)
 		}
 		return "syntax"
 	case errors.As(err, &le):

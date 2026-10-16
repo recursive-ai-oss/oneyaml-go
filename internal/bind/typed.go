@@ -16,7 +16,7 @@ import (
 )
 
 func (b *Binder) typeErr(ev *parse.Event, t reflect.Type, msg string) error {
-	return &Error{Kind: KindType, Offset: ev.Start, GoType: t.String(), Msg: msg}
+	return &Error{Kind: KindType, Offset: ev.Start, GoType: t, Msg: msg}
 }
 
 // nodeName names the YAML type of a node for messages.
@@ -199,7 +199,7 @@ func (b *Binder) scalarInto(v reflect.Value, ev *parse.Event) error {
 		special = dp.tp.Special
 		if special == typeinfo.SpecialNone && dp.textUnm {
 			if err := v.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText(text); err != nil {
-				return &Error{Kind: KindType, Offset: ev.Start, GoType: t.String(), Err: err,
+				return &Error{Kind: KindType, Offset: ev.Start, GoType: t, Err: err,
 					Msg: "cannot unmarshal " + nodeName(ev, &r, tag) + " `" + abbrev(text) + "` into " + t.String() + ": " + err.Error()}
 			}
 			return nil
@@ -326,7 +326,7 @@ func decodeBase64(text []byte) ([]byte, error) {
 func (b *Binder) enter(ev *parse.Event) error {
 	b.tdepth++
 	if b.tdepth > hardDepth {
-		return b.limit("depth", hardDepth, "", ev.Start)
+		return b.limit("MaxDepth", "depth", hardDepth, ev.Start)
 	}
 	return b.checkDepth(len(b.frames)+b.tdepth, ev.Start)
 }
@@ -407,7 +407,7 @@ func (b *Binder) seqInto(v reflect.Value, ev *parse.Event) error {
 			v.Index(j).SetZero()
 		}
 		if i != v.Len() && b.cfg.Dialect == DialectV3 {
-			return &Error{Kind: KindType, Offset: ev.Start, GoType: t.String(), Category: "decode",
+			return &Error{Kind: KindType, Offset: ev.Start, GoType: t, Category: "decode",
 				Msg: "invalid array: want " + strconv.Itoa(v.Len()) + " elements but got " + strconv.Itoa(i)}
 		}
 		b.tdepth--
@@ -443,7 +443,7 @@ func (b *Binder) mapInto(v reflect.Value, ev *parse.Event) error {
 	case reflect.Struct:
 		dp := b.plan(t)
 		if dp.tp.Err != nil {
-			return &Error{Kind: KindType, Offset: ev.Start, GoType: t.String(), Category: "decode", Msg: dp.tp.Err.Error()}
+			return &Error{Kind: KindType, Offset: ev.Start, GoType: t, Category: "decode", Msg: dp.tp.Err.Error()}
 		}
 		if dp.tp.Special == typeinfo.SpecialNone || (b.cfg.Dialect == DialectV3 && dp.tp.Special == typeinfo.SpecialTime) {
 			// yaml.v3 treats time.Time as a struct without fields here: a mapping

@@ -10,7 +10,7 @@ func deepFlow(n int) []byte {
 	return []byte(strings.Repeat("[", n) + strings.Repeat("]", n))
 }
 
-func isLimit(err error, which string) bool {
+func isLimit(err error, which Limit) bool {
 	var le *LimitError
 	return errors.As(err, &le) && le.Limit == which
 }
@@ -19,22 +19,22 @@ func isLimit(err error, which string) bool {
 func TestLimitSetZeroFieldsKeepDefaults(t *testing.T) {
 	deep := deepFlow(20000)
 	var v any
-	if err := Unmarshal(deep, &v, Limits(LimitSet{MaxInputBytes: 1 << 20})); !isLimit(err, "depth") {
+	if err := Unmarshal(deep, &v, Limits(LimitSet{MaxInputBytes: 1 << 20})); !isLimit(err, LimitMaxDepth) {
 		t.Fatalf("input bound only: got %v", err)
 	}
-	if err := Unmarshal(deep, &v, Limits(LimitSet{MaxAliasNodes: 20})); !isLimit(err, "depth") {
+	if err := Unmarshal(deep, &v, Limits(LimitSet{MaxAliasNodes: 20})); !isLimit(err, LimitMaxDepth) {
 		t.Fatalf("alias bound only: got %v", err)
 	}
-	if _, err := Parse(deep, Limits(LimitSet{MaxAliasNodes: 20})); !isLimit(err, "depth") {
+	if _, err := Parse(deep, Limits(LimitSet{MaxAliasNodes: 20})); !isLimit(err, LimitMaxDepth) {
 		t.Fatalf("Parse: got %v", err)
 	}
-	if err := Unmarshal(deep, &v, Limits(LimitSet{})); !isLimit(err, "depth") {
+	if err := Unmarshal(deep, &v, Limits(LimitSet{})); !isLimit(err, LimitMaxDepth) {
 		t.Fatalf("empty set: got %v", err)
 	}
 	// The number-digit default holds too.
 	digits := "a: " + strings.Repeat("9", 200000) + "\n"
 	var n any
-	if err := Unmarshal([]byte(digits), &n, Limits(LimitSet{MaxDepth: 50})); !isLimit(err, "number digits") {
+	if err := Unmarshal([]byte(digits), &n, Limits(LimitSet{MaxDepth: 50})); !isLimit(err, LimitMaxNumberDigits) {
 		t.Fatalf("digits: got %v", err)
 	}
 }
@@ -47,10 +47,10 @@ func TestNoBoundLiftsOneField(t *testing.T) {
 		t.Fatalf("NoBound depth: %v", err)
 	}
 	digits := "a: " + strings.Repeat("9", 200000) + "\n"
-	if err := Unmarshal([]byte(digits), &v, Limits(LimitSet{MaxDepth: NoBound})); !isLimit(err, "number digits") {
+	if err := Unmarshal([]byte(digits), &v, Limits(LimitSet{MaxDepth: NoBound})); !isLimit(err, LimitMaxNumberDigits) {
 		t.Fatalf("other bound lost: %v", err)
 	}
-	if err := Unmarshal(deep, &v, Limits(LimitSet{MaxNumberDigits: NoBound})); !isLimit(err, "depth") {
+	if err := Unmarshal(deep, &v, Limits(LimitSet{MaxNumberDigits: NoBound})); !isLimit(err, LimitMaxDepth) {
 		t.Fatalf("depth lost: %v", err)
 	}
 	if err := Unmarshal(deep, &v, NoLimits()); err != nil {
@@ -74,7 +74,7 @@ func TestAliasBoundDefaultedOrExact(t *testing.T) {
 	if err := Unmarshal([]byte(b.String()), &v, Limits(LimitSet{MaxDepth: 50})); err != nil {
 		t.Fatal(err)
 	}
-	if err := Unmarshal([]byte(b.String()), &v, Limits(LimitSet{MaxAliasNodes: 20})); !isLimit(err, "alias expansion nodes") {
+	if err := Unmarshal([]byte(b.String()), &v, Limits(LimitSet{MaxAliasNodes: 20})); !isLimit(err, LimitMaxAliasNodes) {
 		t.Fatalf("exact bound: got %v", err)
 	}
 }
@@ -115,24 +115,24 @@ func TestLimitsLayerOnPresets(t *testing.T) {
 	digits := []byte("a: " + strings.Repeat("9", 5000) + "\n") // over the untrusted 4,300, under the default
 	var v any
 
-	if err := Unmarshal(deepFlow(60), &v, Untrusted(), Limits(LimitSet{MaxDepth: 50})); !isLimit(err, "depth") {
+	if err := Unmarshal(deepFlow(60), &v, Untrusted(), Limits(LimitSet{MaxDepth: 50})); !isLimit(err, LimitMaxDepth) {
 		t.Fatalf("depth tightened: %v", err)
 	}
-	if err := Unmarshal(digits, &v, Untrusted(), Limits(LimitSet{MaxDepth: 50})); !isLimit(err, "number digits") {
+	if err := Unmarshal(digits, &v, Untrusted(), Limits(LimitSet{MaxDepth: 50})); !isLimit(err, LimitMaxNumberDigits) {
 		t.Fatalf("untrusted digits lost: %v", err)
 	}
 	if err := Unmarshal(deepFlow(2000), &v, Untrusted(), Limits(LimitSet{MaxDepth: NoBound})); err != nil {
 		t.Fatalf("NoBound lifts one field: %v", err)
 	}
-	if err := Unmarshal(digits, &v, Untrusted(), Limits(LimitSet{MaxDepth: NoBound})); !isLimit(err, "number digits") {
+	if err := Unmarshal(digits, &v, Untrusted(), Limits(LimitSet{MaxDepth: NoBound})); !isLimit(err, LimitMaxNumberDigits) {
 		t.Fatalf("NoBound lifted another field: %v", err)
 	}
-	if err := Unmarshal(deepFlow(1500), &v, Untrusted(), Limits(LimitSet{})); !isLimit(err, "depth") {
+	if err := Unmarshal(deepFlow(1500), &v, Untrusted(), Limits(LimitSet{})); !isLimit(err, LimitMaxDepth) {
 		t.Fatalf("empty Limits changed the preset: %v", err)
 	}
 
 	// After NoLimits, Limits adds only what it names.
-	if err := Unmarshal(deepFlow(60), &v, NoLimits(), Limits(LimitSet{MaxDepth: 50})); !isLimit(err, "depth") {
+	if err := Unmarshal(deepFlow(60), &v, NoLimits(), Limits(LimitSet{MaxDepth: 50})); !isLimit(err, LimitMaxDepth) {
 		t.Fatalf("added depth: %v", err)
 	}
 	if err := Unmarshal(deepFlow(20000), &v, NoLimits(), Limits(LimitSet{MaxInputBytes: 1 << 20})); err != nil {

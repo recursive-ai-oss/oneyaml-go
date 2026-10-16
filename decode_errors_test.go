@@ -280,7 +280,7 @@ func TestJSONUnmarshalerGetsTheSourceDigits(t *testing.T) {
 }
 
 func TestCategoryConstants(t *testing.T) {
-	for in, want := range map[string]string{"a: [": oneyaml.CategorySyntax, "a: 1\na: 2": oneyaml.CategoryDuplicateKey, "a: \xff": oneyaml.CategoryEncoding} {
+	for in, want := range map[string]oneyaml.Category{"a: [": oneyaml.CategorySyntax, "a: 1\na: 2": oneyaml.CategoryDuplicateKey, "a: \xff": oneyaml.CategoryEncoding} {
 		var v any
 		var se *oneyaml.SyntaxError
 		if err := oneyaml.Unmarshal([]byte(in), &v); !errors.As(err, &se) || se.Category != want {

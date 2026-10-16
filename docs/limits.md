@@ -28,7 +28,7 @@ fmt.Printf("%+v\n", oneyaml.UntrustedLimits())
 
 | `LimitSet` field | What it bounds | If it is exceeded |
 |---|---|---|
-| `MaxDepth` | nesting of collections, in input and when writing | `*LimitError`, `Limit` is `depth` |
+| `MaxDepth` | nesting of collections, in input and when writing | `*LimitError`, `Limit` is `LimitMaxDepth` |
 | `MaxAliasNodes` | nodes produced by expanding aliases; with `MergeKeys()`, also the keys one pointer lookup, `Node.Find` or `Node.Lookup` reads in `<<` merge sources ([Merge keys](editing.md#merge-keys)) | `*LimitError`, also from `Node.Find`; `Node.Lookup` reports it as `false`, like an absent key, so use `Node.Find` to tell the two apart |
 | `MaxAliasBytes` | scalar bytes produced by expanding aliases; also the bytes a patch copies | `*LimitError` |
 | `MaxInputBytes` | the size of the input, and the size of a document after a patch; the text of one patch or merge patch may be an eighth of it, but never less than 64 KiB and never more than the limit ([Bounds](patches.md#bounds)) | `*LimitError` |
@@ -39,7 +39,7 @@ fmt.Printf("%+v\n", oneyaml.UntrustedLimits())
 
 An alias bound left at its default rises with the document: it is at least the figure shown above and at least ten times the document's own nodes or bytes (two times with `Untrusted`), so a large document that reuses its anchors is not refused. An alias bound you set with `Limits` applies exactly as given.
 
-A bound that is hit is a `*LimitError`. It names the limit and the option that raises it.
+A bound that is hit is a `*LimitError`. `Limit` names it by the `LimitSet` field (`LimitMaxDepth`, `LimitMaxAliasNodes` and so on), `Option` names the option that raises it, and `Path` holds the pointer to the value where it was hit when the read had got that far (the input size, the document count and the nesting that the parser stops at have no path). `errors.Is` matches `ErrLimit` for any limit and a sentinel for one, such as `ErrMaxDepth`, so a program need not read the fields to tell limits apart. The compat packages take no limit options, so their limit errors have an empty `Option`.
 
 <!-- example: ExampleLimits -->
 ```go
@@ -50,7 +50,27 @@ var le *oneyaml.LimitError
 if errors.As(err, &le) {
 	fmt.Println(le.Limit, le.Max)
 }
-// Output: alias expansion nodes 20
+// Output: MaxAliasNodes 20
+```
+
+To tell limits apart, match the sentinel or switch on `Limit`:
+
+<!-- example: ExampleLimitError -->
+```go
+deep := strings.Repeat("[", 100) + strings.Repeat("]", 100)
+err := oneyaml.Unmarshal([]byte(deep), new(any), oneyaml.Limits(oneyaml.LimitSet{MaxDepth: 50}))
+
+fmt.Println(errors.Is(err, oneyaml.ErrLimit), errors.Is(err, oneyaml.ErrMaxDepth), errors.Is(err, oneyaml.ErrMaxInputBytes))
+var le *oneyaml.LimitError
+if errors.As(err, &le) {
+	switch le.Limit {
+	case oneyaml.LimitMaxDepth:
+		fmt.Println("too deep:", le.Max, le.Option)
+	}
+}
+// Output:
+// true true false
+// too deep: 50 Limits (MaxDepth)
 ```
 
 ## Changing one bound
@@ -74,8 +94,8 @@ if errors.As(err, &le) {
 	fmt.Println(le.Limit, le.Max)
 }
 // Output:
-// input size 1048576
-// depth 10000
+// MaxInputBytes 1048576
+// MaxDepth 10000
 ```
 
 `NoBound` lifts one bound and keeps the rest. Any negative value does the same; `NoBound` names it:
@@ -107,8 +127,8 @@ for _, in := range []string{deep, long} {
 	}
 }
 // Output:
-// depth 50
-// number digits 4300
+// MaxDepth 50
+// MaxNumberDigits 4300
 ```
 
 ## Untrusted input
@@ -129,7 +149,7 @@ if errors.As(err, &le) {
 }
 // Output:
 // <nil>
-// depth 1000 Limits
+// MaxDepth 1000 Limits (MaxDepth)
 ```
 
 ## Loading a configuration file strictly

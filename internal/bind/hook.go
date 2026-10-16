@@ -124,10 +124,10 @@ func (b *Binder) hook(v reflect.Value, ev *parse.Event) (bool, error) {
 		if v.Kind() == reflect.Pointer && b.isNull(ev) {
 			return false, nil
 		}
-		return true, b.typeErr(ev, t, "cannot decode into "+t.String()+": a Node is a view of a Document, not a value; read it with Document.Get(pointer, &node)")
+		return true, b.skippedErr(ev, t, "cannot decode into "+t.String()+": a Node is a view of a Document, not a value; read it with Document.Get(pointer, &node)")
 	}
 	if dp.badUnm {
-		return true, b.typeErr(ev, t, t.String()+" has an UnmarshalYAML method that is neither UnmarshalYAML(oneyaml.Node) error nor UnmarshalYAML(func(any) error) error; change its signature, or remove it to fill the value by its fields")
+		return true, b.skippedErr(ev, t, t.String()+" has an UnmarshalYAML method that is neither UnmarshalYAML(oneyaml.Node) error nor UnmarshalYAML(func(any) error) error; change its signature, or remove it to fill the value by its fields")
 	}
 	if dp.jsonUnm {
 		return b.jsonHook(v, ev, dp)
@@ -162,9 +162,21 @@ func (b *Binder) hook(v reflect.Value, ev *parse.Event) (bool, error) {
 	herr := call(v.Addr().Interface(), ref)
 	ref.Scope.Close()
 	if herr != nil {
-		return true, &Error{Kind: KindType, Offset: ev.Start, GoType: v.Type().String(), Msg: herr.Error(), Err: herr}
+		return true, &Error{Kind: KindType, Offset: ev.Start, GoType: v.Type(), Msg: herr.Error(), Err: herr}
 	}
 	return true, nil
+}
+
+// skippedErr is a type error for a value the target cannot take at all: the
+// value is consumed whole and the target left as it was, so the read goes on
+// and the error is collected like any other mismatch.
+func (b *Binder) skippedErr(ev *parse.Event, t reflect.Type, msg string) error {
+	if err := b.skip(ev); err != nil {
+		return err
+	}
+	e := b.typeErr(ev, t, msg).(*Error)
+	e.Resume, e.Direct = true, true
+	return e
 }
 
 // isNull reports whether ev is a scalar that resolves to null.
@@ -337,7 +349,7 @@ func (b *Binder) hookV3(v reflect.Value, ev *parse.Event) (bool, error) {
 			}
 			return true, nil
 		}
-		return true, &Error{Kind: KindType, Offset: ev.Start, GoType: v.Type().String(), Msg: herr.Error(), Err: herr}
+		return true, &Error{Kind: KindType, Offset: ev.Start, GoType: v.Type(), Msg: herr.Error(), Err: herr}
 	}
 	return true, nil
 }

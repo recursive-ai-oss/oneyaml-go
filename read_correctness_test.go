@@ -11,7 +11,7 @@ import (
 
 // syntaxAt asserts that err is a *SyntaxError of the given category at the
 // given line and column, and returns it.
-func syntaxAt(t *testing.T, what string, err error, cat string, line, col int) *oneyaml.SyntaxError {
+func syntaxAt(t *testing.T, what string, err error, cat oneyaml.Category, line, col int) *oneyaml.SyntaxError {
 	t.Helper()
 	var se *oneyaml.SyntaxError
 	if !errors.As(err, &se) {
@@ -52,7 +52,7 @@ func TestInvalidEscapesAreRefusedEverywhere(t *testing.T) {
 	for _, c := range []struct {
 		name, in  string
 		line, col int
-		cat       string
+		cat       oneyaml.Category
 	}{
 		{"lone high surrogate", "a: \"\\ud800\"\n", 1, 5, "syntax"},
 		{"lone low surrogate", "a: \"\\udc00\"\n", 1, 5, "syntax"},

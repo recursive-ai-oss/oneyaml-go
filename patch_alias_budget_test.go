@@ -34,7 +34,7 @@ func TestPatchCopyOfAliasChargesWhatItWrites(t *testing.T) {
 			d := mustParse(t, src, opts...)
 			err := d.ApplyPatch([]byte(patch))
 			var le *LimitError
-			if !errors.As(err, &le) || (le.Limit != "patch copy bytes" && le.Limit != "patch output size") {
+			if !errors.As(err, &le) || (le.Limit != LimitMaxAliasBytes && le.Limit != LimitMaxInputBytes) {
 				t.Fatalf("got %v", err)
 			}
 			if string(d.Bytes()) != src {
@@ -79,7 +79,7 @@ func TestPatchMoveOfAliasChargesWhatItWrites(t *testing.T) {
 	d := mustParse(t, src, Limits(LimitSet{MaxAliasBytes: 1 << 20, MaxAliasNodes: 1 << 20, MaxDepth: 10000}))
 	err := d.ApplyPatch([]byte("[" + strings.Join(ops, ",") + "]"))
 	var le *LimitError
-	if !errors.As(err, &le) || le.Limit != "patch copy bytes" {
+	if !errors.As(err, &le) || le.Limit != LimitMaxAliasBytes {
 		t.Fatalf("got %v", err)
 	}
 	if string(d.Bytes()) != src {
@@ -101,7 +101,7 @@ func TestMergePatchOutputIsBounded(t *testing.T) {
 	d := mustParse(t, src, Limits(LimitSet{MaxInputBytes: 120}))
 	err := d.ApplyMergePatch([]byte(`{"b":"` + strings.Repeat("y", 100) + `"}`))
 	var le *LimitError
-	if !errors.As(err, &le) || le.Limit != "patch output size" {
+	if !errors.As(err, &le) || le.Limit != LimitMaxInputBytes {
 		t.Fatalf("got %v", err)
 	}
 	if string(d.Bytes()) != src {

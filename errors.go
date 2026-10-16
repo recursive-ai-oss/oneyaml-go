@@ -3,6 +3,7 @@ package oneyaml
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -30,26 +31,67 @@ var (
 // errors.Is; the error is found even when it is one of several type errors.
 var ErrUnknownField = errors.New("oneyaml: unknown field")
 
-// The values of [SyntaxError.Category]. The set is closed: a limit that is hit
-// is a [*LimitError], not a syntax error.
+// Each error type answers errors.Is for its kind, so one call tells what went
+// wrong and errors.As gives the details: a SyntaxError matches ErrSyntax and the
+// sentinel of its Category, a LimitError matches ErrLimit and the sentinel of its
+// Limit, a TypeError matches its Kind, and an EditError matches its Kind.
+
+// Sentinels for the kinds of a [*SyntaxError].
+var (
+	// ErrSyntax matches every [*SyntaxError], whatever its Category.
+	ErrSyntax = errors.New("oneyaml: syntax error")
+	// ErrEncoding matches a SyntaxError of [CategoryEncoding].
+	ErrEncoding = errors.New("oneyaml: invalid encoding")
+	// ErrDuplicateKey matches a SyntaxError of [CategoryDuplicateKey].
+	ErrDuplicateKey = errors.New("oneyaml: duplicate mapping key")
+)
+
+// Sentinels for the limits of a [*LimitError].
+var (
+	// ErrLimit matches every [*LimitError], whichever limit it is.
+	ErrLimit = errors.New("oneyaml: limit exceeded")
+	// ErrMaxDepth matches a LimitError of [LimitMaxDepth].
+	ErrMaxDepth = errors.New("oneyaml: nesting depth limit exceeded")
+	// ErrMaxAliasNodes matches a LimitError of [LimitMaxAliasNodes].
+	ErrMaxAliasNodes = errors.New("oneyaml: alias expansion node limit exceeded")
+	// ErrMaxAliasBytes matches a LimitError of [LimitMaxAliasBytes].
+	ErrMaxAliasBytes = errors.New("oneyaml: alias expansion size limit exceeded")
+	// ErrMaxInputBytes matches a LimitError of [LimitMaxInputBytes].
+	ErrMaxInputBytes = errors.New("oneyaml: input size limit exceeded")
+	// ErrMaxScalarBytes matches a LimitError of [LimitMaxScalarBytes].
+	ErrMaxScalarBytes = errors.New("oneyaml: scalar size limit exceeded")
+	// ErrMaxDocuments matches a LimitError of [LimitMaxDocuments].
+	ErrMaxDocuments = errors.New("oneyaml: document count limit exceeded")
+	// ErrMaxNumberDigits matches a LimitError of [LimitMaxNumberDigits].
+	ErrMaxNumberDigits = errors.New("oneyaml: number digit limit exceeded")
+	// ErrMaxPatchWorkRatio matches a LimitError of [LimitMaxPatchWorkRatio].
+	ErrMaxPatchWorkRatio = errors.New("oneyaml: patch work limit exceeded")
+)
+
+// Category is the kind of a [SyntaxError]. The set is closed: a limit that is
+// hit is a [*LimitError], not a syntax error. Switch on it, or match with
+// errors.Is the sentinel ErrSyntax, ErrEncoding or ErrDuplicateKey.
+type Category string
+
+// The values of [SyntaxError.Category].
 const (
 	// CategorySyntax is any violation of the YAML grammar, including characters
 	// that YAML does not allow and an alias to an anchor that was never defined.
-	CategorySyntax = "syntax"
+	CategorySyntax Category = "syntax"
 	// CategoryEncoding is input that is not valid UTF-8, UTF-16 or UTF-32.
-	CategoryEncoding = "encoding"
+	CategoryEncoding Category = "encoding"
 	// CategoryDuplicateKey is a mapping that has the same key twice. Key,
 	// FirstLine and FirstColumn say which key and where it first appeared.
-	CategoryDuplicateKey = "duplicate-key"
+	CategoryDuplicateKey Category = "duplicate-key"
 )
 
 // SyntaxError reports YAML that is not well formed.
 type SyntaxError struct {
 	// Line and Column are 1-based, counted in characters; Offset is the byte offset.
 	Line, Column, Offset int
-	// Category is a short stable name for the kind of error: one of the Category
-	// constants. Switch on it rather than on Msg.
-	Category string
+	// Category is the kind of error: one of the Category constants. Switch on it
+	// or match it with errors.Is, rather than reading Msg.
+	Category Category
 	// Msg describes the problem in terms of what the input got wrong.
 	Msg string
 	// Key, FirstLine and FirstColumn describe a CategoryDuplicateKey error: the
@@ -58,6 +100,19 @@ type SyntaxError struct {
 	// two keys are equal only after conversion to the target type.
 	Key                    string
 	FirstLine, FirstColumn int
+}
+
+// Is reports whether target is [ErrSyntax] or the sentinel of the Category of e.
+func (e *SyntaxError) Is(target error) bool {
+	switch target {
+	case ErrSyntax:
+		return true
+	case ErrEncoding:
+		return e.Category == CategoryEncoding
+	case ErrDuplicateKey:
+		return e.Category == CategoryDuplicateKey
+	}
+	return false
 }
 
 // Error returns the message with its line and column.
@@ -78,9 +133,14 @@ func (e *SyntaxError) Error() string {
 // whole, and the paths of the ones after it together take no more than the
 // larger of the input size and 1 MiB: when the next would pass that, collecting
 // stops and the later mismatches are left out, so a document with very long
-// keys (keys reached through aliases, say) may report fewer than 100. Syntax
-// errors, limit errors and errors from your own hooks stop the read at once and
-// are returned alone, without the mismatches collected before them.
+// keys (keys reached through aliases, say) may report fewer than 100. A value
+// that no hook can take (a type whose UnmarshalYAML has the wrong form, or a
+// Node used as a target) is a mismatch like any other. Syntax errors, limit
+// errors and errors from your own hooks stop the read at once and are returned
+// alone, without the mismatches collected before them. When a hook returns the
+// error of a Node.Decode it made, the mismatches in it are reported as if the
+// hook were not there: each at the line and column of its own value, with the
+// path of the hook's value in front of its own.
 //
 // Error shortens a Path longer than 512 bytes to its first and last 256 bytes
 // joined by "..."; the Path field always holds the whole pointer.
@@ -89,8 +149,9 @@ type TypeError struct {
 	Path string
 	// Line and Column locate the value in the input; zero when writing.
 	Line, Column int
-	// GoType is the Go type involved.
-	GoType string
+	// GoType is the Go type involved: the target of a value that does not fit,
+	// or the type that has no YAML form. It is nil when no type was involved.
+	GoType reflect.Type
 	// Msg describes the problem.
 	Msg string
 	// Err is the error a MarshalYAML or MarshalText method returned, if that was the cause.
@@ -101,6 +162,9 @@ type TypeError struct {
 	// More holds the mismatches after this one when a read found several. Each
 	// has an empty More.
 	More []*TypeError
+	// src marks the input the error was read from, so that the error of a decode
+	// made inside a hook can be told from one about other text.
+	src uintptr
 }
 
 // All returns this error and the ones in More, in input order.
@@ -163,21 +227,64 @@ func (e *TypeError) Is(target error) bool {
 	return false
 }
 
+// Limit names one of the bounds of a [LimitSet] by the name of its field. Its
+// values are the Limit constants, and each has a sentinel that errors.Is
+// matches, such as [ErrMaxDepth] for [LimitMaxDepth].
+type Limit string
+
+// The values of [LimitError.Limit], one for each field of [LimitSet].
+const (
+	// LimitMaxDepth is the deepest nesting of collections.
+	LimitMaxDepth Limit = "MaxDepth"
+	// LimitMaxAliasNodes is the nodes that alias expansion may produce.
+	LimitMaxAliasNodes Limit = "MaxAliasNodes"
+	// LimitMaxAliasBytes is the scalar bytes that alias expansion may produce.
+	// A patch that copies more than this much text also reports it.
+	LimitMaxAliasBytes Limit = "MaxAliasBytes"
+	// LimitMaxInputBytes is the largest input accepted. A patch that is too long,
+	// or one that would make the document too large, also reports it.
+	LimitMaxInputBytes Limit = "MaxInputBytes"
+	// LimitMaxScalarBytes is the longest single scalar accepted.
+	LimitMaxScalarBytes Limit = "MaxScalarBytes"
+	// LimitMaxDocuments is the most documents accepted in one stream.
+	LimitMaxDocuments Limit = "MaxDocuments"
+	// LimitMaxNumberDigits is the most digits of a number that is converted.
+	LimitMaxNumberDigits Limit = "MaxNumberDigits"
+	// LimitMaxPatchWorkRatio is the text that the edits of one patch may read again.
+	LimitMaxPatchWorkRatio Limit = "MaxPatchWorkRatio"
+)
+
 // LimitError reports that a limit was exceeded.
+//
+// Match it with errors.Is against [ErrLimit] for any limit or, for one, the
+// sentinel such as [ErrMaxDepth]; read the fields with errors.As.
 type LimitError struct {
-	// Limit names the limit, for example "depth".
-	Limit string
+	// Limit is the bound that was exceeded, named by its [LimitSet] field. Switch
+	// on it rather than on What.
+	Limit Limit
+	// What says in words what the bound applies to, such as "alias expansion
+	// nodes" or "patch output size", for messages. Its wording may change.
+	What string
 	// Max is the bound that was exceeded.
 	Max int
-	// Option names the option that raises the bound.
+	// Option names the option and the [LimitSet] field that raise the bound, in
+	// the form "Limits (MaxDepth)"; NoLimits removes every bound. It is empty when
+	// the bound cannot be changed, which is also the case for the compat packages,
+	// which take no limit options.
 	Option string
-	// Path is the RFC 6901 pointer to the value where the limit was hit, if known.
+	// Path is the RFC 6901 pointer to the value where the limit was hit. It is
+	// empty when the limit was hit before there was a path: the size of the input,
+	// the number of documents, or nesting that the parser stopped at.
 	Path string
 }
 
 // Error names the limit, where it was hit and the option that raises it.
 func (e *LimitError) Error() string {
-	s := fmt.Sprintf("oneyaml: %s limit of %d exceeded", e.Limit, e.Max)
+	what := e.What
+	if what == "" {
+		what = string(e.Limit)
+	}
+	s := fmt.Sprintf("oneyaml: %s limit of %d exceeded", what, e.Max)
 	if e.Path != "" {
 		s += " at " + e.Path
 	}
@@ -185,6 +292,25 @@ func (e *LimitError) Error() string {
 		s += " (raise it with " + e.Option + ")"
 	}
 	return s
+}
+
+// Is reports whether target is [ErrLimit] or the sentinel of the Limit of e.
+func (e *LimitError) Is(target error) bool {
+	if target == ErrLimit {
+		return true
+	}
+	return target == limitSentinel[e.Limit]
+}
+
+var limitSentinel = map[Limit]error{
+	LimitMaxDepth:          ErrMaxDepth,
+	LimitMaxAliasNodes:     ErrMaxAliasNodes,
+	LimitMaxAliasBytes:     ErrMaxAliasBytes,
+	LimitMaxInputBytes:     ErrMaxInputBytes,
+	LimitMaxScalarBytes:    ErrMaxScalarBytes,
+	LimitMaxDocuments:      ErrMaxDocuments,
+	LimitMaxNumberDigits:   ErrMaxNumberDigits,
+	LimitMaxPatchWorkRatio: ErrMaxPatchWorkRatio,
 }
 
 // EditError reports a failed document edit or patch operation.
@@ -244,4 +370,15 @@ func shortPath(p string) string {
 		return p
 	}
 	return p[:keep] + "..." + p[len(p)-keep:]
+}
+
+// limitErr builds the error for a bound that Limits can raise. what says in
+// words what was bounded.
+func limitErr(l Limit, what string, max int, path string) *LimitError {
+	return &LimitError{Limit: l, What: what, Max: max, Option: "Limits (" + string(l) + ")", Path: path}
+}
+
+// fixedLimitErr builds the error for a bound that no option changes.
+func fixedLimitErr(l Limit, what string, max int) *LimitError {
+	return &LimitError{Limit: l, What: what, Max: max}
 }

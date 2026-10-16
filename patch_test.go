@@ -196,7 +196,7 @@ func TestApplyPatchLimits(t *testing.T) {
 	deep := `[{"op":"add","path":"/b","value":` + strings.Repeat("[", 20000) + strings.Repeat("]", 20000) + `}]`
 	err := d.ApplyPatch([]byte(deep))
 	var le *LimitError
-	if !errors.As(err, &le) || le.Limit != "depth" {
+	if !errors.As(err, &le) || le.Limit != LimitMaxDepth {
 		t.Fatalf("got %v", err)
 	}
 	if string(d.Bytes()) != "a: 1\n" {
@@ -225,7 +225,7 @@ func TestApplyPatchLimits(t *testing.T) {
 		t.Fatal("document changed")
 	}
 	err = bomb.ApplyPatch([]byte(`[{"op":"copy","from":"/` + prev + `","path":"/a/-"}]`))
-	if !errors.As(err, &le) || le.Limit != "alias expansion nodes" {
+	if !errors.As(err, &le) || le.Limit != LimitMaxAliasNodes {
 		t.Fatalf("copy of a bomb: got %v", err)
 	}
 }

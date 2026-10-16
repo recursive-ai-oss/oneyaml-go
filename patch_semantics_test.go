@@ -44,7 +44,7 @@ func TestPatchCopiesAreBounded(t *testing.T) {
 			err := d.ApplyPatch([]byte(patch))
 			runtime.ReadMemStats(&m1)
 			var le *LimitError
-			if !errors.As(err, &le) || le.Limit != "patch copy bytes" || le.Max != c.max {
+			if !errors.As(err, &le) || le.Limit != LimitMaxAliasBytes || le.Max != c.max {
 				t.Fatalf("got %v", err)
 			}
 			if string(d.Bytes()) != src {
@@ -85,7 +85,7 @@ func TestPatchOutputIsBoundedByTheInputLimit(t *testing.T) {
 		d := mustParse(t, src, lim)
 		var le *LimitError
 		err := d.ApplyPatch([]byte(p))
-		if !errors.As(err, &le) || le.Limit != "patch output size" || le.Max != 120 {
+		if !errors.As(err, &le) || le.Limit != LimitMaxInputBytes || le.Max != 120 {
 			t.Fatalf("%s: got %v", p, err)
 		}
 		if string(d.Bytes()) != src {
@@ -237,7 +237,7 @@ func TestCopyPastTheDepthLimit(t *testing.T) {
 		d := mustParse(t, src, Limits(LimitSet{MaxDepth: 5}))
 		var le *LimitError
 		err := d.ApplyPatch([]byte(p))
-		if !errors.As(err, &le) || le.Limit != "depth" {
+		if !errors.As(err, &le) || le.Limit != LimitMaxDepth {
 			t.Fatalf("%s: got %v", p, err)
 		}
 		if string(d.Bytes()) != src {

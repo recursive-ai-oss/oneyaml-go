@@ -78,17 +78,17 @@ func convertEmitError(err error) error {
 	}
 	// A depth or cycle error would repeat the same path thousands of times.
 	if ee.Kind == emit.KindDepth {
-		return &LimitError{Limit: "depth", Max: ee.Max, Option: "Limits or NoLimits"}
+		return limitErr(LimitMaxDepth, "depth", ee.Max, "")
 	}
 	if ee.Kind == emit.KindNumberDigits {
-		return &LimitError{Limit: "number digits", Max: ee.Max, Option: "Limits (MaxNumberDigits)", Path: ee.PathString()}
+		return limitErr(LimitMaxNumberDigits, "number digits", ee.Max, ee.PathString())
 	}
 	te := &TypeError{Msg: ee.Detail, Err: ee.Err}
 	if ee.Kind != emit.KindCycle {
 		te.Path = ee.PathString()
 	}
 	if ee.Type != nil {
-		te.GoType = ee.Type.String()
+		te.GoType = ee.Type
 	}
 	return te
 }

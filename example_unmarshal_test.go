@@ -78,7 +78,7 @@ func ExampleLimits() {
 	if errors.As(err, &le) {
 		fmt.Println(le.Limit, le.Max)
 	}
-	// Output: alias expansion nodes 20
+	// Output: MaxAliasNodes 20
 }
 
 func ExampleDecoder() {

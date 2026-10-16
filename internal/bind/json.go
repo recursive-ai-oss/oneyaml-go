@@ -52,12 +52,12 @@ func (b *Binder) jsonHook(v reflect.Value, ev *parse.Event, dp *dplan) (bool, er
 		b.jsonBuf = buf[:0]
 	}
 	if err != nil {
-		return true, &Error{Kind: KindType, Offset: start, GoType: t.String(),
+		return true, &Error{Kind: KindType, Offset: start, GoType: t,
 			Msg: "cannot read this value into " + t.String() + " through its UnmarshalJSON: " + err.Error()}
 	}
 	v = deref(v)
 	if uerr := v.Addr().Interface().(json.Unmarshaler).UnmarshalJSON(buf); uerr != nil {
-		return true, &Error{Kind: KindType, Offset: start, GoType: t.String(), Err: uerr,
+		return true, &Error{Kind: KindType, Offset: start, GoType: t, Err: uerr,
 			Msg: "cannot unmarshal " + abbrev(buf) + " into " + t.String() + ": " + uerr.Error()}
 	}
 	return true, nil

@@ -90,7 +90,7 @@ func TestJSONMarshalNumberDigitLimit(t *testing.T) {
 	big := rawNum(strings.Repeat("9", 50))
 	_, err := oneyaml.Marshal(big, oneyaml.Limits(oneyaml.LimitSet{MaxNumberDigits: 10}))
 	var le *oneyaml.LimitError
-	if !errors.As(err, &le) || le.Limit != "number digits" || le.Max != 10 {
+	if !errors.As(err, &le) || le.Limit != oneyaml.LimitMaxNumberDigits || le.Max != 10 {
 		t.Fatalf("got %v", err)
 	}
 	if _, err := oneyaml.Marshal(big, oneyaml.NoLimits()); err != nil {

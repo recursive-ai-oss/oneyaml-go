@@ -67,14 +67,14 @@ func (b *Binder) readV3(ev *parse.Event, s *scalarV3) error {
 	}
 	r, ok := classifyV3(s.raw, ev.Style, s.tag)
 	if !ok {
-		return &Error{Kind: KindType, Offset: ev.Start, GoType: "interface {}", Category: "decode",
+		return &Error{Kind: KindType, Offset: ev.Start, GoType: anyType, Category: "decode",
 			Msg: "cannot decode " + v3KindName(&r) + " `" + abbrevV3(s.raw) + "` as a " + tagNames[s.tag]}
 	}
 	s.r, s.txt = r, s.raw
 	if s.tag == tagBinary {
 		dec, derr := base64.StdEncoding.DecodeString(string(s.raw))
 		if derr != nil {
-			return &Error{Kind: KindType, Offset: ev.Start, GoType: "interface {}", Category: "decode", Msg: "!!binary value contains invalid base64 data"}
+			return &Error{Kind: KindType, Offset: ev.Start, GoType: anyType, Category: "decode", Msg: "!!binary value contains invalid base64 data"}
 		}
 		s.txt = dec
 	}
@@ -117,7 +117,7 @@ func (b *Binder) v3Mismatch(ev *parse.Event, t reflect.Type, s *scalarV3) error 
 	if s.tag != tagNone && s.tag != tagOther && s.tag != tagNonSpecific {
 		name = tagNames[s.tag]
 	}
-	return &Error{Kind: KindType, Offset: ev.Start, GoType: t.String(),
+	return &Error{Kind: KindType, Offset: ev.Start, GoType: t,
 		Msg: "cannot unmarshal " + name + " `" + abbrevV3(s.raw) + "` into " + t.String()}
 }
 
@@ -211,7 +211,7 @@ func (b *Binder) scalarIntoV3(v reflect.Value, ev *parse.Event) error {
 	if t.PkgPath() != "" || k == reflect.Struct || k == reflect.Slice || k == reflect.Array || k == reflect.Map {
 		if b.plan(t).textUnm {
 			if err := v.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText(s.txt); err != nil {
-				return &Error{Kind: KindType, Offset: ev.Start, GoType: t.String(), Err: err, Msg: err.Error()}
+				return &Error{Kind: KindType, Offset: ev.Start, GoType: t, Err: err, Msg: err.Error()}
 			}
 			return nil
 		}

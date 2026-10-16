@@ -129,14 +129,15 @@ type Error struct {
 	// segments added by the enclosing typed collections are in segs. Read the
 	// whole with FullPath or Flatten.
 	Path   string
-	GoType string
+	GoType reflect.Type
 	Msg    string
 	// Err is the error a user hook returned.
 	Err error
-	// Limit, Max and Option describe a KindLimit error.
-	Limit  string
-	Max    int
-	Option string
+	// Limit, What and Max describe a KindLimit error: Limit is the name of the
+	// LimitSet field that was exceeded, What says in words what it bounds.
+	Limit string
+	What  string
+	Max   int
 	// Category names a KindSyntax error.
 	Category string
 	// Resume marks a type error after which the document can still be read:
@@ -271,7 +272,7 @@ func (e *Error) Flatten(budget int) []Located {
 // pass through.
 func withSeg(err error, seg string) error {
 	var be *Error
-	if errors.As(err, &be) && be.Kind != KindLimit {
+	if errors.As(err, &be) {
 		be.prepend(seg)
 	}
 	return err
@@ -282,7 +283,7 @@ func withIdx(err error, i int) error {
 		return nil
 	}
 	var be *Error
-	if errors.As(err, &be) && be.Kind != KindLimit {
+	if errors.As(err, &be) {
 		be.prepend(strconv.Itoa(i))
 	}
 	return err
@@ -493,8 +494,8 @@ func (b *Binder) resetDoc() {
 // current document. The slice is valid until the next document.
 func (b *Binder) Collected() []*Error { return b.terrs }
 
-func (b *Binder) limit(name string, max int, option string, off int) error {
-	return &Error{Kind: KindLimit, Offset: off, Limit: name, Max: max, Option: option, Msg: name + " limit of " + strconv.Itoa(max) + " exceeded"}
+func (b *Binder) limit(field, what string, max int, off int) error {
+	return &Error{Kind: KindLimit, Offset: off, Limit: field, What: what, Max: max, Msg: what + " limit of " + strconv.Itoa(max) + " exceeded"}
 }
 
 // numLimit refuses to convert a scalar to a number when it has more digits than
@@ -515,7 +516,7 @@ func (b *Binder) numLimit(r *resolve.Result, text []byte, off int) error {
 	default:
 		return nil
 	}
-	return b.limit("number digits", max, "Limits (MaxNumberDigits)", off)
+	return b.limit("MaxNumberDigits", "number digits", max, off)
 }
 
 func (b *Binder) syntax(off int, cat, msg string) error {
@@ -671,7 +672,7 @@ func (b *Binder) charge(n, off int) error {
 			max = r * own
 		}
 		if sp.Nodes > max {
-			return b.limit("alias expansion nodes", max, "Limits (MaxAliasNodes)", off)
+			return b.limit("MaxAliasNodes", "alias expansion nodes", max, off)
 		}
 	}
 	if max := b.cfg.MaxAliasBytes; max > 0 {
@@ -679,7 +680,7 @@ func (b *Binder) charge(n, off int) error {
 			max = r * b.cfg.InputBytes
 		}
 		if sp.Bytes > max {
-			return b.limit("alias expansion bytes", max, "Limits (MaxAliasBytes)", off)
+			return b.limit("MaxAliasBytes", "alias expansion bytes", max, off)
 		}
 	}
 	return nil
@@ -698,7 +699,7 @@ func (b *Binder) track(ev *parse.Event) error {
 	case parse.Scalar:
 		b.own++
 		if max := b.cfg.MaxScalarBytes; max > 0 && ev.End-ev.Start > max {
-			return b.limit("scalar size", max, "Limits (MaxScalarBytes)", ev.Start)
+			return b.limit("MaxScalarBytes", "scalar size", max, ev.Start)
 		}
 		if ev.AnchorEnd > ev.AnchorStart {
 			start := len(b.log)
@@ -781,7 +782,7 @@ func (b *Binder) skip(ev *parse.Event) error {
 
 func (b *Binder) checkDepth(d, off int) error {
 	if max := b.cfg.MaxDepth; max > 0 && d > max {
-		return b.limit("depth", max, "Limits (MaxDepth)", off)
+		return b.limit("MaxDepth", "depth", max, off)
 	}
 	return nil
 }
@@ -955,3 +956,8 @@ func (b *Binder) releaseJSON() {
 	clear(b.jsonBuf[:cap(b.jsonBuf)])
 	b.jsonBuf = b.jsonBuf[:0]
 }
+
+var (
+	anyType    = reflect.TypeFor[any]()
+	anyMapType = reflect.TypeFor[map[any]any]()
+)

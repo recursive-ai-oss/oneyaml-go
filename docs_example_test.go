@@ -266,7 +266,7 @@ func ExampleUntrusted() {
 	}
 	// Output:
 	// <nil>
-	// depth 1000 Limits
+	// MaxDepth 1000 Limits (MaxDepth)
 }
 
 // NoLimits removes every bound, including the depth limit. Use it only for
@@ -488,8 +488,8 @@ func ExampleLimits_addBound() {
 		fmt.Println(le.Limit, le.Max)
 	}
 	// Output:
-	// input size 1048576
-	// depth 10000
+	// MaxInputBytes 1048576
+	// MaxDepth 10000
 }
 
 // NoBound lifts one bound and keeps the others at their defaults.
@@ -518,8 +518,8 @@ func ExampleUntrusted_tighten() {
 		}
 	}
 	// Output:
-	// depth 50
-	// number digits 4300
+	// MaxDepth 50
+	// MaxNumberDigits 4300
 }
 
 // A Node is a view into a Document, so it is read with Document.Get, never

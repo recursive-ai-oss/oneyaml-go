@@ -80,7 +80,7 @@ func (b *Binder) generic(first *parse.Event) (any, error) {
 			}
 		case parse.SequenceStart, parse.MappingStart:
 			if keyPos {
-				return nil, b.unwind(base, &Error{Kind: KindType, Offset: ev.Start, GoType: "interface {}",
+				return nil, b.unwind(base, &Error{Kind: KindType, Offset: ev.Start, GoType: anyType,
 					Msg: "a collection cannot be the key of a generic mapping (Go map keys must be comparable)"})
 			}
 			if err = b.checkDepth(len(b.frames)+b.tdepth+1, ev.Start); err != nil {
@@ -134,7 +134,7 @@ func (b *Binder) generic(first *parse.Event) (any, error) {
 // unwind drops the frames and staged values of a failed generic decode and
 // attaches the path of the failure.
 func (b *Binder) unwind(base int, err error) error {
-	if be, ok := err.(*Error); ok && be.Kind != KindLimit && be.Path == "" {
+	if be, ok := err.(*Error); ok && be.Path == "" {
 		be.Path = b.framePath(base)
 	}
 	valsAt, pairsAt := len(b.vals), len(b.pairs)
@@ -209,7 +209,7 @@ func firstFloatKey(ps []pair, fl float64) int {
 // float64. They are not duplicates; a Go map keyed by float64 cannot hold both.
 // Offset is the later key and First the earlier one.
 func (b *Binder) floatKeys(first, off int) error {
-	return &Error{Kind: KindType, Offset: off, First: first, Category: "float-key", GoType: "map[interface {}]interface {}",
+	return &Error{Kind: KindType, Offset: off, First: first, Category: "float-key", GoType: anyMapType,
 		Msg: "two mapping keys are different numbers that round to the same float64, which a map cannot hold apart"}
 }
 
@@ -363,7 +363,7 @@ func (b *Binder) applyMerge(m any, f *anyFrame) (any, error) {
 }
 
 func (b *Binder) mergeErr(f *anyFrame) error {
-	return &Error{Kind: KindType, Offset: f.off, GoType: "map",
+	return &Error{Kind: KindType, Offset: f.off, GoType: anyMapType,
 		Msg: "a merge key needs a mapping or a sequence of mappings"}
 }
 
@@ -461,7 +461,7 @@ func (b *Binder) scalarAny(ev *parse.Event) (any, error) {
 }
 
 func (b *Binder) tagMismatch(ev *parse.Event, text []byte, tag tagClass) error {
-	return &Error{Kind: KindType, Offset: ev.Start, GoType: "interface {}",
+	return &Error{Kind: KindType, Offset: ev.Start, GoType: anyType,
 		Msg: "cannot construct " + tagNames[tag] + " from `" + abbrev(text) + "`"}
 }
 

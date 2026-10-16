@@ -161,11 +161,11 @@ type editWork struct {
 func Parse(data []byte, opts ...Option) (*Document, error) {
 	cfg := newConfig(opts)
 	if m := cfg.limits.MaxInputBytes; m > 0 && len(data) > m {
-		return nil, &LimitError{Limit: "input size", Max: m, Option: "Limits or NoLimits"}
+		return nil, limitErr(LimitMaxInputBytes, "input size", m, "")
 	}
 	if len(data) > math.MaxInt32-1 {
 		// Node offsets are 32-bit to keep the tree small.
-		return nil, &LimitError{Limit: "input size", Max: math.MaxInt32 - 1, Option: "none: split the stream"}
+		return nil, fixedLimitErr(LimitMaxInputBytes, "input size", math.MaxInt32-1)
 	}
 	s := &docStream{cfg: cfg}
 	if decodeDocInput != nil {
@@ -224,7 +224,7 @@ func (s *docStream) build() error {
 			}
 			b.Event(&ev)
 			if len(s.tree.Docs) > max {
-				return &LimitError{Limit: "documents", Max: max, Option: "Limits or NoLimits"}
+				return limitErr(LimitMaxDocuments, "documents per stream", max, "")
 			}
 		}
 		b.Finish()
@@ -239,13 +239,13 @@ func (s *docStream) build() error {
 func (s *docStream) checkLimits() error {
 	lim := s.cfg.limits
 	if lim.MaxDocuments > 0 && len(s.tree.Docs) > lim.MaxDocuments {
-		return &LimitError{Limit: "documents", Max: lim.MaxDocuments, Option: "Limits or NoLimits"}
+		return limitErr(LimitMaxDocuments, "documents per stream", lim.MaxDocuments, "")
 	}
 	if lim.MaxScalarBytes > 0 {
 		for i := range s.tree.Nodes {
 			nd := &s.tree.Nodes[i]
 			if nd.Kind == cst.Scalar && int(nd.End-nd.Start) > lim.MaxScalarBytes {
-				return &LimitError{Limit: "scalar size", Max: lim.MaxScalarBytes, Option: "Limits or NoLimits"}
+				return limitErr(LimitMaxScalarBytes, "scalar size", lim.MaxScalarBytes, "")
 			}
 		}
 	}

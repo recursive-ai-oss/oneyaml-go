@@ -108,7 +108,7 @@ func (in *nodeInput) convert(err error) error {
 	}
 	switch be.Kind {
 	case bind.KindLimit:
-		return &oneyaml.LimitError{Limit: be.Limit, Max: be.Max, Option: be.Option, Path: be.Path}
+		return &oneyaml.LimitError{Limit: oneyaml.Limit(be.Limit), What: be.What, Max: be.Max, Path: be.FullPath()}
 	case bind.KindSyntax:
 		if be.Category == "duplicate-key" {
 			return &TypeError{Errors: []string{in.message(be)}}
@@ -293,13 +293,13 @@ func (in *nodeInput) gen(n *Node) ([]parse.Event, error) {
 				return errors.New("yaml: cannot decode a node that contains itself")
 			}
 			if len(stack) >= in.maxDepth {
-				return &oneyaml.LimitError{Limit: "depth", Max: in.maxDepth, Option: "Limits (MaxDepth)"}
+				return &oneyaml.LimitError{Limit: oneyaml.LimitMaxDepth, What: "depth", Max: in.maxDepth}
 			}
 			if in.seen[c] {
 				// The same node under a second parent is written out again.
 				in.extra += 1 + len(c.Content)
 				if in.maxExtra > 0 && in.extra > in.maxExtra {
-					return &oneyaml.LimitError{Limit: "alias expansion nodes", Max: in.maxExtra, Option: "Limits (MaxAliasNodes)"}
+					return &oneyaml.LimitError{Limit: oneyaml.LimitMaxAliasNodes, What: "alias expansion nodes", Max: in.maxExtra}
 				}
 			}
 			in.seen[c] = true

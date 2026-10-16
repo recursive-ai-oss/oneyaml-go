@@ -196,7 +196,7 @@ func (s *docStream) yamlPatchValue(text []byte, seqOnly bool) (v edit.Value, err
 	}
 	v, verr := edit.FromTree(&t, text, root)
 	if verr != nil {
-		return v, &LimitError{Limit: "depth", Max: edit.MaxValueDepth, Option: "Limits or NoLimits"}, true
+		return v, limitErr(LimitMaxDepth, "depth", edit.MaxValueDepth, ""), true
 	}
 	if msg := yamlPatchProblem(&v); msg != "" {
 		return v, fmt.Errorf("%w: %s", patch.ErrSyntax, msg), true
@@ -308,7 +308,7 @@ func kindOf(err error, maxDepth int) error {
 		if maxDepth <= 0 || maxDepth > edit.MaxValueDepth {
 			maxDepth = edit.MaxValueDepth
 		}
-		return &LimitError{Limit: "depth", Max: maxDepth, Option: "Limits or NoLimits"}
+		return limitErr(LimitMaxDepth, "depth", maxDepth, "")
 	}
 	if errors.Is(err, patch.ErrSyntax) {
 		return fmt.Errorf("%w: %s", ErrInvalidPatch, trimKind(err.Error()))
@@ -500,7 +500,7 @@ func (s *docStream) testStep(doc int, st *patchStep) error {
 	}
 	ok, err := patch.Equal(c, loc.Node, &st.val, s.aliasBudget())
 	if err != nil {
-		return s.fail(st, &LimitError{Limit: "alias expansion nodes", Max: s.aliasBudget(), Option: "Limits (MaxAliasNodes)", Path: st.path})
+		return s.fail(st, limitErr(LimitMaxAliasNodes, "alias expansion nodes", s.aliasBudget(), st.path))
 	}
 	if !ok {
 		return s.fail(st, ErrTestFailed)
@@ -596,7 +596,7 @@ func (s *docStream) relocate(doc int, st *patchStep, b *patchBudget) error {
 		}
 		var be *patch.BudgetError
 		if errors.As(err, &be) && be.What == "written" {
-			return s.fail(st, &LimitError{Limit: "patch copy bytes", Max: b.maxCopy, Option: "Limits (MaxAliasBytes)", Path: st.path})
+			return s.fail(st, limitErr(LimitMaxAliasBytes, "patch copy bytes", b.maxCopy, st.path))
 		}
 		if errors.Is(err, patch.ErrBudget) {
 			return s.fail(st, aliasError(err, st.from))
@@ -666,11 +666,11 @@ func (b *patchBudget) chargeCopy(s *docStream, st *patchStep, n int) error {
 	if b.maxCopy > 0 {
 		b.copied += n
 		if b.copied > b.maxCopy {
-			return s.fail(st, &LimitError{Limit: "patch copy bytes", Max: b.maxCopy, Option: "Limits (MaxAliasBytes)", Path: st.path})
+			return s.fail(st, limitErr(LimitMaxAliasBytes, "patch copy bytes", b.maxCopy, st.path))
 		}
 	}
 	if b.maxDoc > 0 && len(s.src)+n > b.maxDoc {
-		return s.fail(st, &LimitError{Limit: "patch output size", Max: b.maxDoc, Option: "Limits (MaxInputBytes)", Path: st.path})
+		return s.fail(st, limitErr(LimitMaxInputBytes, "patch output size", b.maxDoc, st.path))
 	}
 	return nil
 }
@@ -678,7 +678,7 @@ func (b *patchBudget) chargeCopy(s *docStream, st *patchStep, n int) error {
 // afterWrite checks the size of the document a step left, and passes err on.
 func (b *patchBudget) afterWrite(s *docStream, st *patchStep, err error) error {
 	if err == nil && b.maxDoc > 0 && len(s.src) > b.maxDoc {
-		return s.fail(st, &LimitError{Limit: "patch output size", Max: b.maxDoc, Option: "Limits (MaxInputBytes)", Path: st.path})
+		return s.fail(st, limitErr(LimitMaxInputBytes, "patch output size", b.maxDoc, st.path))
 	}
 	return err
 }

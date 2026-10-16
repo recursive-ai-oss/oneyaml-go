@@ -43,7 +43,7 @@ func TestSetFromNodeChargesAliasBytes(t *testing.T) {
 	var err error
 	used := allocated(func() { err = dst.Set("/b", n) })
 	var le *LimitError
-	if !errors.As(err, &le) || le.Limit != "alias expansion bytes" {
+	if !errors.As(err, &le) || le.Limit != LimitMaxAliasBytes {
 		t.Fatalf("got %v", err)
 	}
 	if string(dst.Bytes()) != "b: 2\n" {
@@ -53,7 +53,7 @@ func TestSetFromNodeChargesAliasBytes(t *testing.T) {
 		t.Fatalf("refusing allocated %d bytes", used)
 	}
 	dst2 := mustParse(t, "b: 2\n")
-	if err := dst2.Apply(PatchAdd("/c", n)); !errors.As(err, &le) || le.Limit != "alias expansion bytes" {
+	if err := dst2.Apply(PatchAdd("/c", n)); !errors.As(err, &le) || le.Limit != LimitMaxAliasBytes {
 		t.Fatalf("Apply: got %v", err)
 	}
 	if string(dst2.Bytes()) != "b: 2\n" {
@@ -75,7 +75,7 @@ func TestAliasBytesBoundSemantics(t *testing.T) {
 	// An explicit limit is honoured exactly, with no ratio.
 	tight := mustParse(t, "b: 2\n", Limits(LimitSet{MaxAliasBytes: 1000}))
 	var le *LimitError
-	if err := tight.Set("/b", n); !errors.As(err, &le) || le.Limit != "alias expansion bytes" || le.Max != 1000 {
+	if err := tight.Set("/b", n); !errors.As(err, &le) || le.Limit != LimitMaxAliasBytes || le.Max != 1000 {
 		t.Fatalf("got %v", err)
 	}
 	// The bound is raised for a large source: ten times its own size by default.
@@ -110,7 +110,7 @@ func TestPatchCopyChargesAliasBytes(t *testing.T) {
 		patch := `[{"op":"` + op + `","from":"/e","path":"/a/-"}]`
 		var le *LimitError
 		err := d.ApplyPatch([]byte(patch))
-		if !errors.As(err, &le) || le.Limit != "alias expansion bytes" || le.Max != 1000 {
+		if !errors.As(err, &le) || le.Limit != LimitMaxAliasBytes || le.Max != 1000 {
 			t.Fatalf("%s: got %v", op, err)
 		}
 		if string(d.Bytes()) != src {

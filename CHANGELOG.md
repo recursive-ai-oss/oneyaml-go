@@ -4,6 +4,22 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added
+
+- Every error type answers `errors.Is` for its kind. `*LimitError` matches `ErrLimit` and one sentinel per limit, named like the `LimitSet` field: `ErrMaxDepth`, `ErrMaxAliasNodes`, `ErrMaxAliasBytes`, `ErrMaxInputBytes`, `ErrMaxScalarBytes`, `ErrMaxDocuments`, `ErrMaxNumberDigits` and `ErrMaxPatchWorkRatio`. `*SyntaxError` matches `ErrSyntax`, and `ErrEncoding` or `ErrDuplicateKey` for those categories. See [Limits](docs/limits.md#each-limit).
+- The type `Limit` and its values `LimitMaxDepth`, `LimitMaxAliasNodes`, `LimitMaxAliasBytes`, `LimitMaxInputBytes`, `LimitMaxScalarBytes`, `LimitMaxDocuments`, `LimitMaxNumberDigits` and `LimitMaxPatchWorkRatio`, for `LimitError.Limit`; and the type `Category` for `SyntaxError.Category`.
+- `LimitError.What` says in words what a bound applies to (the text `Limit` used to hold).
+
+### Changed
+
+- **Breaking:** `LimitError.Limit` is a `Limit` that names the `LimitSet` field (`LimitMaxDepth`), where it was free text (`"depth"`, `"alias expansion nodes"`, `"patch output size"`). Compare it with the constants. The old text is in `What`, and the message is unchanged. Patch limits report the field that governs them: `MaxInputBytes` for the patch text and for the document a patch makes, `MaxAliasBytes` for the text a patch copies.
+- **Breaking:** `LimitError.Option` has one form, `Limits (MaxDepth)`, naming the option and the field that raises the bound, where it was `Limits`, `Limits or NoLimits` or `Limits (MaxAliasNodes)` by place. It is empty when no option changes the bound, and always in `compat/yamlv3` and `compat/k8syaml`, which take no limit options and used to suggest `Limits`.
+- `LimitError.Path` is filled for the limits hit at a value while reading (alias expansion, scalar size, number digits), as it already was for patches. It stays empty for the input size, the document count and nesting that the parser stops at.
+- **Breaking:** `SyntaxError.Category` has the type `Category`, and the constants `CategorySyntax`, `CategoryEncoding` and `CategoryDuplicateKey` are of that type, where they were untyped strings. Code that compares them, switches on them or prints them keeps compiling; code that stores one in a `string` variable or passes it as a `string` needs `string(c)`.
+- **Breaking:** `TypeError.GoType` is a `reflect.Type` (nil when no type is involved), where it was a `string`, so two types of one name in different packages can be told apart and a type can be compared (`te.GoType == reflect.TypeFor[time.Duration]()`). Messages print it as before; use `te.GoType.String()` where you used the string.
+- A type error raised by a decode inside an `UnmarshalYAML` hook (a `Node.Decode`, or the function a func-style hook is given) is reported at the line and column of the value that does not fit, as it is without a hook, and as yaml.v3 reports it. It used to name the first key of the hooked mapping, so a bad value on line 7 was reported on line 5. Every mismatch the hook's decode found is reported, with the hook's path in front, and an unknown field under `KnownFields()` still matches `ErrUnknownField`. This applies to `Unmarshal`, `Decoder.Decode` and `Document.Decode`.
+- A type with an `UnmarshalYAML` method of a form that cannot be called, and a `Node` used as a decode target, are collected like a value that does not fit, as the `TypeError` documentation says: the value is skipped and the rest of the document is read. The first of them used to stop the read.
+
 ## [0.3.0] - 2026-10-16
 
 ### Added

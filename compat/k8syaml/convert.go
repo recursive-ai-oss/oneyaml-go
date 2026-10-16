@@ -2,6 +2,7 @@ package yaml
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -85,7 +86,7 @@ func (w *walker) convert(y []byte, strict bool, tt reflect.Type) error {
 	y = firstDocument(y)
 	doc, err := oneyaml.Parse(y)
 	if err != nil {
-		return err
+		return noOption(err)
 	}
 	w.doc = doc
 	w.strict = strict
@@ -185,7 +186,7 @@ func rawUsable(y, src []byte) bool {
 func (w *walker) enter() error {
 	w.depth++
 	if w.depth > limits.MaxDepth {
-		return &oneyaml.LimitError{Limit: "depth", Max: limits.MaxDepth}
+		return &oneyaml.LimitError{Limit: oneyaml.LimitMaxDepth, What: "depth", Max: limits.MaxDepth}
 	}
 	return nil
 }
@@ -341,7 +342,7 @@ func (w *walker) walk(n oneyaml.Node, tt reflect.Type, sp *[]vframe) error {
 		if w.aliasDepth > 0 {
 			w.aliasNodes++
 			if w.aliasNodes > w.nodeBudget {
-				return &oneyaml.LimitError{Limit: "alias expansion", Max: w.nodeBudget}
+				return &oneyaml.LimitError{Limit: oneyaml.LimitMaxAliasNodes, What: "alias expansion nodes", Max: w.nodeBudget}
 			}
 		}
 		opened := false
@@ -406,7 +407,7 @@ func (w *walker) walk(n oneyaml.Node, tt reflect.Type, sp *[]vframe) error {
 					if w.aliasBytes > w.byteBudget {
 						stack = stack[:len(stack)-1]
 						w.depth--
-						return &oneyaml.LimitError{Limit: "alias expansion size", Max: w.byteBudget}
+						return &oneyaml.LimitError{Limit: oneyaml.LimitMaxAliasBytes, What: "alias expansion bytes", Max: w.byteBudget}
 					}
 				}
 				stack = stack[:len(stack)-1]
@@ -573,7 +574,7 @@ func (w *walker) merge(v oneyaml.Node) error {
 			m = t
 			w.aliasNodes += m.Len()
 			if w.aliasNodes > w.nodeBudget {
-				return &oneyaml.LimitError{Limit: "alias expansion", Max: w.nodeBudget}
+				return &oneyaml.LimitError{Limit: oneyaml.LimitMaxAliasNodes, What: "alias expansion nodes", Max: w.nodeBudget}
 			}
 		}
 		if m.Kind() != oneyaml.MappingNode {
@@ -705,4 +706,14 @@ func (w *walker) order(base int) error {
 	}
 	w.ents = w.ents[:base+out]
 	return nil
+}
+
+// noOption removes the advice to raise a limit with an option from a limit error
+// of the core: this package has no limit options.
+func noOption(err error) error {
+	var le *oneyaml.LimitError
+	if errors.As(err, &le) {
+		le.Option = ""
+	}
+	return err
 }

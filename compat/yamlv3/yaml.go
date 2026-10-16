@@ -333,6 +333,8 @@ func convertError(err error) error {
 	}
 	var le *oneyaml.LimitError
 	if errors.As(err, &le) {
+		// This package takes no limit options, so there is nothing to suggest.
+		le.Option = ""
 		return err
 	}
 	var te *oneyaml.TypeError

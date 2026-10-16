@@ -204,7 +204,7 @@ func TestUnmarshalTypeErrors(t *testing.T) {
 			t.Errorf("%q: err = %v", tc.src, err)
 			continue
 		}
-		if te.Path != tc.path || te.Line != tc.line || te.Column != tc.col || !strings.Contains(te.Msg, tc.msgContain) || te.GoType == "" {
+		if te.Path != tc.path || te.Line != tc.line || te.Column != tc.col || !strings.Contains(te.Msg, tc.msgContain) || te.GoType == nil {
 			t.Errorf("%q: got path=%q line=%d col=%d msg=%q type=%q", tc.src, te.Path, te.Line, te.Column, te.Msg, te.GoType)
 		}
 	}
@@ -396,7 +396,7 @@ func TestAliasLimits(t *testing.T) {
 	var v any
 	err := oneyaml.Unmarshal([]byte(bomb), &v)
 	var le *oneyaml.LimitError
-	if !errors.As(err, &le) || !strings.Contains(le.Limit, "alias") || le.Option == "" {
+	if !errors.As(err, &le) || (le.Limit != oneyaml.LimitMaxAliasNodes && le.Limit != oneyaml.LimitMaxAliasBytes) || le.Option == "" {
 		t.Fatalf("err = %#v", err)
 	}
 	small := oneyaml.Limits(oneyaml.LimitSet{MaxAliasNodes: 5})
@@ -406,7 +406,7 @@ func TestAliasLimits(t *testing.T) {
 	// Bytes budget.
 	big := "a: &a " + strings.Repeat("x", 1000) + "\nb: [" + strings.Repeat("*a, ", 100) + "*a]\n"
 	err = oneyaml.Unmarshal([]byte(big), &v, oneyaml.Limits(oneyaml.LimitSet{MaxAliasBytes: 10000}))
-	if !errors.As(err, &le) || !strings.Contains(le.Limit, "bytes") {
+	if !errors.As(err, &le) || le.Limit != oneyaml.LimitMaxAliasBytes {
 		t.Errorf("bytes budget: %v", err)
 	}
 	// Typed targets are charged too.
@@ -421,7 +421,7 @@ func TestDepthLimit(t *testing.T) {
 	deep := strings.Repeat("[", 20000) + strings.Repeat("]", 20000)
 	var v any
 	var le *oneyaml.LimitError
-	if err := oneyaml.Unmarshal([]byte(deep), &v); !errors.As(err, &le) || le.Limit != "depth" {
+	if err := oneyaml.Unmarshal([]byte(deep), &v); !errors.As(err, &le) || le.Limit != oneyaml.LimitMaxDepth {
 		t.Errorf("default: %v", err)
 	}
 	if err := oneyaml.Unmarshal([]byte(deep[:2000]+deep[len(deep)-2000:]), &v, oneyaml.Untrusted()); !errors.As(err, &le) {
@@ -442,15 +442,15 @@ func TestDepthLimit(t *testing.T) {
 func TestUntrustedLimits(t *testing.T) {
 	var v any
 	var le *oneyaml.LimitError
-	if err := oneyaml.Unmarshal([]byte("a: "+strings.Repeat("x", 20<<20)), &v, oneyaml.Untrusted()); !errors.As(err, &le) || !strings.Contains(le.Limit, "scalar") {
+	if err := oneyaml.Unmarshal([]byte("a: "+strings.Repeat("x", 20<<20)), &v, oneyaml.Untrusted()); !errors.As(err, &le) || le.Limit != oneyaml.LimitMaxScalarBytes {
 		t.Errorf("scalar size: %v", err)
 	}
 	lim := oneyaml.Limits(oneyaml.LimitSet{MaxInputBytes: 10})
-	if err := oneyaml.Unmarshal([]byte("a: 1234567890"), &v, lim); !errors.As(err, &le) || le.Limit != "input size" {
+	if err := oneyaml.Unmarshal([]byte("a: 1234567890"), &v, lim); !errors.As(err, &le) || le.Limit != oneyaml.LimitMaxInputBytes {
 		t.Errorf("input size: %v", err)
 	}
 	dec := oneyaml.NewDecoder(strings.NewReader("a: 12345678901234"), lim)
-	if err := dec.Decode(&v); !errors.As(err, &le) || le.Limit != "input size" {
+	if err := dec.Decode(&v); !errors.As(err, &le) || le.Limit != oneyaml.LimitMaxInputBytes {
 		t.Errorf("decoder input size: %v", err)
 	}
 	dec = oneyaml.NewDecoder(strings.NewReader(strings.Repeat("--- x\n", 5)), oneyaml.Limits(oneyaml.LimitSet{MaxDocuments: 3}))
@@ -459,7 +459,7 @@ func TestUntrustedLimits(t *testing.T) {
 	for err = dec.Decode(&v); err == nil; err = dec.Decode(&v) {
 		n++
 	}
-	if !errors.As(err, &le) || le.Limit != "documents per stream" || n != 3 {
+	if !errors.As(err, &le) || le.Limit != oneyaml.LimitMaxDocuments || n != 3 {
 		t.Errorf("documents: n=%d err=%v", n, err)
 	}
 }

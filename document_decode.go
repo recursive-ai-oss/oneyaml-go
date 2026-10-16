@@ -107,7 +107,7 @@ func (n Node) Decode(v any) error {
 func checkTarget(v any) error {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
-		return &TypeError{GoType: goTypeName(v), Msg: "Decode needs a non-nil pointer, got " + goTypeName(v)}
+		return &TypeError{GoType: reflect.TypeOf(v), Msg: "Decode needs a non-nil pointer, got " + goTypeName(v)}
 	}
 	return nil
 }
@@ -140,7 +140,12 @@ func (s *docStream) decode(doc int, root int32, v any, sc *bind.Scope) error {
 		}
 	}
 	if err != nil {
-		err = convertError(err, s.src, &cfg, 0, 0)
+		if sc != nil {
+			// Inside a hook: the read around it uses the positions as they are.
+			err = convertErrorKeep(err, s.src, &cfg, 0, 0)
+		} else {
+			err = convertError(err, s.src, &cfg, 0, 0)
+		}
 	}
 	sess.b.Release()
 	sessionPool.Put(sess)

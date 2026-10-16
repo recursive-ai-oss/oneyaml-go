@@ -61,7 +61,7 @@ func (d *Decoder) Decode(v any) error {
 	}
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
-		return &TypeError{GoType: goTypeName(v), Msg: "Decode needs a non-nil pointer, got " + goTypeName(v)}
+		return &TypeError{GoType: reflect.TypeOf(v), Msg: "Decode needs a non-nil pointer, got " + goTypeName(v)}
 	}
 	if d.s == nil {
 		d.s = sessionPool.Get().(*session)
@@ -76,7 +76,7 @@ func (d *Decoder) Decode(v any) error {
 				d.hooks = d.s.b.Hooks()
 				d.docs++
 				if max := d.cfg.limits.MaxDocuments; max > 0 && d.docs > max {
-					return d.fail(&LimitError{Limit: "documents per stream", Max: max, Option: "Limits"}, false)
+					return d.fail(limitErr(LimitMaxDocuments, "documents per stream", max, ""), false)
 				}
 				var err error
 				if ap, isAny := v.(*any); isAny {
@@ -194,7 +194,7 @@ func (d *Decoder) fill() error {
 	d.buf = d.buf[:len(d.buf)+n]
 	d.total += n
 	if max := d.cfg.limits.MaxInputBytes; max > 0 && d.total > max {
-		return &LimitError{Limit: "input size", Max: max, Option: "Limits"}
+		return limitErr(LimitMaxInputBytes, "input size", max, "")
 	}
 	if err == io.EOF {
 		d.eof = true

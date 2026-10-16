@@ -108,19 +108,33 @@
 //
 // # Errors
 //
-// Errors are values to test with [errors.As] and [errors.Is]: [*SyntaxError]
-// carries the line, column, offset and a category ([CategorySyntax],
-// [CategoryEncoding] or [CategoryDuplicateKey], which also names the key and
-// where it first appeared); [*TypeError] the path and position of a value that
-// does not fit its target, and of every other one when a read finds several,
-// with [ErrUnknownField] to match a key the target lacks; [*LimitError] the
-// limit and the option that raises it; and [*EditError] the operation, the
-// pointer and a kind to match against [ErrNotFound], [ErrAliasWrite],
-// [ErrAmbiguousKey], [ErrTestFailed], [ErrAnchorInUse], [ErrInvalidPatch],
-// [ErrInvalidPointer], [ErrUndefinedAlias], [ErrUnsupportedEdit],
-// [ErrKeyExists], [ErrNotAnEntry], [ErrInvalidComment], [ErrStaleNode],
-// [ErrNoPointer] and [ErrNilDocument]. Match errors by type and kind: the text of a message is
-// written for people and may change in any release.
+// Errors are values to test with [errors.As] and [errors.Is]. Ask what kind of
+// failure it was with errors.Is, which every error type answers, and read the
+// details with errors.As:
+//
+//   - [*SyntaxError] carries the line, column, offset and a [Category]
+//     ([CategorySyntax], [CategoryEncoding] or [CategoryDuplicateKey], which also
+//     names the key and where it first appeared). It matches [ErrSyntax] and the
+//     sentinel of its category, [ErrEncoding] or [ErrDuplicateKey].
+//   - [*TypeError] carries the path and position of a value that does not fit its
+//     target, and of every other one when a read finds several, and the
+//     [reflect.Type] involved. It matches [ErrUnknownField] for a key the target
+//     lacks. A value under an UnmarshalYAML hook is reported where it is in the
+//     input, as it is without the hook.
+//   - [*LimitError] carries the [Limit] that was hit, named like the field of
+//     [LimitSet], the bound, the option that raises it and, when the limit was
+//     hit at a value, its path. It matches [ErrLimit] and the sentinel of its
+//     limit, such as [ErrMaxDepth]. The compat packages take no limit options,
+//     so their limit errors name none.
+//   - [*EditError] carries the operation and the pointer, and matches a kind:
+//     [ErrNotFound], [ErrAliasWrite], [ErrAmbiguousKey], [ErrTestFailed],
+//     [ErrAnchorInUse], [ErrInvalidPatch], [ErrInvalidPointer],
+//     [ErrUndefinedAlias], [ErrUnsupportedEdit], [ErrKeyExists],
+//     [ErrNotAnEntry], [ErrInvalidComment], [ErrStaleNode], [ErrNoPointer] and
+//     [ErrNilDocument]; a limit hit by an edit matches its limit as well.
+//
+// Match errors by type and kind: the text of a message is written for people and
+// may change in any release.
 //
 // The library contains no unsafe code. A panic caused by input is treated as a
 // security bug; report it as described in the security policy in the

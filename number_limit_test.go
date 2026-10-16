@@ -16,7 +16,7 @@ func digits(n int) string { return "1" + strings.Repeat("7", n-1) }
 func wantLimit(t *testing.T, err error) {
 	t.Helper()
 	var le *oneyaml.LimitError
-	if !errors.As(err, &le) || le.Limit != "number digits" {
+	if !errors.As(err, &le) || le.Limit != oneyaml.LimitMaxNumberDigits {
 		t.Fatalf("want a number digits LimitError, got %v", err)
 	}
 }

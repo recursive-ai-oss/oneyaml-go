@@ -46,7 +46,7 @@ func TestIgnoredHugeIntegerKeyIsLimited(t *testing.T) {
 	for name, target := range map[string]any{"struct": new(struct{ B int }), "any": new(any)} {
 		err := oneyaml.Unmarshal([]byte(huge), target)
 		var le *oneyaml.LimitError
-		if !errors.As(err, &le) || le.Limit != "number digits" {
+		if !errors.As(err, &le) || le.Limit != oneyaml.LimitMaxNumberDigits {
 			t.Errorf("%s: got %v, want the number digits limit", name, err)
 		}
 	}

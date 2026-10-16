@@ -129,10 +129,10 @@ func Unmarshal(data []byte, v any, opts ...Option) error {
 	cfg := newConfig(opts)
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
-		return &TypeError{GoType: goTypeName(v), Msg: "Unmarshal needs a non-nil pointer, got " + goTypeName(v)}
+		return &TypeError{GoType: reflect.TypeOf(v), Msg: "Unmarshal needs a non-nil pointer, got " + goTypeName(v)}
 	}
 	if max := cfg.limits.MaxInputBytes; max > 0 && len(data) > max {
-		return &LimitError{Limit: "input size", Max: max, Option: "Limits"}
+		return limitErr(LimitMaxInputBytes, "input size", max, "")
 	}
 	src, _, err := encoding.Convert(data)
 	if err != nil {
@@ -173,23 +173,37 @@ func goTypeName(v any) string {
 // offBase place a segment of a larger stream: they are the lines and bytes that
 // came before it.
 func convertError(err error, src []byte, cfg *config, lineBase, offBase int) error {
+	err = convertErrorKeep(err, src, cfg, lineBase, offBase)
+	if te, ok := err.(*TypeError); ok {
+		// The origin mark is for a hook's own decode to hand to the read around
+		// it; it is not part of what a caller sees.
+		te.src = 0
+		for _, m := range te.More {
+			m.src = 0
+		}
+	}
+	return err
+}
+
+// convertErrorKeep is convertError that leaves the origin mark of type errors.
+func convertErrorKeep(err error, src []byte, cfg *config, lineBase, offBase int) error {
 	switch e := err.(type) {
 	case *scan.Error:
 		if e.Category == scan.Limit {
-			return &LimitError{Limit: "depth", Max: cfg.limits.MaxDepth, Option: "Limits"}
+			return limitErr(LimitMaxDepth, "depth", cfg.limits.MaxDepth, "")
 		}
 		return &SyntaxError{Line: e.Line + lineBase, Column: e.Column, Offset: e.Offset + offBase,
-			Category: e.Category.String(), Msg: e.Msg}
+			Category: Category(e.Category.String()), Msg: e.Msg}
 	case *bind.Error:
 		switch e.Kind {
 		case bind.KindLimit:
-			return &LimitError{Limit: e.Limit, Max: e.Max, Option: e.Option, Path: e.Path}
+			return limitErr(Limit(e.Limit), e.What, e.Max, e.FullPath())
 		case bind.KindSyntax:
-			if e.Category == CategoryDuplicateKey {
+			if Category(e.Category) == CategoryDuplicateKey {
 				// Keys written differently that read as one float are not duplicates.
 				if _, _, ok := bind.FirstKey(src, e.Offset); !ok {
 					if first, ok := bind.EarlierRounding(src, e.Offset); ok {
-						return floatKeyError(&bind.Error{Kind: bind.KindType, Offset: e.Offset, First: first, GoType: "float64", Category: "float-key"}, src, lineBase, offBase)
+						return floatKeyError(&bind.Error{Kind: bind.KindType, Offset: e.Offset, First: first, GoType: reflect.TypeFor[float64](), Category: "float-key"}, src, lineBase, offBase)
 					}
 					// Spelled differently, read alike: 1 and 0x1, null and ~.
 					if first, ok := bind.EarlierSameValue(src, e.Offset); ok {
@@ -226,8 +240,8 @@ func floatKeyError(e *bind.Error, src []byte, lineBase, offBase int) error {
 func syntaxFromBind(e *bind.Error, src []byte, lineBase, offBase int) *SyntaxError {
 	pos := scan.NewError(src, e.Offset, scan.Syntax, "")
 	se := &SyntaxError{Line: pos.Line + lineBase, Column: pos.Column, Offset: e.Offset + offBase,
-		Category: e.Category, Msg: e.Msg}
-	if e.Category != CategoryDuplicateKey {
+		Category: Category(e.Category), Msg: e.Msg}
+	if Category(e.Category) != CategoryDuplicateKey {
 		return se
 	}
 	se.Msg = "a mapping key is repeated: it equals an earlier key once converted to the target type"
@@ -279,27 +293,90 @@ func quoteKey(k string) string {
 const pathBudgetMin = 1 << 20
 
 func typeErrors(e *bind.Error, src []byte, lineBase int) *TypeError {
+	budget := max(len(src), pathBudgetMin)
 	if e.Multi == nil {
-		return typeError(e, e.FullPath(), src, lineBase)
+		return joinTypeErrors(typeErrorList(nil, e, e.FullPath(), src, lineBase, nil))
 	}
-	all := e.Flatten(max(len(src), pathBudgetMin))
-	out := typeError(all[0].Err, all[0].Path, src, lineBase)
-	for _, m := range all[1:] {
-		out.More = append(out.More, typeError(m.Err, m.Path, src, lineBase))
+	var out []*TypeError
+	for i, m := range e.Flatten(budget) {
+		if i == 0 {
+			out = typeErrorList(out, m.Err, m.Path, src, lineBase, nil)
+			continue
+		}
+		out = typeErrorList(out, m.Err, m.Path, src, lineBase, &budget)
+		if len(out) >= maxTypeErrors {
+			break
+		}
+	}
+	return joinTypeErrors(out)
+}
+
+// maxTypeErrors is the most mismatches one read reports.
+const maxTypeErrors = 100
+
+// joinTypeErrors makes the first error the head of the list, with the others in More.
+func joinTypeErrors(list []*TypeError) *TypeError {
+	out := list[0]
+	if len(list) > 1 {
+		out.More = list[1:len(list):len(list)]
 	}
 	return out
 }
 
+// typeErrorList appends the TypeErrors for e, found at path, to out. Most
+// errors give one. A hook that returned the error of a decode it made itself
+// (Node.Decode from inside UnmarshalYAML) gives the errors of that decode,
+// each at the position of its own value and with the hook's path in front, so
+// the position is where the bad value is in the input, as it is without a hook.
+// budget, when not nil, is what remains of the path text that later errors may
+// take; an error whose path does not fit is left out.
+func typeErrorList(out []*TypeError, e *bind.Error, path string, src []byte, lineBase int, budget *int) []*TypeError {
+	te := typeError(e, path, src, lineBase)
+	inner, ok := e.Err.(*TypeError)
+	if !ok || inner.src == 0 || inner.src != src0(src) {
+		if budget != nil {
+			if len(te.Path) > *budget {
+				return out
+			}
+			*budget -= len(te.Path)
+		}
+		return append(out, te)
+	}
+	for _, x := range inner.All() {
+		if len(out) >= maxTypeErrors {
+			break
+		}
+		c := *x
+		c.More = nil
+		c.Path = path + x.Path
+		if c.Line > 0 {
+			c.Line += lineBase
+		}
+		if budget != nil {
+			if len(c.Path) > *budget {
+				break
+			}
+			*budget -= len(c.Path)
+		}
+		out = append(out, &c)
+	}
+	return out
+}
+
+// src0 is the origin mark of a TypeError read from src: the address of its first
+// byte, kept as a number so that an error does not hold the input alive.
+func src0(src []byte) uintptr {
+	if len(src) == 0 {
+		return 0
+	}
+	return reflect.ValueOf(&src[0]).Pointer()
+}
+
 func typeError(e *bind.Error, path string, src []byte, lineBase int) *TypeError {
 	pos := scan.NewError(src, e.Offset, scan.Syntax, "")
-	te := &TypeError{Path: path, Line: pos.Line + lineBase, Column: pos.Column, GoType: e.GoType, Msg: e.Msg, Err: e.Err}
+	te := &TypeError{Path: path, Line: pos.Line + lineBase, Column: pos.Column, GoType: e.GoType, Msg: e.Msg, Err: e.Err, src: src0(src)}
 	if e.Unknown {
 		te.Kind = ErrUnknownField
-	}
-	if inner, ok := e.Err.(*TypeError); ok {
-		// A hook returned the error of a decode it made itself: report that
-		// error once, at the position of the value the hook was given.
-		te.Path, te.GoType, te.Msg, te.Err = path+inner.Path, inner.GoType, inner.Msg, inner.Err
 	}
 	if e.Category == "float-key" {
 		fp := scan.NewError(src, e.First, scan.Syntax, "")

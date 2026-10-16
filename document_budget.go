@@ -45,11 +45,11 @@ func aliasError(err error, path string) error {
 	}
 	var be *patch.BudgetError
 	if errors.As(err, &be) {
-		opt := "Limits (MaxAliasNodes)"
+		l := LimitMaxAliasNodes
 		if be.What == "bytes" {
-			opt = "Limits (MaxAliasBytes)"
+			l = LimitMaxAliasBytes
 		}
-		return &LimitError{Limit: "alias expansion " + be.What, Max: be.Max, Option: opt, Path: path}
+		return limitErr(l, "alias expansion "+be.What, be.Max, path)
 	}
 	var ua *patch.UndefinedAliasError
 	if errors.As(err, &ua) {
@@ -122,7 +122,7 @@ func (w *patchWork) check(path string) error {
 		return nil
 	}
 	if cost := w.cost(); cost >= w.max {
-		return &LimitError{Limit: "patch work", Max: w.max, Option: "Limits (MaxPatchWorkRatio)", Path: path}
+		return limitErr(LimitMaxPatchWorkRatio, "patch work", w.max, path)
 	}
 	return nil
 }
@@ -155,7 +155,7 @@ func patchTextMax(m int) int {
 // checkPatchSize refuses a patch text longer than its share of the input limit.
 func (s *docStream) checkPatchSize(n int) error {
 	if m := s.cfg.limits.MaxInputBytes; m > 0 && n > patchTextMax(m) {
-		return &LimitError{Limit: "patch size", Max: patchTextMax(m), Option: "Limits (MaxInputBytes)"}
+		return limitErr(LimitMaxInputBytes, "patch size", patchTextMax(m), "")
 	}
 	return nil
 }

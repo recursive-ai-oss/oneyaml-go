@@ -313,7 +313,7 @@ func TestErrors(t *testing.T) {
 		t.Errorf("hook error lost: %v", te)
 	}
 	_, err = oneyaml.Marshal(map[string]any{"a": []any{1, make(chan int)}})
-	if !errors.As(err, &te) || te.Path != "/a/1" || !strings.Contains(te.GoType, "chan") {
+	if !errors.As(err, &te) || te.Path != "/a/1" || !strings.Contains(te.GoType.String(), "chan") {
 		t.Errorf("chan error: %#v (%v)", te, err)
 	}
 	_, err = oneyaml.Marshal(complex(1, 2))

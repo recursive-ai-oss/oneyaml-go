@@ -74,7 +74,7 @@ func TestPatchWorkIsBounded(t *testing.T) {
 			d := mustParse(t, tc.src, tc.opts...)
 			err := d.ApplyPatch(tc.patch)
 			var le *LimitError
-			if !errors.As(err, &le) || le.Limit != "patch work" {
+			if !errors.As(err, &le) || le.Limit != LimitMaxPatchWorkRatio {
 				t.Fatalf("got %v", err)
 			}
 			if le.Max <= 0 || le.Option == "" {
@@ -105,7 +105,7 @@ func TestPatchWorkIsBounded(t *testing.T) {
 	rmPatch := []byte("[" + strings.Join(rm, ",") + "]")
 	low := mustParse(t, removeSrc, Limits(LimitSet{MaxPatchWorkRatio: 1}))
 	var le *LimitError
-	if err := low.ApplyPatch(rmPatch); !errors.As(err, &le) || le.Limit != "patch work" {
+	if err := low.ApplyPatch(rmPatch); !errors.As(err, &le) || le.Limit != LimitMaxPatchWorkRatio {
 		t.Fatalf("low ratio: got %v", err)
 	}
 	if string(low.Bytes()) != removeSrc {
@@ -185,7 +185,7 @@ func TestMergePatchWorkIsBounded(t *testing.T) {
 	d := mustParse(t, src.String(), Untrusted())
 	err := d.ApplyMergePatch([]byte(sb.String()))
 	var le *LimitError
-	if !errors.As(err, &le) || le.Limit != "patch work" {
+	if !errors.As(err, &le) || le.Limit != LimitMaxPatchWorkRatio {
 		t.Fatalf("got %v", err)
 	}
 	if string(d.Bytes()) != src.String() {
@@ -245,7 +245,7 @@ func TestPatchTextIsBoundedByTheInputLimit(t *testing.T) {
 		"merge": func() error { return d.ApplyMergePatch([]byte(`{"b":2}` + long)) },
 	} {
 		var le *LimitError
-		if err := call(); !errors.As(err, &le) || le.Limit != "patch size" || le.Max != 100 {
+		if err := call(); !errors.As(err, &le) || le.Limit != LimitMaxInputBytes || le.Max != 100 {
 			t.Fatalf("%s: got %v", name, err)
 		}
 	}
@@ -342,7 +342,7 @@ func TestDepthErrorsAreLimitErrors(t *testing.T) {
 	check := func(what string, err error) {
 		t.Helper()
 		var le *LimitError
-		if !errors.As(err, &le) || le.Limit != "depth" || le.Max <= 0 {
+		if !errors.As(err, &le) || le.Limit != LimitMaxDepth || le.Max <= 0 {
 			t.Errorf("%s: got %T %v", what, err, err)
 		}
 	}
