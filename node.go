@@ -62,6 +62,13 @@ const (
 // n.Err() == nil before it trusts what an accessor returned, or after a loop that
 // read many values. To edit while reading, collect the pointers first (see
 // Pointer) and edit afterwards, or read the nodes again after each edit.
+//
+// Node is comparable and can be a map key. Two Nodes are equal when they are the
+// same node of the same state of the same Document, so a Node read twice without
+// an edit in between is equal to itself, and a Node read before an edit is never
+// equal to the Node for the same place read after it: the first is stale. An
+// edit that is refused, or a patch that is rolled back, changes nothing and
+// keeps the Nodes equal. To compare two values, compare Value, or Decode both.
 type Node struct {
 	s   *docStream
 	i   int32

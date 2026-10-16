@@ -22,7 +22,10 @@ import (
 //
 // If v is a *Node it receives the node itself, and the alias at the end of the
 // pointer, if there is one, is not followed.
-func (d *Document) Get(ptr string, v any) error {
+//
+// Options apply to this read only, on top of those the Document was parsed with,
+// as for Decode: Get("/spec", &spec, KnownFields()) reads one part strictly.
+func (d *Document) Get(ptr string, v any, opts ...Option) error {
 	fail := func(kind error) error { return &EditError{Op: "get", Pointer: ptr, Kind: kind} }
 	if d.isNil() {
 		return fail(ErrNilDocument)
@@ -36,8 +39,13 @@ func (d *Document) Get(ptr string, v any) error {
 	}
 	d.s.tree.Settle() // (NewCtx would do it, but it is too big to inline and the Ctx would be put on the heap)
 	c := edit.NewCtxLagging(&d.s.tree, d.s.src, d.idx)
-	c.MaxAliasHops = d.s.cfg.limits.MaxAliasNodes
-	c.Merge = d.s.cfg.mergeKeys
+	hops, merge := d.s.cfg.limits.MaxAliasNodes, d.s.cfg.mergeKeys
+	if len(opts) > 0 {
+		rc := d.s.readConfig(opts)
+		hops, merge = rc.limits.MaxAliasNodes, rc.mergeKeys
+	}
+	c.MaxAliasHops = hops
+	c.Merge = merge
 	loc, err := c.Resolve(toks, false)
 	if err != nil {
 		return fail(editKind(err))
@@ -50,7 +58,7 @@ func (d *Document) Get(ptr string, v any) error {
 		*t = n
 		return nil
 	}
-	err = n.Decode(v)
+	err = n.Decode(v, opts...)
 	var te *TypeError
 	if errors.As(err, &te) {
 		te.Path = ptr + te.Path

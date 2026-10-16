@@ -2,9 +2,21 @@ package oneyaml
 
 import "oneyaml.dev/go/internal/bind"
 
-// Option configures Marshal, Unmarshal, an Encoder, a Decoder or Parse. One
-// option type is shared by every entry point; an option that does not apply to
-// the call it is passed to is ignored.
+// Option configures Marshal, Unmarshal, an Encoder, a Decoder, Parse, and the
+// reads of a Document: Document.Get, Document.Decode and Node.Decode. One option
+// type is shared by every entry point; an option that does not apply to the call
+// it is passed to is ignored, never an error.
+//
+// Options are applied in order, so the last one that sets a thing wins. The
+// boolean options (KnownFields, MergeKeys, YAML11Strings) take an optional bool
+// so a later KnownFields(false) can undo an earlier KnownFields().
+//
+// A read of a Document starts from the options the Document was parsed with and
+// applies the options given to the read on top, for that call only. The ones that
+// matter to a read are KnownFields, MergeKeys, Limits, Untrusted and NoLimits.
+// Indent and YAML11Strings concern writing and are ignored by a read, and the
+// size limits that concern parsing (MaxInputBytes, MaxDocuments) have no effect
+// on a Document that is already parsed.
 type Option func(*config)
 
 // NoBound, used as the value of a LimitSet field, removes the bound for that
@@ -140,6 +152,15 @@ func applyOptions(opts []Option) config {
 	return *c
 }
 
+// flag reads the optional argument of a boolean option: no argument means on.
+// The last value wins if there are several.
+func flag(on []bool) bool {
+	if len(on) == 0 {
+		return true
+	}
+	return on[len(on)-1]
+}
+
 // Indent sets how many spaces each nesting level of block output is indented by.
 // The default is 2. Values below 1 select the default and values above 9 are
 // treated as 9.
@@ -157,22 +178,28 @@ func Indent(n int) Option { return func(c *config) { c.indent = n } }
 // An existing quoted or block style is kept as it is, and values that are not
 // strings are written as before. The option applies to Parse and is remembered by
 // the Document and by the views Doc returns; other functions ignore it.
-func YAML11Strings() Option { return func(c *config) { c.yaml11 = true } }
+//
+// Like KnownFields and MergeKeys, it takes an optional bool: YAML11Strings()
+// and YAML11Strings(true) turn it on, YAML11Strings(false) turns it off again,
+// so a later option can override a list of defaults (the last one wins).
+func YAML11Strings(on ...bool) Option { v := flag(on); return func(c *config) { c.yaml11 = v } }
 
 // KnownFields makes reading into a struct fail on a mapping key that matches no
 // field. The key is reported as a *TypeError that errors.Is matches with
 // ErrUnknownField, and the rest of the document is still read. It applies to
-// reads and is ignored when writing.
-func KnownFields() Option { return func(c *config) { c.knownFields = true } }
+// reads and is ignored when writing. KnownFields(false) turns it off again, so
+// it can override an earlier option; the last one wins.
+func KnownFields(on ...bool) Option { v := flag(on); return func(c *config) { c.knownFields = v } }
 
 // MergeKeys makes reading treat the "<<" key as a YAML merge key instead of an
 // ordinary key. It applies to reads and is ignored by Marshal and Encoder.
+// MergeKeys(false) turns it off again; the last one wins.
 //
 // Given to Parse, it also makes the Document's pointers find merged keys:
 // [Document.Get], a patch "test" and [Node.Lookup] read them, [Document.Set]
 // on such a key adds a key of the mapping's own, and an edit that would change
 // a key only a merge source has is refused with [ErrAliasWrite].
-func MergeKeys() Option { return func(c *config) { c.mergeKeys = true } }
+func MergeKeys(on ...bool) Option { v := flag(on); return func(c *config) { c.mergeKeys = v } }
 
 // Limits sets the bounds that l names and leaves the others as the options
 // before it set them: the defaults if there are none, the bounds of Untrusted

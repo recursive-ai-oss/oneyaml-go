@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	"oneyaml.dev/go/internal/edit"
 	"oneyaml.dev/go/internal/patch"
 )
 
@@ -156,6 +157,24 @@ func patchTextMax(m int) int {
 func (s *docStream) checkPatchSize(n int) error {
 	if m := s.cfg.limits.MaxInputBytes; m > 0 && n > patchTextMax(m) {
 		return limitErr(LimitMaxInputBytes, "patch size", patchTextMax(m), "")
+	}
+	return nil
+}
+
+// checkEditSize refuses an edit whose replacements would leave the text longer
+// than MaxInputBytes, as a patch does for its result. It is not applied inside a
+// patch, which holds every step to the same bound itself.
+func (s *docStream) checkEditSize(repls []edit.Repl) error {
+	max := s.cfg.limits.MaxInputBytes
+	if max <= 0 || s.batch {
+		return nil
+	}
+	n := len(s.src)
+	for _, r := range repls {
+		n += len(r.Text) - (r.End - r.Start)
+	}
+	if n > max && n > len(s.src) {
+		return limitErr(LimitMaxInputBytes, "edit output size", max, "")
 	}
 	return nil
 }

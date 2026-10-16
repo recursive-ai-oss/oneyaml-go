@@ -79,7 +79,12 @@ func configFromBind(c bind.Config) config {
 // alias and depth limits the Document was parsed with. A Document with no
 // documents leaves v unchanged. If the view addresses a document that does not
 // exist, the error is an *EditError matching ErrNotFound.
-func (d *Document) Decode(v any) error {
+//
+// Options given to Decode apply to this read only, on top of those the Document
+// was parsed with: Decode(&cfg, KnownFields()) reads strictly from a Document
+// that was parsed without the option. Options that do not concern reading are
+// ignored; see Option.
+func (d *Document) Decode(v any, opts ...Option) error {
 	if d.isNil() {
 		return &EditError{Op: "decode", Kind: ErrNilDocument}
 	}
@@ -89,19 +94,20 @@ func (d *Document) Decode(v any) error {
 	if !d.valid() {
 		return &EditError{Op: "decode", Kind: ErrNotFound}
 	}
-	return d.s.decode(d.idx, d.s.tree.Docs[d.idx].Root, v, nil)
+	return d.s.decode(d.idx, d.s.tree.Docs[d.idx].Root, v, nil, opts)
 }
 
 // Decode reads the node and everything below it into the value v points to, as
 // Document.Decode does for a whole document. A *TypeError's Path is relative to
 // the node. An alias inside the subtree is expanded even when its anchor lies
 // outside it. A Node made stale by an edit reports an *EditError matching
-// ErrStaleNode; the zero Node reports one matching ErrNotFound.
-func (n Node) Decode(v any) error {
+// ErrStaleNode; the zero Node reports one matching ErrNotFound. Options apply to
+// this read only, as for Document.Decode.
+func (n Node) Decode(v any, opts ...Option) error {
 	if n.nd() == nil {
 		return n.errInvalid("decode")
 	}
-	return n.s.decode(int(n.doc), n.i, v, n.sc)
+	return n.s.decode(int(n.doc), n.i, v, n.sc, opts)
 }
 
 func checkTarget(v any) error {
@@ -112,7 +118,20 @@ func checkTarget(v any) error {
 	return nil
 }
 
-func (s *docStream) decode(doc int, root int32, v any, sc *bind.Scope) error {
+// readConfig returns the Document's options with opts applied on top, for one
+// read. It is a separate function so that the common call, with no options,
+// does not move a config to the heap.
+func (s *docStream) readConfig(opts []Option) config {
+	c := s.cfg
+	for _, o := range opts {
+		if o != nil {
+			o(&c)
+		}
+	}
+	return c
+}
+
+func (s *docStream) decode(doc int, root int32, v any, sc *bind.Scope, opts []Option) error {
 	if err := checkTarget(v); err != nil {
 		return err
 	}
@@ -123,6 +142,9 @@ func (s *docStream) decode(doc int, root int32, v any, sc *bind.Scope) error {
 	in.w.reset(&s.tree, root)
 	sess := sessionPool.Get().(*session)
 	cfg := s.cfg
+	if len(opts) > 0 {
+		cfg = s.readConfig(opts)
+	}
 	cfg.spend = sc.Spend()
 	sess.b.Reset(in, bindConfig(&cfg, len(s.src)))
 	_, err := sess.b.NextDocument()

@@ -31,7 +31,7 @@ fmt.Printf("%+v\n", oneyaml.UntrustedLimits())
 | `MaxDepth` | nesting of collections, in input and when writing | `*LimitError`, `Limit` is `LimitMaxDepth` |
 | `MaxAliasNodes` | nodes produced by expanding aliases; with `MergeKeys()`, also the keys one pointer lookup, `Node.Find` or `Node.Lookup` reads in `<<` merge sources ([Merge keys](editing.md#merge-keys)) | `*LimitError`, also from `Node.Find`; `Node.Lookup` reports it as `false`, like an absent key, so use `Node.Find` to tell the two apart |
 | `MaxAliasBytes` | scalar bytes produced by expanding aliases; also the bytes a patch copies | `*LimitError` |
-| `MaxInputBytes` | the size of the input, and the size of a document after a patch; the text of one patch or merge patch may be an eighth of it, but never less than 64 KiB and never more than the limit ([Bounds](patches.md#bounds)) | `*LimitError` |
+| `MaxInputBytes` | the size of the input, and the size of a document after a patch, `Set`, `Rename` or a comment setter; the text of one patch or merge patch may be an eighth of it, but never less than 64 KiB and never more than the limit ([Bounds](patches.md#bounds)) | `*LimitError` |
 | `MaxScalarBytes` | the length of one scalar | `*LimitError` |
 | `MaxDocuments` | documents in one stream | `*LimitError` |
 | `MaxNumberDigits` | digits of an integer or float scalar when it is converted to a number, including a plain number used as a key in a part of the input the target ignores, because such keys are compared as numbers to find repeated keys; text kept as text is never limited | `*LimitError` |

@@ -515,6 +515,9 @@ func (s *docStream) editTree(doc int, op editKindOp, ptr string, v *edit.Value) 
 		if len(repls) == 0 && !lazy {
 			return nil
 		}
+		if lerr := s.checkEditSize(repls); lerr != nil {
+			return fail(lerr)
+		}
 		// A plan on stale offsets that finds nothing to do is planned again on a
 		// settled tree below, like one that errs.
 		if attempt == 0 && len(repls) > 0 && s.patchScalar(pl.target, repls, v) {
@@ -535,6 +538,9 @@ func (s *docStream) editTree(doc int, op editKindOp, ptr string, v *edit.Value) 
 			repls, check = pl.repls, pl.check
 			if len(repls) == 0 {
 				return nil
+			}
+			if lerr := s.checkEditSize(repls); lerr != nil {
+				return fail(lerr)
 			}
 		}
 		var gone removedEntry
@@ -1093,6 +1099,9 @@ func (s *docStream) firstDocument(v *edit.Value, fail func(error) error) error {
 			out = append(out, nl...)
 		}
 		out = append(out, edit.RenderRoot(v, nl, attempt == 1, s.cfg.yaml11)...)
+		if max := s.cfg.limits.MaxInputBytes; max > 0 && len(out) > max && len(out) > len(s.src) {
+			return fail(limitErr(LimitMaxInputBytes, "edit output size", max, ""))
+		}
 		var nt cst.Tree
 		if err := s.buildTree(&nt, out, s.depth()); err != nil || len(nt.Docs) != 1 || !edit.Equal(&nt, out, nt.Docs[0].Root, v) {
 			continue

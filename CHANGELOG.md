@@ -9,6 +9,9 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - Every error type answers `errors.Is` for its kind. `*LimitError` matches `ErrLimit` and one sentinel per limit, named like the `LimitSet` field: `ErrMaxDepth`, `ErrMaxAliasNodes`, `ErrMaxAliasBytes`, `ErrMaxInputBytes`, `ErrMaxScalarBytes`, `ErrMaxDocuments`, `ErrMaxNumberDigits` and `ErrMaxPatchWorkRatio`. `*SyntaxError` matches `ErrSyntax`, and `ErrEncoding` or `ErrDuplicateKey` for those categories. See [Limits](docs/limits.md#each-limit).
 - The type `Limit` and its values `LimitMaxDepth`, `LimitMaxAliasNodes`, `LimitMaxAliasBytes`, `LimitMaxInputBytes`, `LimitMaxScalarBytes`, `LimitMaxDocuments`, `LimitMaxNumberDigits` and `LimitMaxPatchWorkRatio`, for `LimitError.Limit`; and the type `Category` for `SyntaxError.Category`.
 - `LimitError.What` says in words what a bound applies to (the text `Limit` used to hold).
+- `oneyaml.Pointer(tokens...)` builds an RFC 6901 pointer from keys and indices and escapes `~` and `/` in each, so `Pointer("metadata", "labels", "app.kubernetes.io/name")` is `/metadata/labels/app.kubernetes.io~1name`. Use it instead of joining keys with `"/"`.
+- `Document.Get`, `Document.Decode` and `Node.Decode` take options for the one read, applied on top of the options the Document was parsed with: `doc.Get("/spec", &spec, oneyaml.KnownFields())` reads one part strictly. `KnownFields`, `MergeKeys`, `Limits`, `Untrusted` and `NoLimits` apply to a read; other options are ignored.
+- `KnownFields`, `MergeKeys` and `YAML11Strings` take an optional bool, so `KnownFields(false)` turns the option off again and a later option overrides an earlier one. Calls without an argument are unchanged.
 
 ### Changed
 
@@ -19,7 +22,9 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - **Breaking:** `TypeError.GoType` is a `reflect.Type` (nil when no type is involved), where it was a `string`, so two types of one name in different packages can be told apart and a type can be compared (`te.GoType == reflect.TypeFor[time.Duration]()`). Messages print it as before; use `te.GoType.String()` where you used the string.
 - A type error raised by a decode inside an `UnmarshalYAML` hook (a `Node.Decode`, or the function a func-style hook is given) is reported at the line and column of the value that does not fit, as it is without a hook, and as yaml.v3 reports it. It used to name the first key of the hooked mapping, so a bad value on line 7 was reported on line 5. Every mismatch the hook's decode found is reported, with the hook's path in front, and an unknown field under `KnownFields()` still matches `ErrUnknownField`. This applies to `Unmarshal`, `Decoder.Decode` and `Document.Decode`.
 - A type with an `UnmarshalYAML` method of a form that cannot be called, and a `Node` used as a decode target, are collected like a value that does not fit, as the `TypeError` documentation says: the value is skipped and the rest of the document is read. The first of them used to stop the read.
-
+- **Breaking** (only for code that uses these as values): `KnownFields`, `MergeKeys` and `YAML11Strings` are now `func(...bool) Option`, and `Document.Get`, `Document.Decode` and `Node.Decode` are variadic (`...Option`). Every call that compiled before still compiles. A method value or a function-typed variable, such as `var f func(string, any) error = doc.Get`, or an interface with the old method set, no longer matches; wrap the call in a function literal.
+- `Set`, `Rename`, `SetHeadComment` and `SetLineComment` refuse an edit that would leave the text longer than `MaxInputBytes` with a `*LimitError` (`errors.As` finds it inside the `*EditError`), as `ApplyPatch` and `ApplyMergePatch` already did. The document is unchanged. An edit that makes the text shorter is allowed. Before, only patches were held to the limit.
+- `Node` is documented as comparable: two Nodes are equal when they are the same node of the same state of the same Document, so a Node read before an edit never equals the one read after it.
 ## [0.3.0] - 2026-10-16
 
 ### Added

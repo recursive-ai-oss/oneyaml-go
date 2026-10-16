@@ -6,6 +6,29 @@ How `Document` changes a YAML file and what it promises to leave alone. For the 
 
 You address a value with an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) pointer: `/replicas`, `/tags/0`, `/tags/-` for the end of a sequence. A pointer token matches a mapping key by its text, so `/1` finds the key `1`.
 
+In a pointer, `~` is written `~0` and `/` is written `~1`, so the key `app.kubernetes.io/name` is the token `app.kubernetes.io~1name`. Do not join keys from data with `"/" + key`: build the pointer with `oneyaml.Pointer`, which escapes each token. `Node.Pointer` returns the same form.
+
+<!-- example: ExamplePointer -->
+```go
+doc, err := oneyaml.Parse([]byte("metadata:\n  labels:\n    app.kubernetes.io/name: web\n"))
+if err != nil {
+	log.Fatal(err)
+}
+ptr := oneyaml.Pointer("metadata", "labels", "app.kubernetes.io/name")
+fmt.Println(ptr)
+if err := doc.Set(ptr, "api"); err != nil {
+	log.Fatal(err)
+}
+fmt.Print(doc)
+// Output:
+// /metadata/labels/app.kubernetes.io~1name
+// metadata:
+//   labels:
+//     app.kubernetes.io/name: api
+```
+
+Options given to `Get`, `Decode` and `Node.Decode` apply to that read only, on top of the options the Document was parsed with, so one parsed file can be read strictly in one place and loosely in another: `doc.Get("/spec", &spec, oneyaml.KnownFields())`. `KnownFields`, `MergeKeys`, `Limits`, `Untrusted` and `NoLimits` take effect; an option that does not concern reading is ignored. The boolean options take an optional bool, and the last one wins: `oneyaml.KnownFields(false)` turns it off again.
+
 ## Two block-scalar cases
 
 Two cases illustrate the rules. In the first, the new value ends in a line break, so the block literal keeps its style and only its text changes:
@@ -535,7 +558,7 @@ if !ok {
 }
 for k, v := range imgs.Entries() {
 	// Each Set makes the nodes read so far stale, but the loop goes on with fresh ones.
-	if err := doc.Set("/images/"+k.Value(), v.Value()+"-patched"); err != nil {
+	if err := doc.Set(oneyaml.Pointer("images", k.Value()), v.Value()+"-patched"); err != nil {
 		log.Fatal(err)
 	}
 }

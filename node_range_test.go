@@ -239,7 +239,7 @@ func ExampleNode_Entries_edit() {
 	}
 	for k, v := range imgs.Entries() {
 		// Each Set makes the nodes read so far stale, but the loop goes on with fresh ones.
-		if err := doc.Set("/images/"+k.Value(), v.Value()+"-patched"); err != nil {
+		if err := doc.Set(oneyaml.Pointer("images", k.Value()), v.Value()+"-patched"); err != nil {
 			log.Fatal(err)
 		}
 	}

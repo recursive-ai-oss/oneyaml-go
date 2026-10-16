@@ -208,6 +208,9 @@ func (s *docStream) annotate(doc int, op, ptr string, attempts int, mk func(c *e
 		if len(pl.repls) == 0 {
 			return nil
 		}
+		if lerr := s.checkEditSize(pl.repls); lerr != nil {
+			return fail(lerr)
+		}
 		gen := s.gen
 		if s.editRegion(c, &planned{repls: pl.repls, parent: pl.parent, anchor: pl.anchor, check: func(nt *cst.Tree, out []byte, rg *regionInfo) bool {
 			// Only the run the region replaces is compared; the rest of the tree is not
