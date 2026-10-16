@@ -25,9 +25,31 @@ type Unmarshaler interface {
 }
 
 func init() {
+	bind.SetHookErrorProbe(hookErrorProbe)
 	bind.SetNodeHook(reflect.TypeFor[Unmarshaler](), func(inst any, ref bind.NodeRef) error {
 		return inst.(Unmarshaler).UnmarshalYAML(nodeFromRef(ref))
 	})
+}
+
+// hookErrorProbe says what the read around a hook needs to know about the error
+// the hook returned: its message without a second "oneyaml: " in front, whether
+// it is the error of a decode made from the hook's own Node, and where in the
+// hook's value that decode started.
+func hookErrorProbe(err error, ref bind.NodeRef) (msg, rel string, own bool) {
+	switch e := err.(type) {
+	case *TypeError:
+		if e.sc != nil && e.sc == ref.Scope {
+			// The message is not used: the errors inside are reported instead.
+			if e.from != ref.Node {
+				rel, _ = nodeFromRef(ref).pathBelow(e.from)
+			}
+			return e.Msg, rel, true
+		}
+		return unprefix(e.Error()), "", false
+	case *SyntaxError, *LimitError:
+		return unprefix(err.Error()), "", false
+	}
+	return err.Error(), "", false
 }
 
 // decodeState is the part of a docStream that decoding needs beyond the tree.
@@ -163,11 +185,15 @@ func (s *docStream) decode(doc int, root int32, v any, sc *bind.Scope, opts []Op
 		}
 	}
 	if err != nil {
-		if sc != nil {
-			// Inside a hook: the read around it uses the positions as they are.
-			err = convertErrorKeep(err, s.src, &cfg, 0, 0)
-		} else {
-			err = convertError(err, s.src, &cfg, 0, 0)
+		err = convertError(err, s.src, &cfg, 0, 0)
+		if te, ok := err.(*TypeError); ok && sc != nil {
+			// Inside a hook: mark the errors with the call and the node, so that the
+			// read around the hook can tell them from the errors of another text
+			// and say where they are in the hook's value.
+			te.sc, te.from = sc, root
+			for _, m := range te.More {
+				m.sc, m.from = sc, root
+			}
 		}
 	}
 	sess.b.Release()

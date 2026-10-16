@@ -174,6 +174,10 @@ func (s *docStream) yamlPatchValue(text []byte, seqOnly bool) (v edit.Value, err
 	if berr := cst.Build(&t, text, s.depth()); berr != nil {
 		derr := docSyntaxError(berr, s.cfg.limits)
 		if le, isLimit := derr.(*LimitError); isLimit {
+			if le.Limit == LimitMaxDepth && le.Max >= edit.MaxValueDepth {
+				// A patch value is never read deeper than this, whatever MaxDepth says.
+				return v, fixedLimitErr(LimitMaxDepth, "depth", edit.MaxValueDepth), true
+			}
 			return v, le, true
 		}
 		// The text is not JSON and not YAML either; the YAML error says where.
@@ -196,7 +200,7 @@ func (s *docStream) yamlPatchValue(text []byte, seqOnly bool) (v edit.Value, err
 	}
 	v, verr := edit.FromTree(&t, text, root)
 	if verr != nil {
-		return v, limitErr(LimitMaxDepth, "depth", edit.MaxValueDepth, ""), true
+		return v, fixedLimitErr(LimitMaxDepth, "depth", edit.MaxValueDepth), true
 	}
 	if msg := yamlPatchProblem(&v); msg != "" {
 		return v, fmt.Errorf("%w: %s", patch.ErrSyntax, msg), true
@@ -304,9 +308,10 @@ func (d *Document) Apply(ops ...PatchOp) error {
 // kindOf maps a patch-package error to the public kinds.
 func kindOf(err error, maxDepth int) error {
 	if errors.Is(err, patch.ErrDepth) {
-		// With no limit the parser still stops at its own cap; report that one.
-		if maxDepth <= 0 || maxDepth > edit.MaxValueDepth {
-			maxDepth = edit.MaxValueDepth
+		// With no limit, or one above it, the parser still stops at its own cap,
+		// which no option lifts; report that one.
+		if maxDepth <= 0 || maxDepth >= edit.MaxValueDepth {
+			return fixedLimitErr(LimitMaxDepth, "depth", edit.MaxValueDepth)
 		}
 		return limitErr(LimitMaxDepth, "depth", maxDepth, "")
 	}

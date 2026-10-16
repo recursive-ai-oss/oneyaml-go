@@ -69,6 +69,19 @@ type AliasSpend struct {
 	Nodes, Bytes int
 	// Own is the number of nodes the top-level document holds, for AliasRatio.
 	Own int
+	// path is what remains of the path text that the errors of decodes made inside
+	// hooks may take, shared by all of them, and pathSet says it has been started.
+	path    int
+	pathSet bool
+}
+
+// PathBudget returns what remains of the shared path text budget. The first
+// call starts it with initial.
+func (s *AliasSpend) PathBudget(initial int) *int {
+	if !s.pathSet {
+		s.path, s.pathSet = initial, true
+	}
+	return &s.path
 }
 
 // Scope ties the Nodes handed to one call of a type that reads its own node to
@@ -157,6 +170,13 @@ type Error struct {
 	First int
 	// Unknown marks a key that no field of the target struct has.
 	Unknown bool
+	// Own marks the error of a hook that returned the error of a decode it made
+	// from its own Node. Rel is the path from the hook's node to the node it
+	// decoded, empty when it decoded the hook's node itself.
+	Own bool
+	Rel string
+	// Fixed marks a KindLimit error whose bound no option changes.
+	Fixed bool
 }
 
 func (e *Error) Error() string { return e.Msg }

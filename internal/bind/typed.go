@@ -326,7 +326,9 @@ func decodeBase64(text []byte) ([]byte, error) {
 func (b *Binder) enter(ev *parse.Event) error {
 	b.tdepth++
 	if b.tdepth > hardDepth {
-		return b.limit("MaxDepth", "depth", hardDepth, ev.Start)
+		e := b.limit("MaxDepth", "depth", hardDepth, ev.Start).(*Error)
+		e.Fixed = true
+		return e
 	}
 	return b.checkDepth(len(b.frames)+b.tdepth, ev.Start)
 }

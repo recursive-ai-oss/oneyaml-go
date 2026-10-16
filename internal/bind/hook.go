@@ -162,9 +162,31 @@ func (b *Binder) hook(v reflect.Value, ev *parse.Event) (bool, error) {
 	herr := call(v.Addr().Interface(), ref)
 	ref.Scope.Close()
 	if herr != nil {
-		return true, &Error{Kind: KindType, Offset: ev.Start, GoType: v.Type(), Msg: herr.Error(), Err: herr}
+		return true, hookError(ev, v.Type(), herr, ref)
 	}
 	return true, nil
+}
+
+var hookErrProbe func(err error, ref NodeRef) (msg, rel string, own bool)
+
+// SetHookErrorProbe registers the function that looks at an error a hook
+// returned. It reports the message to give the error without the package's own
+// prefix, whether err is the error of a decode the hook made from its own Node
+// (own), and, for that, the path from the hook's node to the node it decoded.
+// It must run from an init function.
+func SetHookErrorProbe(f func(err error, ref NodeRef) (msg, rel string, own bool)) {
+	hookErrProbe = f
+}
+
+// hookError is the error for a hook that returned herr.
+func hookError(ev *parse.Event, t reflect.Type, herr error, ref NodeRef) *Error {
+	e := &Error{Kind: KindType, Offset: ev.Start, GoType: t, Err: herr}
+	if hookErrProbe != nil {
+		e.Msg, e.Rel, e.Own = hookErrProbe(herr, ref)
+	} else {
+		e.Msg = herr.Error()
+	}
+	return e
 }
 
 // skippedErr is a type error for a value the target cannot take at all: the
@@ -349,7 +371,7 @@ func (b *Binder) hookV3(v reflect.Value, ev *parse.Event) (bool, error) {
 			}
 			return true, nil
 		}
-		return true, &Error{Kind: KindType, Offset: ev.Start, GoType: v.Type(), Msg: herr.Error(), Err: herr}
+		return true, hookError(ev, v.Type(), herr, ref)
 	}
 	return true, nil
 }

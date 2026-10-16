@@ -231,6 +231,49 @@ func (n Node) path(withSeq bool) (toks []string, seq []bool, _ error) {
 	return toks, seq, nil
 }
 
+// pathBelow is the pointer from n down to the node from, which must lie inside
+// n. It reports false when it does not or when a step has no token (a complex
+// key), and then the caller leaves the path as it is. Unlike Pointer it does not
+// resolve the result again: it is only used to place an error.
+func (n Node) pathBelow(from int32) (string, bool) {
+	t := &n.s.tree
+	if n.nd() == nil || from <= 0 || int(from) >= len(t.Nodes) {
+		return "", false
+	}
+	c := n.ctxLagging()
+	var toks []string
+	for cur := from; cur != n.i; {
+		par := t.Nodes[cur].Parent
+		if par == 0 {
+			return "", false
+		}
+		pos := 0
+		for ch := t.First(par); ch != cur; ch = t.Nodes[ch].Next {
+			if ch == 0 {
+				return "", false
+			}
+			pos++
+		}
+		switch t.Nodes[par].Kind {
+		case cst.Sequence:
+			toks = append(toks, strconv.Itoa(pos))
+		case cst.Mapping:
+			k := t.Prev(cur)
+			if pos%2 == 0 || t.Nodes[k].Kind != cst.Scalar {
+				return "", false
+			}
+			toks = append(toks, c.KeyText(k))
+		default:
+			return "", false
+		}
+		cur = par
+	}
+	for i, j := 0, len(toks)-1; i < j; i, j = i+1, j-1 {
+		toks[i], toks[j] = toks[j], toks[i]
+	}
+	return pointer.Join(toks), true
+}
+
 // Kind returns the kind of the node.
 func (n Node) Kind() NodeKind {
 	nd := n.nd()

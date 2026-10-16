@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"oneyaml.dev/go/internal/bind"
 )
 
 // Sentinel errors for the kinds of failure a document operation can report.
@@ -139,8 +141,13 @@ func (e *SyntaxError) Error() string {
 // errors and errors from your own hooks stop the read at once and are returned
 // alone, without the mismatches collected before them. When a hook returns the
 // error of a Node.Decode it made, the mismatches in it are reported as if the
-// hook were not there: each at the line and column of its own value, with the
-// path of the hook's value in front of its own.
+// hook were not there: each mismatch is reported at the line and column of its
+// own value. Its path is the path of the hook's value followed by the path
+// inside the node the hook decoded, so a hook that decodes the node it was given
+// reports the same paths as a read without the hook. Inside the hook, the error
+// of its own Node.Decode holds the paths inside that node; a path of more than
+// 4 KiB that runs through hooks nested in one another is completed when the
+// outermost read ends.
 //
 // Error shortens a Path longer than 512 bytes to its first and last 256 bytes
 // joined by "..."; the Path field always holds the whole pointer.
@@ -162,9 +169,15 @@ type TypeError struct {
 	// More holds the mismatches after this one when a read found several. Each
 	// has an empty More.
 	More []*TypeError
-	// src marks the input the error was read from, so that the error of a decode
-	// made inside a hook can be told from one about other text.
-	src uintptr
+	// sc, from and pre are set on the errors of a decode made from the Node a hook
+	// was given, so that the read around the hook can tell them from an error about
+	// other text. sc is the call the Node was handed to and from the node that was
+	// decoded. pre holds, outermost first, the path text of the hooks around a
+	// path too long to copy at every level; the outermost read puts it in front of
+	// Path once.
+	sc   *bind.Scope
+	from int32
+	pre  *pathLink
 }
 
 // All returns this error and the ones in More, in input order.
