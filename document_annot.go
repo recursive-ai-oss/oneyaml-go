@@ -110,9 +110,10 @@ func (d *Document) SetHeadComment(ptr, text string) error {
 // The comment goes after the value: after a scalar, after the closing bracket of a
 // flow collection that is the value, after the header of a block scalar ("|", ">-"),
 // and after the colon or dash of an entry whose value is a block collection or
-// empty. A node inside a flow collection, the root block collection, and a value
-// that something else follows on its line have no such place: SetLineComment
-// refuses them with ErrUnsupportedEdit. ErrNotFound and ErrAliasWrite are reported
+// empty. A node inside a flow collection has a place only when it ends its line,
+// as an item on a line of its own does in a collection written over several lines;
+// otherwise, and for the root block collection and a value that something else
+// follows on its line, SetLineComment refuses with ErrUnsupportedEdit. ErrNotFound and ErrAliasWrite are reported
 // as for Set. The document reads back with the same values and only the comment
 // changed.
 func (d *Document) SetLineComment(ptr, text string) error {

@@ -104,8 +104,8 @@ env:
 	// # scaled by the autoscaler
 }
 
-// A patch kept as YAML (a sequence of operations, as Kustomize users write them)
-// gives the same result as the JSON form.
+// A patch kept as a YAML file (a block list of operations) gives the same result
+// as the JSON form.
 func ExampleDocument_ApplyPatch_yaml() {
 	doc, err := oneyaml.Parse([]byte("replicas: 2\nimage: nginx:1.25\n"))
 	if err != nil {

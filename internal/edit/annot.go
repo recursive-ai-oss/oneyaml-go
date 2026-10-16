@@ -5,6 +5,7 @@ import (
 	"unicode/utf8"
 
 	"oneyaml.dev/go/internal/cst"
+	"oneyaml.dev/go/internal/parse"
 	"oneyaml.dev/go/internal/scan"
 )
 
@@ -109,6 +110,30 @@ func (c *Ctx) insideScalar(at int, skip int32) bool {
 	return false
 }
 
+// CheckPatchTree reports what text of a patch written in YAML may not contain,
+// though the YAML reader would accept it: a scalar the decoder refuses to read
+// (a quoted escape that is not a Unicode scalar value, for one), and a local tag,
+// which JSON has no counterpart for and which a patch would drop. The error names
+// the position when it has one.
+func CheckPatchTree(t *cst.Tree, src []byte) error {
+	var buf []byte
+	for i := 1; i < len(t.Nodes); i++ {
+		nd := &t.Nodes[i]
+		if nd.Kind == cst.Scalar {
+			ev := parse.Event{Kind: parse.Scalar, Style: nd.Style, Start: int(nd.Start), End: int(nd.End), Indent: int(nd.Indent)}
+			var err error
+			if buf, err = parse.AppendScalar(buf[:0], src, &ev); err != nil {
+				return err
+			}
+		}
+		if p := t.PropOf(int32(i)); p != nil && p.HasTag() && !strings.HasPrefix(CanonTag(t, src, int32(i)), "!!") {
+			e := scan.NewError(src, int(p.TagStart), scan.Syntax, "a patch may not use the local tag "+string(src[p.TagStart:p.TagEnd]))
+			return e
+		}
+	}
+	return nil
+}
+
 // ---- rename ----
 
 // maxRenameKey is the longest key a rename writes: longer keys need the explicit
@@ -148,6 +173,10 @@ func (c *Ctx) Rename(loc Loc, newKey string, safe bool) (repls []Repl, sp Splice
 	}
 	if found, _, _ := c.findKey(loc.Parent, newKey); found == loc.Node {
 		return nil, sp, 0, nil // the key already reads as newKey
+	}
+	if err := c.anchorsInUse(loc.Key, true); err != nil {
+		// An alias of the key's anchor would read the new text too.
+		return nil, sp, 0, err
 	}
 	if p := c.T.PropOf(loc.Key); p != nil && p.HasTag() {
 		if !tagKeeps(CanonTag(c.T, c.Src, loc.Key), &Value{Kind: String, Text: newKey}, cst.Scalar) {

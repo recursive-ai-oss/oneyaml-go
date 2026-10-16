@@ -77,6 +77,13 @@ func PatchTest(path string, v any) PatchOp { return PatchOp{Op: "test", Path: pa
 //   - New members go at the end of their mapping, in the style of their
 //     siblings; comments outside the edited values stay.
 //
+// Text that does not start with "[" or "{" and is not JSON is read as YAML: a block
+// list of operations, as a patch kept in a YAML file is written, gives the same
+// result as the JSON form. Text that starts like JSON is judged as JSON only. A
+// YAML patch may not use aliases, local tags, a key named twice or more than one
+// document, and a scalar the decoder cannot read (a bad escape) refuses the whole
+// patch with ErrInvalidPatch.
+//
 // A patch applies to the first document, or to the document a view from Doc
 // selects.
 func (d *Document) ApplyPatch(rfc6902 []byte) error {
@@ -87,9 +94,10 @@ func (d *Document) ApplyPatch(rfc6902 []byte) error {
 		return &EditError{Op: "patch", Kind: err}
 	}
 	ops, bad, err := patch.ParseOps(rfc6902, d.s.cfg.limits.MaxDepth)
-	if err != nil && bad < 0 && errors.Is(err, patch.ErrSyntax) {
-		// Not JSON. A patch kept as YAML (a sequence of operations, as Kustomize
-		// users write them) reads the same way.
+	if err != nil && bad < 0 && errors.Is(err, patch.ErrSyntax) && !looksLikeJSON(rfc6902) {
+		// Not JSON. A patch kept as a YAML file (a block list of operations) reads
+		// the same way. Text that starts like JSON never gets here: it keeps the
+		// JSON errors, and YAML's looser rules do not make it a valid patch.
 		if yops, ybad, yerr, ok := d.s.yamlPatchOps(rfc6902); ok {
 			ops, bad, err = yops, ybad, yerr
 		}
@@ -112,18 +120,44 @@ func (d *Document) ApplyPatch(rfc6902 []byte) error {
 	return d.s.applySteps(d.idx, pops, len(rfc6902))
 }
 
+// looksLikeJSON reports whether the first significant byte of text, after white
+// space and an optional byte order mark, opens a JSON array or object.
+func looksLikeJSON(text []byte) bool {
+	i := 0
+	skip := func() {
+		for i < len(text) && (text[i] == ' ' || text[i] == '\t' || text[i] == '\n' || text[i] == '\r') {
+			i++
+		}
+	}
+	skip()
+	if len(text)-i >= 3 && text[i] == 0xEF && text[i+1] == 0xBB && text[i+2] == 0xBF {
+		i += 3
+		skip()
+	}
+	return i < len(text) && (text[i] == '[' || text[i] == '{')
+}
+
 // yamlPatchOps reads text that is not JSON as a patch written in YAML. ok is false
 // when the text is not a YAML sequence either, and the caller then reports the JSON
 // error. A YAML patch may not use aliases or hold the same key twice in a mapping,
 // which JSON cannot either, and must be a single document.
 func (s *docStream) yamlPatchOps(text []byte) (ops []patch.Op, bad int, err error, ok bool) {
 	var t cst.Tree
-	if cst.Build(&t, text, s.depth()) != nil || len(t.Docs) != 1 {
+	if berr := cst.Build(&t, text, s.depth()); berr != nil {
+		if le, isLimit := docSyntaxError(berr, s.cfg.limits).(*LimitError); isLimit {
+			return nil, -1, le, true
+		}
+		return nil, 0, nil, false
+	}
+	if len(t.Docs) != 1 {
 		return nil, 0, nil, false
 	}
 	root := t.Docs[0].Root
 	if root == 0 || t.Nodes[root].Kind != cst.Sequence {
 		return nil, 0, nil, false
+	}
+	if perr := edit.CheckPatchTree(&t, text); perr != nil {
+		return nil, -1, fmt.Errorf("%w: %s", patch.ErrSyntax, perr), true
 	}
 	v, verr := edit.FromTree(&t, text, root)
 	if verr != nil {

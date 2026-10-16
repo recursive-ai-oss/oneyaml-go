@@ -82,7 +82,7 @@ func TestRename(t *testing.T) {
 		{"empty new key", "a: 1\n", "/a", "", "'': 1\n"},
 		{"line break in the new key", "a: 1\n", "/a", "x\ny", "\"x\\ny\": 1\n"},
 		{"single quote in a quoted key", "'a': 1\n", "/a", "it's", "'it''s': 1\n"},
-		{"anchor on the key stays", "&k a: 1\nb: *k\n", "/a", "c", "&k c: 1\nb: *k\n"},
+		{"anchor on the key stays", "&k a: 1\nb: 2\n", "/a", "c", "&k c: 1\nb: 2\n"},
 		{"alias value", "x: &v 1\na: *v\n", "/a", "b", "x: &v 1\nb: *v\n"},
 		{"explicit key", "? a\n: 1\n", "/a", "b", "? b\n: 1\n"},
 		{"flow mapping", "{a: 1, b: 2}\n", "/a", "c", "{c: 1, b: 2}\n"},
@@ -654,6 +654,7 @@ func changedLines(a, b string) (ra, rb []string) {
 
 type probeEntry struct {
 	ptr      string
+	anch     bool // the value or an ancestor carries an anchor, so aliases may share it
 	doc      int
 	keyStart int // span of the key text, -1 for items
 	keyEnd   int
@@ -662,13 +663,14 @@ type probeEntry struct {
 func probeEntries(d *Document) []probeEntry {
 	var out []probeEntry
 	for i := 0; i < d.Len(); i++ {
-		var walk func(n Node, depth int)
-		walk = func(n Node, depth int) {
+		var walk func(n Node, depth int, anch bool)
+		walk = func(n Node, depth int, anch bool) {
 			if len(out) > 60 || depth > 8 {
 				return
 			}
+			anch = anch || n.Anchor() != ""
 			if p, err := n.Pointer(); err == nil {
-				e := probeEntry{ptr: p, doc: i, keyStart: -1}
+				e := probeEntry{ptr: p, doc: i, keyStart: -1, anch: anch}
 				out = append(out, e)
 			}
 			switch n.Kind() {
@@ -676,23 +678,23 @@ func probeEntries(d *Document) []probeEntry {
 				for k, v := range n.Entries() {
 					if p, err := v.Pointer(); err == nil && len(out) < 60 {
 						s, e := k.Span()
-						out[len(out)-1+0].ptr = out[len(out)-1].ptr
-						out = append(out, probeEntry{ptr: p + "\x00key", doc: i, keyStart: s, keyEnd: e})
+						out = append(out, probeEntry{ptr: p + "\x00key", doc: i, keyStart: s, keyEnd: e, anch: anch || v.Anchor() != ""})
 					}
-					walk(v, depth+1)
+					walk(v, depth+1, anch)
 				}
 			case SequenceNode:
 				for v := range n.Items() {
-					walk(v, depth+1)
+					walk(v, depth+1, anch)
 				}
 			}
 		}
-		walk(d.Doc(i).Root(), 0)
+		walk(d.Doc(i).Root(), 0, false)
 	}
 	return out
 }
 
 type probeCounts struct {
+	renameDecoded                                                                      int
 	files, renameOK, renameRefused, headOK, headRefused, lineOK, lineRefused, restored int
 	refusals                                                                           map[string]int
 }
@@ -808,9 +810,17 @@ func probeInput(t *testing.T, name string, data []byte, pc *probeCounts) {
 					// With a tag or anchor on the key the span excludes them, so this holds too.
 					t.Errorf("%s rename %q: text outside the key changed\n in: %q\nout: %q", name, ptr, src, out)
 				}
-				if decOK {
-					if dv, ok := decoded2(out); ok {
-						_ = dv
+				// Through the decoder, which expands aliases: the same values with the key
+				// renamed. A mapping that aliases share is renamed in every use, so entries
+				// below an anchor are left to the tree comparison above.
+				if decOK && e.doc == 0 && !e.anch {
+					var d0, d1 any
+					toks, _ := pointer.Parse(ptr)
+					if Unmarshal(data, &d0) == nil && renameGeneric(d0, toks, "probe key") {
+						if err := Unmarshal([]byte(out), &d1); err != nil || fmt.Sprintf("%v", d1) != fmt.Sprintf("%v", d0) {
+							t.Errorf("%s rename %q: the decoder reads other values (%v)\n in: %q\nout: %q", name, ptr, err, src, out)
+						}
+						pc.renameDecoded++
 					}
 				}
 			}
@@ -883,9 +893,62 @@ func trimTrailing(s string) string {
 )`).ReplaceAllString(s, "$1")
 }
 
-func decoded2(out string) (any, bool) {
-	var v any
-	return v, Unmarshal([]byte(out), &v) == nil
+// renameGeneric renames, in place, the key at toks in a value the decoder made. It
+// reports whether the path led to a mapping entry.
+func renameGeneric(root any, toks []string, newKey string) bool {
+	cur := root
+	for i, tok := range toks {
+		last := i == len(toks)-1
+		switch m := cur.(type) {
+		case map[string]any:
+			v, ok := m[tok]
+			if !ok {
+				return false
+			}
+			if last {
+				delete(m, tok)
+				m[newKey] = v
+				return true
+			}
+			cur = v
+		case map[any]any:
+			var k any
+			found := false
+			for key := range m {
+				if _, coll := key.(map[any]any); coll {
+					continue
+				}
+				if _, coll := key.([]any); coll {
+					continue
+				}
+				if fmt.Sprint(key) == tok {
+					if found {
+						return false // keys that print alike (1 and 1.0): the pointer's meaning is the document's
+					}
+					k, found = key, true
+				}
+			}
+			if !found {
+				return false
+			}
+			if last {
+				v := m[k]
+				delete(m, k)
+				m[newKey] = v
+				return true
+			}
+			cur = m[k]
+		case []any:
+			var idx int
+			if _, err := fmt.Sscan(tok, &idx); err != nil || idx < 0 || idx >= len(m) || last {
+				return false
+			}
+			cur = m[idx]
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func hasLineComment(d *Document, doc int, ptr string) bool {
@@ -955,5 +1018,117 @@ func TestRenameAndCommentProbe(t *testing.T) {
 		probeInput(t, f, data, &pc)
 	}
 	t.Logf("probe: %d inputs; rename %d accepted, %d refused; head comment %d accepted, %d refused; line comment %d accepted, %d refused; %d set-then-remove restored the input", pc.files, pc.renameOK, pc.renameRefused, pc.headOK, pc.headRefused, pc.lineOK, pc.lineRefused, pc.restored)
+	t.Logf("%d accepted renames were also compared through the alias-expanding decoder", pc.renameDecoded)
 	t.Logf("refusals: %v", pc.refusals)
+}
+
+func TestYAMLPatchBadScalarsRefused(t *testing.T) {
+	doc := "a: 1\nb: [x, y]\n"
+	for _, p := range []string{
+		"- op: replace\n  path: \"/a\\uDFFF\"\n  value: {x: 1}\n",
+		"- op: add\n  path: /c\n  value: [\"ok\", \"bad \\ud800 tail\"]\n",
+		"- op: add\n  path: /c\n  value: \"\\x4\"\n",
+		"- op: add\n  path: /c\n  value: \"\\q\"\n",
+		"- op: add\n  path: /c\n  value: {\"k\\ud800\": 1}\n",
+		"- op: add\n  path: /c\n  value: !foo bar\n",
+		"- op: add\n  path: /c\n  value: !foo [1]\n",
+		"- op: add\n  path: /c\n  value: !<!x> y\n",
+	} {
+		d, _ := Parse([]byte(doc))
+		err := d.ApplyPatch([]byte(p))
+		if !errors.Is(err, ErrInvalidPatch) {
+			t.Errorf("%q: error %v, want ErrInvalidPatch", p, err)
+		}
+		if d.String() != doc {
+			t.Errorf("%q: document changed to %q", p, d.String())
+		}
+	}
+	// A core tag is fine, and so is a valid escape.
+	d, _ := Parse([]byte(doc))
+	if err := d.ApplyPatch([]byte("- op: add\n  path: /c\n  value: !!str 12\n- op: add\n  path: /d\n  value: \"t\\u00e9\\n\"\n")); err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		C string
+		D string
+	}
+	if err := d.Get("", &v); err != nil || v.C != "12" || v.D != "t\u00e9\n" {
+		t.Errorf("values: %+v %v", v, err)
+	}
+	// The error says where.
+	err := func() error {
+		d, _ := Parse([]byte(doc))
+		return d.ApplyPatch([]byte("- op: replace\n  path: \"/a\\uDFFF\"\n  value: 1\n"))
+	}()
+	if err == nil || !strings.Contains(err.Error(), "line 2") {
+		t.Errorf("no position in %v", err)
+	}
+}
+
+// Text that starts like JSON is judged as JSON, with the JSON errors, however
+// YAML would read it.
+func TestJSONLookingPatchesKeepJSONErrors(t *testing.T) {
+	doc := "a: 1\nb: [x, y]\n"
+	for _, p := range []string{
+		`[{"op":"add","op":"remove","path":"/a"}]`,
+		`[{"op":"add","path":"/z","value":1},]`,
+		`[{'op':'add','path':'/z','value':1}]`,
+		`[{op: add, path: /z, value: 1}]`,
+		`[{"op":"add","path":"/z","value":NaN}]`,
+		`[{"op":"add","path":"/z","value":Infinity}]`,
+		`[{"op":"add","path":"/z","value":01}]`,
+		`[{"op":"add","path":"/z","value":+1}]`,
+		`[{"op":"add","path":"/z","value":0x10}]`,
+		`[{"op":"add","path":"/z","value":"\x41"}]`,
+		"[{\"op\":\"add\",\"path\":\"/z\",\"value\":\"a\tb\"}]",
+		"\ufeff[{\"op\":\"add\",\"path\":\"/z\",\"value\":1}]",
+		"  \n\t[{op: add, path: /z, value: 1}]",
+		`{"op":"add","path":"/z","value":1}`,
+		`[`,
+		`[{"op":"add","path":"/z","value":1}] trailing`,
+	} {
+		d, _ := Parse([]byte(doc))
+		err := d.ApplyPatch([]byte(p))
+		if !errors.Is(err, ErrInvalidPatch) || !strings.Contains(err.Error(), "JSON") {
+			t.Errorf("%q: error %v, want an ErrInvalidPatch about JSON", p, err)
+		}
+		if d.String() != doc {
+			t.Errorf("%q: document changed to %q", p, d.String())
+		}
+	}
+}
+
+func TestYAMLPatchDepthLimit(t *testing.T) {
+	doc := "a: 1\n"
+	deep := strings.Repeat("[", 50) + strings.Repeat("]", 50)
+	d, _ := Parse([]byte(doc), Limits(LimitSet{MaxDepth: 10}))
+	err := d.ApplyPatch([]byte("- op: add\n  path: /z\n  value: " + deep + "\n"))
+	var le *LimitError
+	if !errors.As(err, &le) || le.Limit != "depth" {
+		t.Errorf("error %v, want a depth LimitError", err)
+	}
+	if d.String() != doc {
+		t.Errorf("document changed: %q", d.String())
+	}
+}
+
+func TestRenameAnchoredKey(t *testing.T) {
+	d, _ := Parse([]byte("&k a: 1\nb: *k\n"))
+	err := d.Rename("/a", "x")
+	if !errors.Is(err, ErrAnchorInUse) {
+		t.Errorf("error %v, want ErrAnchorInUse", err)
+	}
+	if d.String() != "&k a: 1\nb: *k\n" {
+		t.Errorf("document changed: %q", d.String())
+	}
+	// An anchor nothing uses does not stand in the way, and neither does an alias
+	// of the value.
+	u, _ := Parse([]byte("&k a: 1\nb: 2\n"))
+	if err := u.Rename("/a", "x"); err != nil || u.String() != "&k x: 1\nb: 2\n" {
+		t.Errorf("unused anchor: %v %q", err, u.String())
+	}
+	v, _ := Parse([]byte("a: &v 1\nb: *v\n"))
+	if err := v.Rename("/a", "x"); err != nil || v.String() != "x: &v 1\nb: *v\n" {
+		t.Errorf("value anchor: %v %q", err, v.String())
+	}
 }
