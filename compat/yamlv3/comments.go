@@ -62,6 +62,10 @@ type commentState struct {
 	// inside a block collection rather than on the collection: they wait here for
 	// that scalar.
 	pendHead, pendLine string
+	// tokenHead is set when the head comment just given to a node began on the
+	// line of an item that has no value ("- # c"). yaml.v3 hands such a comment to
+	// the first scalar of the item's collection, not to the collection.
+	tokenHead bool
 }
 
 func (b *builder) initComments() {
@@ -233,6 +237,7 @@ func (b *builder) commentsFor(t *cst.Tree, c int32, n *Node, r role) {
 	}
 	src := b.ref.Src
 	nd := &t.Nodes[c]
+	b.cs.tokenHead = false
 	start := int(t.FullStart(c))
 	end := int(nd.End)
 	// Line comment.
@@ -278,7 +283,7 @@ func (b *builder) commentsFor(t *cst.Tree, c int32, n *Node, r role) {
 		col, ok := firstOnLineIn(src, start, valueScalar, flowParent)
 		if ls := lineStart(src, start); ok && ls+1 != b.cs.headLine {
 			b.cs.headLine = ls + 1
-			if b.cs.seenToken {
+			if b.cs.seenToken || dashAbove(src, ls) {
 				// Placed from the whole stretch of comments and blank lines above. When
 				// there is no comment in it there is nothing to place.
 				b.gapComments(src, ls, n)
@@ -298,6 +303,7 @@ func (b *builder) commentsFor(t *cst.Tree, c int32, n *Node, r role) {
 						b.footFor(joinSpans(src, block), indentOf("", src, bstart))
 					case blank == 0:
 						n.HeadComment = joinSpans(src, block)
+						b.cs.tokenHead = dashLine(src, bstart)
 					default:
 						// Separated from this node by blank lines.
 						if !b.cs.seenToken {
@@ -347,7 +353,7 @@ func (b *builder) commentsFor(t *cst.Tree, c int32, n *Node, r role) {
 			b.cs.recent = append(b.cs.recent, recent{n: n, col: int32(col), ind: int32(col)})
 		}
 	}
-	if r == roleItem && collection && nd.Prop != 0 && n.HeadComment != "" {
+	if r == roleItem && collection && n.HeadComment != "" && (nd.Prop != 0 || b.cs.tokenHead) {
 		// With a tag or an anchor in front, yaml.v3 gives the comment above the item
 		// to the first scalar inside it.
 		b.cs.pendHead, n.HeadComment = n.HeadComment, ""
@@ -357,6 +363,22 @@ func (b *builder) commentsFor(t *cst.Tree, c int32, n *Node, r role) {
 	if !collection {
 		b.cs.seenToken = true
 	}
+}
+
+// dashAbove reports whether the comment and blank lines above the line that
+// starts at ls are headed by an item with no value and a comment ("- # c"). At
+// the start of a document those lines need the same reading as anywhere else.
+func dashAbove(src []byte, ls int) bool {
+	for i := ls; i > 0; {
+		ps := lineStart(src, i-1)
+		t := bytes.TrimSpace(src[ps : i-1])
+		if len(t) == 0 || t[0] == '#' {
+			i = ps
+			continue
+		}
+		return dashComment(t)
+	}
+	return false
 }
 
 // dashColumn returns the column of the "-" that stands just before offset pos
@@ -492,6 +514,7 @@ func (b *builder) gapComments(src []byte, ls int, n *Node) bool {
 		return true
 	}
 	n.HeadComment = string(text)
+	b.cs.tokenHead = lines[0].tokenLine
 	return true
 }
 
@@ -572,6 +595,9 @@ func (b *builder) documentComments(d *Node) {
 	for end > 0 && (src[end-1] == '\n' || src[end-1] == '\r' || src[end-1] == ' ' || src[end-1] == '\t') {
 		end--
 	}
+	if b.emptyItemFoot(d, end, marked) {
+		return
+	}
 	var block []string
 	bs := lineStart(src, end)
 	for {
@@ -611,6 +637,68 @@ func (b *builder) documentComments(d *Node) {
 		return
 	}
 	b.footFor(strings.Join(block, "\n"), indentOf(block[0], src, first))
+}
+
+// emptyItemFoot handles a document whose last entry is a sequence item with no
+// value, with comments after it or on its line ("- # c"). yaml.v3 has no node
+// to hang them on and makes them, from the one on the dash line to the end of
+// the text, the document's foot comment. end is where the document's text ends,
+// without trailing blanks. It reports whether it set the foot.
+func (b *builder) emptyItemFoot(d *Node, end int, marked bool) bool {
+	src := b.ref.Src
+	seg := src[:end]
+	var tail []string // the lines after the item, last first
+	var item []byte
+	for {
+		nl := bytes.LastIndexByte(seg, '\n')
+		l := bytes.TrimSpace(seg[nl+1:])
+		switch {
+		case len(l) == 0:
+			tail = append(tail, "")
+		case l[0] == '#' && !b.insideScalar(nl+1+indexNonBlank(seg[nl+1:])):
+			tail = append(tail, string(l))
+		default:
+			item = l
+		}
+		if item != nil {
+			if b.insideScalar(nl + 1 + indexNonBlank(seg[nl+1:])) {
+				return false
+			}
+			break
+		}
+		if nl < 0 {
+			return false
+		}
+		seg = seg[:nl]
+	}
+	// Only dashes (and their comment) may be on the line.
+	dashes := 0
+	for len(item) > 0 && item[0] == '-' && (len(item) == 1 || item[1] == ' ') {
+		item = bytes.TrimLeft(item[1:], " ")
+		dashes++
+	}
+	if dashes == 0 || len(item) > 0 && item[0] != '#' {
+		return false
+	}
+	var lines []string
+	if len(item) > 0 {
+		lines = append(lines, string(item))
+	}
+	for i := len(tail) - 1; i >= 0; i-- {
+		if tail[i] == "" && len(lines) == 0 {
+			continue
+		}
+		lines = append(lines, tail[i])
+	}
+	if len(lines) == 0 {
+		return false
+	}
+	text := strings.Join(lines, "\n")
+	if !marked && bytes.Count(src[end:], []byte("\n")) >= 2 {
+		text += "\n"
+	}
+	d.FootComment = text
+	return true
 }
 
 // endsInFlow reports whether the last thing in the document is a flow
@@ -706,6 +794,10 @@ func (b *builder) emptyDocumentFoot(d *Node) bool {
 		return false
 	}
 	d.FootComment = strings.Join(lines, "\n")
+	if pending > 0 {
+		// Blank lines after the last comment end the text with one line break.
+		d.FootComment += "\n"
+	}
 	if len(d.Content) == 1 {
 		// The empty root keeps none of them.
 		d.Content[0].HeadComment, d.Content[0].LineComment, d.Content[0].FootComment = "", "", ""

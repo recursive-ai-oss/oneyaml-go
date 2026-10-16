@@ -427,13 +427,25 @@ func AppendBlockV3(dst []byte, s string, folded bool, col, parent int) []byte {
 	}
 	atLineStart := true
 	leadingSpaces := true
+	// libyaml decides whether a break needs a blank line by looking at the text
+	// after the run of breaks at the start of the whole value, not after the
+	// break being written. A value that starts with a break therefore gets blank
+	// lines (also before its last break), and one that starts with a space or tab
+	// gets none. The same rule is kept so that the text is identical.
+	blankLines := false
+	if folded {
+		k := 0
+		for k < len(s) && (s[k] == '\n' || s[k] == '\r') {
+			k++
+		}
+		blankLines = k < len(s) && s[k] != ' ' && s[k] != '\t'
+	}
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if c == '\n' {
-			if folded && !atLineStart && !leadingSpaces && s[0] != ' ' && s[0] != '\t' && s[0] != '\n' && s[0] != '\r' {
+			if blankLines && !atLineStart && !leadingSpaces {
 				// A break in folded text is written as a blank line, so that reading
-				// it folds back to a break. libyaml looks at the start of the text
-				// rather than at what follows the break, and so do we.
+				// it folds back to a break.
 				dst = append(dst, '\n')
 			}
 			dst = append(dst, '\n')

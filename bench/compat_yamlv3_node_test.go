@@ -208,18 +208,12 @@ func TestCompatV3NodeWrite(t *testing.T) {
 // input that differs fails the test, and so does a name here that has started to
 // match.
 //
-// The read list is empty: every comment in the corpus lands where yaml.v3 puts
-// it.
+// Both lists are empty: every comment in the corpus lands where yaml.v3 puts it,
+// and is written the way yaml.v3 writes it, apart from the differences the rules
+// in writeDifference name.
 var commentReadGaps = map[string]bool{}
 
-// 7T8X: a folded scalar that starts with a line break. yaml.v3 puts a blank line
-// between its text lines (and writes an indentation indicator one lower, which is
-// the top-level difference listed elsewhere); the shim's block scalar writer, in
-// the shared emitter, leaves the blank lines out and so folds the lines together
-// when read back. The comment in the input is not the cause.
-var commentWriteGaps = map[string]bool{
-	"7T8X/in.yaml": true,
-}
+var commentWriteGaps = map[string]bool{}
 
 // gapTracker notes which names on a gap list were met in the corpus and which of
 // them still differed, so a name that has started to match is reported.

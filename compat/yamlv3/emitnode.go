@@ -202,7 +202,10 @@ func (w *nodeWriter) inlineHead(col int, text string) {
 	for i, l := range splitComment(text) {
 		if i > 0 {
 			w.buf = append(w.buf, '\n')
-			w.indent(col)
+			// A blank line between the comment lines carries no indentation.
+			if l != "" {
+				w.indent(col)
+			}
 		}
 		if l != "" {
 			w.buf = appendHashed(w.buf, l)
