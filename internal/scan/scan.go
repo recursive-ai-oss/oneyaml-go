@@ -1244,11 +1244,18 @@ func (s *Scanner) fetchQuoted(double bool, col int) error {
 				}
 				v = v<<4 | uint32(hexVal(b[p+2+i]))
 			}
-			// A lone surrogate or a value past U+10FFFF names no character. Refuse it
+			// A value past U+10FFFF or a lone surrogate names no character. Refuse it
 			// here, where the quoted scalar is read, so every consumer of the tokens
 			// (the document tree included) rejects it and none has to decode the
-			// scalar to find out.
-			if v > utf8.MaxRune || v >= 0xD800 && v <= 0xDFFF {
+			// scalar to find out. An escaped high surrogate directly followed by an
+			// escaped low one is a pair and names one character above the BMP.
+			if v >= 0xD800 && v <= 0xDBFF {
+				m, ok := LowSurrogateEscape(b[p+2+n:])
+				if !ok {
+					return s.errAt(p, Syntax, "escape is not a Unicode scalar value")
+				}
+				n += m
+			} else if v > utf8.MaxRune || v >= 0xDC00 && v <= 0xDFFF {
 				return s.errAt(p, Syntax, "escape is not a Unicode scalar value")
 			}
 			p += 2 + n
@@ -1281,6 +1288,34 @@ done:
 	s.tokens[len(s.tokens)-1].Style = st
 	s.jsonLike = s.flow > 0
 	return nil
+}
+
+// LowSurrogateEscape reports whether b starts with a \u or \U escape of a low
+// surrogate, and how many bytes it takes. It is what must follow the escape of a
+// high surrogate in a double-quoted scalar.
+func LowSurrogateEscape(b []byte) (n int, ok bool) {
+	if len(b) < 2 || b[0] != '\\' {
+		return 0, false
+	}
+	switch b[1] {
+	case 'u':
+		n = 4
+	case 'U':
+		n = 8
+	default:
+		return 0, false
+	}
+	if len(b) < 2+n {
+		return 0, false
+	}
+	var v uint32
+	for _, c := range b[2 : 2+n] {
+		if !isHex(c) {
+			return 0, false
+		}
+		v = v<<4 | uint32(hexVal(c))
+	}
+	return 2 + n, v >= 0xDC00 && v <= 0xDFFF
 }
 
 func isHex(c byte) bool {

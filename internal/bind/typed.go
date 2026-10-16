@@ -728,7 +728,10 @@ func (b *Binder) structExtra(v reflect.Value, dp *dplan, st *structState, ke *pa
 	// The key names no field, so nothing else will look at it: a repeat of an
 	// earlier such key is refused here, as a repeat is anywhere else.
 	if !weak {
-		b.idbuf = b.identity(b.idbuf[:0], ke, kb)
+		var err error
+		if b.idbuf, err = b.identity(b.idbuf[:0], ke, kb); err != nil {
+			return err
+		}
 		if st.unk == nil {
 			st.unk = b.getSet()
 		}
@@ -789,6 +792,9 @@ type mapState struct {
 	nanSeen     bool
 	merged      bool
 	keyIsString bool
+	// bad holds the identities of the keys that did not fit the key type, to
+	// catch a repeat of one.
+	bad *keySet
 }
 
 // nanKey stands for every NaN in a set of keys, since a NaN is not equal to
@@ -827,7 +833,9 @@ func (b *Binder) mapTyped(v reflect.Value) error {
 	}
 	st.keyIsString = t.Key().Kind() == reflect.String && t.Key().PkgPath() == ""
 	st.track = !st.fresh || b.cfg.MergeKeys
-	return b.mapPairs(v, &st, false)
+	err := b.mapPairs(v, &st, false)
+	b.putSet(st.bad)
+	return err
 }
 
 func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
@@ -869,9 +877,25 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 				if be, ok := err.(*Error); ok && b.cfg.Dialect != DialectV3 && be.Kind == KindType && be.Err == nil && be.Category == "" {
 					// The key does not fit the key type, like a value that does not fit:
 					// the entry is skipped and the mismatch collected.
+					// A repeat of such a key is a duplicate, as a repeat of a key that fits
+					// is; the value is looked into for repeats like any ignored one.
 					ve, serr := b.next()
+					if serr == nil && !weak {
+						kb, kerr := b.keyText(&ke)
+						if kerr == nil {
+							b.idbuf, kerr = b.identity(b.idbuf[:0], &ke, kb)
+						}
+						if serr = kerr; serr == nil {
+							if st.bad == nil {
+								st.bad = b.getSet()
+							}
+							if st.bad.add(b.idbuf) {
+								return withSeg(b.dupKey(kpos), b.keyLabel(&ke))
+							}
+						}
+					}
 					if serr == nil {
-						serr = b.skip(&ve)
+						serr = b.skipIgnored(&ve, weak)
 					}
 					if serr != nil {
 						return serr

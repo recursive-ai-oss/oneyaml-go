@@ -118,7 +118,7 @@ func EarlierRounding(src []byte, off int) (first int, ok bool) {
 		return 0, false
 	}
 	later, ok := floatOf(text)
-	if !ok {
+	if !ok || !readsAsFloat(text) {
 		return 0, false
 	}
 	var buf []byte
@@ -127,13 +127,20 @@ func EarlierRounding(src []byte, off int) (first int, ok bool) {
 			return true
 		}
 		buf, _ = parse.AppendScalar(buf[:0], src, ev)
-		if f, isF := floatOf(buf); isF && f == later {
+		if f, isF := floatOf(buf); isF && f == later && readsAsFloat(buf) {
 			first, ok = ev.Start, true
 			return false
 		}
 		return true
 	})
 	return first, ok
+}
+
+// readsAsFloat reports whether the Core schema reads text as a float and not as
+// an integer: 0x1 and 1 convert to the same float64, but they are one integer,
+// not two numbers that a float64 cannot tell apart.
+func readsAsFloat(text []byte) bool {
+	return resolve.Core(text).Kind == resolve.Float
 }
 
 // floatOf reads a Core schema float, .inf included.

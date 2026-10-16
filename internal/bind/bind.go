@@ -405,6 +405,8 @@ type Binder struct {
 	sets       []*keySet
 	kev        parse.Event
 	skipFrames []skipFrame
+	skipArena  []byte // keys of the open mappings of skipFrames, back to back
+	skipEnds   []int  // end of each key in skipArena
 	idbuf      []byte
 
 	// keyAlias is the offset of the alias nextKey followed to reach the key it
@@ -463,6 +465,10 @@ func (b *Binder) Release() {
 	if cap(b.skipFrames) > 0 {
 		clear(b.skipFrames[:cap(b.skipFrames)])
 		b.skipFrames = b.skipFrames[:0]
+	}
+	b.skipArena, b.skipEnds = b.skipArena[:0], b.skipEnds[:0]
+	if cap(b.skipArena) > 64<<10 || cap(b.skipEnds) > 4<<10 {
+		b.skipArena, b.skipEnds = nil, nil
 	}
 	if len(b.intern) > 1024 {
 		clear(b.intern)

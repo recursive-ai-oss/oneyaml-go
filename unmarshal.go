@@ -96,10 +96,11 @@ func (s *session) release() {
 // (1e-400 and 2e-400, or 1e400 and .inf) are a *TypeError that says so, since a
 // map cannot hold them apart. A key is a duplicate even when one of its entries
 // did not fit its target, so a: 1 followed by a: x is a duplicate-key error. All
-// .nan keys are one key. A key that no field of a struct target has counts too,
-// as do the keys inside a value the target ignores, so a: 1 twice is refused
-// even when the struct has no field a. A key written as an alias is reported at
-// the alias.
+// .nan keys are one key, except in a map with string keys, whose keys are
+// compared as text. A key that no field of a struct target has counts too, as do
+// the keys inside a value the target ignores, so a: 1 twice is refused even
+// when the struct has no field a. A key written as an alias is reported at the
+// alias.
 // Merge keys are ordinary keys unless the MergeKeys option is given. Unknown
 // struct keys are skipped unless KnownFields is given.
 //

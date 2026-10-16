@@ -111,8 +111,9 @@ func (b *Binder) putSet(u *keySet) {
 // that two keys have equal identities exactly when they are one key after the
 // schema has read them: 1 and 0x1, null and ~, true and True. It appends to dst.
 // Quoted keys are strings, and so are all keys under the yaml.v3 rules, which
-// compare the text of keys.
-func (b *Binder) identity(dst []byte, ev *parse.Event, text []byte) []byte {
+// compare the text of keys. A float is a class of its own, so 1.5 and "1.5" are
+// two keys; a huge number is refused here as it is when read into a value.
+func (b *Binder) identity(dst []byte, ev *parse.Event, text []byte) ([]byte, error) {
 	if b.cfg.Dialect == DialectCore && (ev.Style == scan.Plain || ev.HasTag()) {
 		var tag tagClass
 		if ev.HasTag() {
@@ -126,44 +127,100 @@ func (b *Binder) identity(dst []byte, ev *parse.Event, text []byte) []byte {
 		}
 		r, ok := classify(text, ev.Style, tag)
 		if !ok {
-			return append(append(dst, 's'), text...)
+			return append(append(dst, 's'), text...), nil
+		}
+		if r.Kind == resolve.Int || r.Kind == resolve.Float {
+			if err := b.numLimit(&r, text, ev.Start); err != nil {
+				return dst, err
+			}
 		}
 		switch r.Kind {
 		case resolve.Null:
-			return append(dst, 'n')
+			return append(dst, 'n'), nil
 		case resolve.Bool:
 			if r.B {
-				return append(dst, 'b', '1')
+				return append(dst, 'b', '1'), nil
 			}
-			return append(dst, 'b', '0')
+			return append(dst, 'b', '0'), nil
 		case resolve.Int:
 			if tag == tagFloat {
-				break
+				return append(append(dst, 'f'), text...), nil
 			}
 			switch r.W {
 			case resolve.Fits64:
-				return strconv.AppendInt(append(dst, 'i'), r.I, 10)
+				return strconv.AppendInt(append(dst, 'i'), r.I, 10), nil
 			case resolve.FitsU64:
-				return strconv.AppendUint(append(dst, 'i'), r.U, 10)
+				return strconv.AppendUint(append(dst, 'i'), r.U, 10), nil
 			}
-			return append(append(dst, 'i'), r.Big().String()...)
+			return append(append(dst, 'i'), r.Big().String()...), nil
 		case resolve.Float:
 			// Every .nan is one key. Other floats are compared as written: telling
 			// 1e5 from 1e00005 exactly is the job of the key comparison of a real
 			// map, which an ignored key never reaches.
 			if r.F != r.F {
-				return append(dst, 'f', 'n')
+				return append(dst, 'f', 'n'), nil
 			}
+			return append(append(dst, 'f'), text...), nil
 		}
 	}
-	return append(append(dst, 's'), text...)
+	return append(append(dst, 's'), text...), nil
 }
 
-// skipFrame is one open collection of a node being skipped.
+// skipFrame is one open collection of a node being skipped. The keys of a
+// mapping that has few are kept on the binder's shared stack, from aStart and
+// eStart on: a child mapping pushes above its parent's keys and takes its own
+// off again before the parent reads the next one. Only a mapping with many keys
+// takes a hashed set.
 type skipFrame struct {
-	mapping bool
-	n       int // children seen: in a mapping, even means the next is a key
-	keys    keySet
+	mapping        bool
+	n              int // children seen: in a mapping, even means the next is a key
+	aStart, eStart int
+	set            *keySet
+}
+
+// addSkipKey records the key identity id in the mapping on top of the skip stack
+// and reports whether it was there already.
+func (b *Binder) addSkipKey(f *skipFrame, id []byte) bool {
+	if f.set != nil {
+		return f.set.add(id)
+	}
+	prev := f.aStart
+	for i := f.eStart; i < len(b.skipEnds); i++ {
+		if bytes.Equal(b.skipArena[prev:b.skipEnds[i]], id) {
+			return true
+		}
+		prev = b.skipEnds[i]
+	}
+	b.skipArena = append(b.skipArena, id...)
+	b.skipEnds = append(b.skipEnds, len(b.skipArena))
+	if len(b.skipEnds)-f.eStart > unknownLinear {
+		u := b.getSet()
+		prev := f.aStart
+		for i := f.eStart; i < len(b.skipEnds); i++ {
+			u.add(b.skipArena[prev:b.skipEnds[i]])
+			prev = b.skipEnds[i]
+		}
+		b.skipArena, b.skipEnds = b.skipArena[:f.aStart], b.skipEnds[:f.eStart]
+		f.set = u
+	}
+	return false
+}
+
+// popSkip closes the frame on top of the skip stack and drops its keys.
+func (b *Binder) popSkip() {
+	n := len(b.skipFrames) - 1
+	f := &b.skipFrames[n]
+	b.skipArena, b.skipEnds = b.skipArena[:f.aStart], b.skipEnds[:f.eStart]
+	b.putSet(f.set)
+	*f = skipFrame{}
+	b.skipFrames = b.skipFrames[:n]
+}
+
+// unwindSkip closes every frame above base, for an error part way through.
+func (b *Binder) unwindSkip(base int) {
+	for len(b.skipFrames) > base {
+		b.popSkip()
+	}
 }
 
 // skipChecked consumes the rest of the node that starts with ev, as skip does,
@@ -181,14 +238,14 @@ func (b *Binder) skipChecked(ev *parse.Event) error {
 	for len(b.skipFrames) > base {
 		e, err := b.next()
 		if err != nil {
-			b.skipFrames = b.skipFrames[:base]
+			b.unwindSkip(base)
 			return err
 		}
 		top := &b.skipFrames[len(b.skipFrames)-1]
 		isKey := top.mapping && top.n%2 == 0
 		switch e.Kind {
 		case parse.SequenceEnd, parse.MappingEnd:
-			b.skipFrames = b.skipFrames[:len(b.skipFrames)-1]
+			b.popSkip()
 			continue
 		case parse.SequenceStart, parse.MappingStart:
 			top.n++
@@ -201,13 +258,15 @@ func (b *Binder) skipChecked(ev *parse.Event) error {
 				// interface, so an event whose address it takes is allocated.
 				b.kev = e
 				text, err := b.scalar(&b.kev)
+				if err == nil {
+					b.idbuf, err = b.identity(b.idbuf[:0], &b.kev, text)
+				}
 				if err != nil {
-					b.skipFrames = b.skipFrames[:base]
+					b.unwindSkip(base)
 					return err
 				}
-				b.idbuf = b.identity(b.idbuf[:0], &b.kev, text)
-				if top.keys.add(b.idbuf) {
-					b.skipFrames = b.skipFrames[:base]
+				if b.addSkipKey(top, b.idbuf) {
+					b.unwindSkip(base)
 					return b.dupKey(e.Start)
 				}
 			}
@@ -227,7 +286,5 @@ func (b *Binder) pushSkip(mapping bool) {
 	} else {
 		b.skipFrames = append(b.skipFrames, skipFrame{})
 	}
-	f := &b.skipFrames[n]
-	f.mapping, f.n = mapping, 0
-	f.keys.reset()
+	b.skipFrames[n] = skipFrame{mapping: mapping, aStart: len(b.skipArena), eStart: len(b.skipEnds)}
 }

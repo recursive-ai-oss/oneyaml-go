@@ -152,7 +152,19 @@ func appendFlow(dst, b, src []byte, base int, style scan.Style) ([]byte, error) 
 					v = v<<4 | uint32(h)
 				}
 				i += digits
-				if v > utf8.MaxRune || v >= 0xD800 && v <= 0xDFFF {
+				if v >= 0xD800 && v <= 0xDBFF {
+					// The scanner has checked that a low surrogate escape follows.
+					m, ok := scan.LowSurrogateEscape(b[i:])
+					if !ok {
+						return dst, scan.NewError(src, base+i-digits-2, Syntax, "escape is not a Unicode scalar value")
+					}
+					var lo uint32
+					for _, c := range b[i+2 : i+m] {
+						lo = lo<<4 | uint32(unhex(c))
+					}
+					i += m
+					v = 0x10000 + (v-0xD800)<<10 + (lo - 0xDC00)
+				} else if v > utf8.MaxRune || v >= 0xDC00 && v <= 0xDFFF {
 					return dst, scan.NewError(src, base+i-digits-2, Syntax, "escape is not a Unicode scalar value")
 				}
 				r = rune(v)

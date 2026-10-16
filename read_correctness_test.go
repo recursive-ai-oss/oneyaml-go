@@ -221,9 +221,9 @@ func TestIgnoredKeysAreCheckedForDuplicates(t *testing.T) {
 	type b struct{ B int }
 	var many strings.Builder
 	for i := 0; i < 60; i++ {
-		fmt.Fprintf(&many, "k%d: %d\n", i, i)
+		fmt.Fprintf(&many, "key%d: %d\n", i, i)
 	}
-	late := many.String() + "k7: x\nb: 1\n"
+	late := many.String() + "key7: x\nb: 1\n"
 	for _, c := range []struct {
 		name, in  string
 		line, col int
