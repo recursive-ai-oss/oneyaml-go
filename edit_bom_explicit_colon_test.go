@@ -59,11 +59,19 @@ func TestSetNullValueOfExplicitKeyBeforeOuterColon(t *testing.T) {
 // A head comment on the first entry of a document that starts with a byte order
 // mark goes after the mark, which stays at the start of the line.
 func TestHeadCommentAfterBOMOfLaterDocument(t *testing.T) {
+	for _, ptr := range []string{"/a", ""} {
+		t.Run("pointer "+ptr, func(t *testing.T) {
+			headCommentAfterBOM(t, ptr)
+		})
+	}
+}
+
+func headCommentAfterBOM(t *testing.T, ptr string) {
 	d, err := oneyaml.Parse([]byte("a: 1\n...\n\ufeffa: 2\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Doc(1).SetHeadComment("/a", "note"); err != nil {
+	if err := d.Doc(1).SetHeadComment(ptr, "note"); err != nil {
 		t.Fatal(err)
 	}
 	out := string(d.Bytes())

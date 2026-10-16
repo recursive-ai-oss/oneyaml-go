@@ -6,7 +6,8 @@ import "testing"
 // key or a closed collection it may. Kit case
 // diagnostics/plain-key-with-adjacent-flow-value-is-invalid.
 func TestFlowCollectionAfterColon(t *testing.T) {
-	for _, in := range []string{"{a:{}}", "{a:[]}", "[a:{}]", "{a :{}}", "{x: 1, b:[1]}"} {
+	for _, in := range []string{"{a:{}}", "{a:[]}", "[a:{}]", "{a :{}}", "{x: 1, b:[1]}",
+		"{:{0}}", "[:[]]", "{!t :{}}", "{&x :{}}"} {
 		e := mustReject(t, in)
 		if e.Line != 1 {
 			t.Errorf("%q: line %d", in, e.Line)
@@ -17,7 +18,7 @@ func TestFlowCollectionAfterColon(t *testing.T) {
 	}
 	for _, in := range []string{
 		`{"a":{}}`, `{'a':[1]}`, "{a: {}}", "{a: []}", "[a:b]", "{a:b}", "{a:}", "{a:, b: 1}",
-		"[[1]:{}]", "{{}:{}}", "http://x", "{:{0}}", "[:[]]", "a:{b",
+		"[[1]:{}]", "{{}:{}}", "http://x", "{: {0}}", "[: []]", "a:{b",
 	} {
 		mustEvents(t, in)
 	}
@@ -33,4 +34,15 @@ func TestVerbatimTagOfLoneBang(t *testing.T) {
 		mustEvents(t, in)
 	}
 	mustReject(t, "!<!")
+}
+
+// A verbatim tag that is not local must be a URI, which starts with a scheme
+// (specification example 6.25).
+func TestVerbatimTagNeedsScheme(t *testing.T) {
+	for _, in := range []string{"- !<$:?> bar\n", "!<a> x", "!<1a:b> x", "!<:b> x"} {
+		mustReject(t, in)
+	}
+	for _, in := range []string{"!<tag:yaml.org,2002:str> a", "!<a+b-c.d:x> a", "!<!local> a"} {
+		mustEvents(t, in)
+	}
 }

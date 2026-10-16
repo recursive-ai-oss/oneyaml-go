@@ -965,11 +965,14 @@ func (s *Scanner) fetchKey(col int) error {
 // colon can still be valid (it may continue as a plain scalar), so the first
 // character that cannot belong is the one that follows.
 func (s *Scanner) fetchValue(col int) error {
-	// After a plain key (or an alias), a flow collection may not touch the
-	// colon: the entry has an empty value and the collection cannot follow it
-	// without a separator [productions 147, 149]. An empty key is left alone.
-	if c := s.at(s.pos + 1); s.flow > 0 && !s.jsonLike && (c == '[' || c == '{') && (s.lastKind == Scalar || s.lastKind == Alias) {
-		return s.errAt(s.pos+1, Syntax, "a flow collection after ':' needs white space before it", true)
+	// In flow context a flow collection may not touch the colon unless the key
+	// is JSON-like: without the separation the entry would have an empty value
+	// and the collection could not follow it [productions 146, 147, 149]. This
+	// holds for an empty key too.
+	if s.flow > 0 && !s.jsonLike {
+		if c := s.at(s.pos + 1); c == '[' || c == '{' {
+			return s.errAt(s.pos+1, Syntax, "a flow collection after ':' needs white space before it", true)
+		}
 	}
 	k := &s.keys[len(s.keys)-1]
 	// A key found for this ':' may be at a lower flow level only if the flow
@@ -1059,6 +1062,23 @@ func isTagChar(c byte) bool {
 	return false
 }
 
+// hasURIScheme reports whether b starts with a URI scheme and its colon
+// (ALPHA *(ALPHA / DIGIT / "+" / "-" / ".") ":"), which a verbatim tag that is
+// not local needs to be a URI.
+func hasURIScheme(b []byte) bool {
+	for i, c := range b {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+		case i > 0 && (c >= '0' && c <= '9' || c == '+' || c == '-' || c == '.'):
+		case c == ':':
+			return i > 0
+		default:
+			return false
+		}
+	}
+	return false
+}
+
 func (s *Scanner) fetchTag(col int) error {
 	if err := s.saveKey(col); err != nil {
 		return err
@@ -1084,6 +1104,9 @@ func (s *Scanner) fetchTag(col int) error {
 		if s.pos == n+1 && b[n] == '!' {
 			// A verbatim tag is a local tag ("!" and a name) or a URI; a bare "!" is neither.
 			return s.errAt(s.pos, Syntax, "a verbatim tag must be a local tag or a URI")
+		}
+		if b[n] != '!' && !hasURIScheme(b[n:s.pos]) {
+			return s.errAt(n, Syntax, "a verbatim tag must be a local tag or a URI")
 		}
 		s.pos++
 	} else {

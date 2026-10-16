@@ -849,6 +849,7 @@ func probeInput(t *testing.T, name string, data []byte, pc *probeCounts) {
 		} else {
 			pc.headOK++
 			check("head", d)
+			bomsKept(t, name+" head "+ptr, src, string(d.s.src))
 			ra, rb := changedLines(src, string(d.s.src))
 			for _, l := range append(append([]string(nil), ra...), rb...) {
 				if !commentOnlyLine.MatchString(l) {
@@ -874,6 +875,7 @@ func probeInput(t *testing.T, name string, data []byte, pc *probeCounts) {
 		} else {
 			pc.lineOK++
 			check("line", d)
+			bomsKept(t, name+" line "+ptr, src, string(d.s.src))
 			ra, rb := changedLines(src, string(d.s.src))
 			if len(ra) > 1 || len(rb) != 1 || (len(ra) == 1 && strings.TrimRight(ra[0], "\r\n") == strings.TrimRight(rb[0], "\r\n")) {
 				t.Errorf("%s line %q: more than one line changed: %q -> %q", name, ptr, ra, rb)
@@ -892,6 +894,15 @@ func probeInput(t *testing.T, name string, data []byte, pc *probeCounts) {
 				}
 			}
 		}
+	}
+}
+
+// bomsKept checks that a comment edit neither adds nor loses a byte order mark;
+// changedLines ignores marks at line starts, so this is where a lost one shows.
+func bomsKept(t *testing.T, what, src, out string) {
+	t.Helper()
+	if strings.Count(src, "\ufeff") != strings.Count(out, "\ufeff") {
+		t.Errorf("%s: byte order marks changed: %q -> %q", what, src, out)
 	}
 }
 

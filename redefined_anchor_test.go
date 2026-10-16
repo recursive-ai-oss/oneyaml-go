@@ -106,6 +106,39 @@ func TestRedefinedAnchorInsideOuterDefinition(t *testing.T) {
 	if err := oneyaml.Unmarshal([]byte("a: &b\n s: *b\n"), &v); err == nil {
 		t.Error("alias to its own open node must stay an error")
 	}
+
+	// An alias inside a node whose definition is newer than an earlier finished
+	// definition of the same name is still inside its own definition.
+	for _, in := range []string{
+		"a: &b 1\nc: &b [ *b ]\n",
+		"a: &b [ &b 1, &b [ *b ] ]\n",
+	} {
+		var x any
+		if err := oneyaml.Unmarshal([]byte(in), &x); err == nil {
+			t.Errorf("Unmarshal %q: want an error, got %v", in, x)
+		}
+		var x2 any
+		if err := oneyaml.NewDecoder(strings.NewReader(in)).Decode(&x2); err == nil {
+			t.Errorf("Decoder %q: want an error, got %v", in, x2)
+		}
+		if doc, err := oneyaml.Parse([]byte(in)); err == nil {
+			var x3 any
+			if err := doc.Decode(&x3); err == nil {
+				t.Errorf("Document.Decode %q: want an error, got %v", in, x3)
+			}
+			var x4 any
+			if err := doc.Get("", &x4); err == nil {
+				t.Errorf("Document.Get %q: want an error, got %v", in, x4)
+			}
+		}
+		var x5 any
+		if err := yamlv3.Unmarshal([]byte(in), &x5); err == nil {
+			t.Errorf("yamlv3 %q: want an error, got %v", in, x5)
+		}
+		if j, err := k8syaml.YAMLToJSON([]byte(in)); err == nil {
+			t.Errorf("k8syaml %q: want an error, got %s", in, j)
+		}
+	}
 }
 
 func norm2(v any) string { b, _ := json.Marshal(v); return string(b) }

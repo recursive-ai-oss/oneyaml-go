@@ -477,7 +477,7 @@ func TestEditRegressions(t *testing.T) {
 		{"block scalar at the end of the file keeps its value when an entry follows", "a: |\n  x", opSet, "/b", num("1"), "a: |-\n  x\nb: 1"},
 		{"keep scalar at the end of the file", "a: |+\n  x", opSet, "/b", num("1"), "a: |-\n  x\nb: 1"},
 		{"blank lines after a removed entry do not join a keep scalar", "a: |+\n  k\nb: 1\n\nc: 2\n", opRemove, "/b", nil, "a: |+\n  k\nc: 2\n"},
-		{"value after an empty plain key in a flow mapping", "{:{0}} ", opSet, "/", str("x"), "{: x} "},
+		{"value after an empty plain key in a flow mapping", "{: {0}} ", opSet, "/", str("x"), "{: x} "},
 		{"entry without a colon gets one", "? a\n", opSet, "/a", num("1"), "? a\n: 1\n"},
 		{"empty document after a marker and a comment", "---\n#c\n", opSet, "", str("v"), "--- v\n#c\n"},
 		{"block scalar header on a later line than its key", ": \n>\n0:", opSet, "/", num("4"), ""},
