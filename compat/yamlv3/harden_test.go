@@ -642,3 +642,40 @@ func TestEmptyNodeAtEndWithoutLineBreak(t *testing.T) {
 		}
 	}
 }
+
+// An alias used as a mapping key is written with a space before the colon: a
+// bare "*a:" reads back as an alias whose name ends in a colon.
+func TestAliasKeysReadBack(t *testing.T) {
+	for _, in := range []string{
+		"? &a \n? *a",
+		"? &a x\n? *a\n: 1\n",
+		"{? &a x, ? *a : 1}",
+		"{&a x: 1, *a : 2}",
+		"k: &a v\nm: {*a : 1}\n",
+	} {
+		var n yaml.Node
+		if err := yaml.Unmarshal([]byte(in), &n); err != nil {
+			t.Fatalf("%q: %v", in, err)
+		}
+		out, err := yaml.Marshal(&n)
+		if err != nil {
+			t.Fatalf("%q: marshal: %v", in, err)
+		}
+		var back yaml.Node
+		if err := yaml.Unmarshal(out, &back); err != nil {
+			t.Fatalf("%q written as %q does not read back: %v", in, out, err)
+		}
+		if a, b := nodeShape(&n), nodeShape(&back); a != b {
+			t.Errorf("%q written as %q: shape %s, read back %s", in, out, a, b)
+		}
+	}
+}
+
+// nodeShape renders kinds, anchors and values (not tags), for comparing two trees.
+func nodeShape(n *yaml.Node) string {
+	s := fmt.Sprintf("(%d %s %s", n.Kind, n.Anchor, n.Value) // tags differ for empty anchored scalars, as in yaml.v3
+	for _, c := range n.Content {
+		s += " " + nodeShape(c)
+	}
+	return s + ")"
+}

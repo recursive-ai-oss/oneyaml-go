@@ -781,6 +781,15 @@ func simpleKey(k *Node) bool {
 	return false
 }
 
+// aliasKeyGap separates an alias key from the colon that follows it. This
+// package's reader, like YAML 1.2, lets an alias name contain a colon, so
+// "*a:" would read back as an alias named "a:"; the space makes it a key.
+func (w *nodeWriter) aliasKeyGap(k *Node) {
+	if k.Kind == AliasNode {
+		w.buf = append(w.buf, ' ')
+	}
+}
+
 func (w *nodeWriter) blockMap(n *Node, col int, inline bool) {
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		if w.err != nil {
@@ -802,6 +811,7 @@ func (w *nodeWriter) blockMap(n *Node, col int, inline bool) {
 		var vp npos
 		if simpleKey(k) {
 			w.node(k, npos{m: nKeyText, ik: true}, "")
+			w.aliasKeyGap(k)
 			w.buf = append(w.buf, ':')
 			vp = npos{m: nKey, col: col}
 		} else {
@@ -868,6 +878,7 @@ func (w *nodeWriter) flowCollection(n *Node, p npos, tag string, seq bool) {
 			k, v := n.Content[i], n.Content[i+1]
 			if simpleKey(k) {
 				w.node(k, npos{m: nFlow, ik: true}, "")
+				w.aliasKeyGap(k)
 				w.buf = append(w.buf, ':', ' ')
 			} else {
 				w.buf = append(w.buf, '?', ' ')
