@@ -4,6 +4,10 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-16
+
+The first stable release. From 1.0.0 the API is stable under the promise in [Stability](README.md#stability).
+
 ### Breaking
 
 - `LimitError.Limit` is now of the new type `Limit` and names the `LimitSet` field of the bound (`LimitMaxDepth`, `LimitMaxAliasNodes` and so on). It used to be free text such as `"depth"`, `"alias expansion nodes"` or `"patch output size"`. The text is now in the new field `What`. Patch limits report the field that governs them: `MaxInputBytes` for the patch text and for the document a patch makes, and `MaxAliasBytes` for the text a patch copies. **Migrate:** compare `le.Limit` with the `Limit` constants, or match a sentinel such as `errors.Is(err, oneyaml.ErrMaxDepth)`, and read `le.What` where you printed `le.Limit`.
@@ -34,8 +38,9 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 ### Changed
 
 - Options given to `Node.Decode` inside an `UnmarshalYAML` hook may only tighten the limits of the read that called the hook, never loosen them: for each bound the stricter of the caller's and the option's applies. A hook that called `n.Decode(&v, oneyaml.NoLimits())` used to decode an alias bomb that the same read refused without the hook. `KnownFields` and `MergeKeys` still apply as given, and a read of a Document outside a hook keeps its options in both directions.
-- `LimitError.Path` of a limit hit by a decode inside an `UnmarshalYAML` hook is now the pointer in the whole document, like the path of a `*TypeError`. It was relative to the node the hook decoded.
+- `LimitError.Path` of a limit hit by a decode inside an `UnmarshalYAML` hook is now the pointer in the whole document, like the path of a `*TypeError`, also when the hook wraps the error, as with `fmt.Errorf("...: %w", err)`. It used to be empty.
 - A type error found by a decode inside an `UnmarshalYAML` hook (a `Node.Decode`, or the function a func-style hook is given) is now reported where the value is in the input, with every mismatch the hook's decode found, as for a read without the hook. Its path is the hook's path followed by the path inside the node the hook decoded, so a hook that decodes a child node reports that child's path. Before, only the first mismatch was reported, at the first key of the hooked mapping, and a child's path was cut off at the hook. A bad value on line 7 could be reported on line 5. This holds at any depth of nested hooks and on every read path.
+- The `Unmarshaler` documentation now says how a `Node` that `UnmarshalYAML` keeps may be used after the method returns: later, from one goroutine at a time, but not from another goroutine at the moment the method returns. A Node given during `Unmarshal` or a `Decoder` read is still valid only during the call.
 - An error that a hook returns from reading other text, such as an `Unmarshal` of its own input, is now reported at the hook's value with the hook's type as `GoType`. The position and path inside the other text stay in the message: `line 1, column 4: /a: line 8, column 4: /x: ...`. Before, its path was joined onto the hook's (`/a/x`) and its own line and column were lost.
 - A type whose `UnmarshalYAML` method has a form that cannot be called, and a `Node` used as a decode target, are now collected like a value that does not fit. The value is skipped, the rest of the document is read, and the `*TypeError` lists every mismatch. The first such value used to stop the read.
 - `LimitError.Path` is now set for limits that are hit at a value while it is read: alias expansion, scalar size, number digits and the fixed nesting bound of typed values. It was already set for patches. It stays empty for the limits `Parse` reports and for input size, document count and nesting that the parser stops at. `LimitError.Error` shortens a `Path` longer than 512 bytes, as `TypeError.Error` does.
@@ -57,7 +62,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
   - A folded scalar (`>`) always reads back as the value written. Some values used to read back with a line break turned into a space or an extra line break, such as a line followed by an indented line. In some of these cases yaml.v3's own text does not read back.
   - A foot comment held by a block collection that is an item of a sequence is written once, after that collection. It used to be dropped.
   - A blank line between the lines of a head comment is written without indentation, as yaml.v3 writes it.
-- `compat/yamlv3` reads each comment line once. When several sequences start on one dash line (`- # a`, then `- # b`, then a mapping), the comment lines above the dashes were given to more than one node, and writing the result repeated them, adding a copy on every round trip. Comments at the end of a document are no longer dropped when the key that would take them has a foot comment already, and a comment block under `key:` followed by a blank line and another block heads the first key of the value, as in yaml.v3.
+- `compat/yamlv3` reads each comment line once, and tells one line from another by where it stands in the text, not by its words, so two comments with the same words are both kept. When several sequences start on one dash line (`- # a`, then `- # b`, then a mapping), the comment lines above the dashes were given to more than one node, and writing the result repeated them, adding a copy on every round trip. Comments at the end of a document are no longer dropped when the key that would take them has a foot comment already, and a comment block under `key:` followed by a blank line and another block heads the first key of the value, as in yaml.v3.
 
 ## [0.3.0] - 2026-10-16
 
@@ -153,7 +158,8 @@ The first release. It has no benchmark results; those come in a later update.
 - Conformance: the tests that run the [oneyaml-kit](https://github.com/recursive-ai-oss/oneyaml-kit) cases run in CI against a pinned kit revision. See [Conformance](docs/conformance.md).
 - Documentation: [Editing](docs/editing.md), [Patches](docs/patches.md), [Limits](docs/limits.md), [Conformance](docs/conformance.md), [Comparison](docs/comparison.md) and the two migration guides.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.3.0...v1.0.0
 [0.3.0]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.1.0...v0.1.1
