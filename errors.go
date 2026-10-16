@@ -24,14 +24,39 @@ var (
 	ErrAnchorInUse = errors.New("oneyaml: anchor in use")
 )
 
+// ErrUnknownField is the kind of a [*TypeError] for a key that no field of the
+// target struct has, which only happens under [KnownFields]. Match it with
+// errors.Is; the error is found even when it is one of several type errors.
+var ErrUnknownField = errors.New("oneyaml: unknown field")
+
+// The values of [SyntaxError.Category]. The set is closed: a limit that is hit
+// is a [*LimitError], not a syntax error.
+const (
+	// CategorySyntax is any violation of the YAML grammar, including characters
+	// that YAML does not allow and an alias to an anchor that was never defined.
+	CategorySyntax = "syntax"
+	// CategoryEncoding is input that is not valid UTF-8, UTF-16 or UTF-32.
+	CategoryEncoding = "encoding"
+	// CategoryDuplicateKey is a mapping that has the same key twice. Key,
+	// FirstLine and FirstColumn say which key and where it first appeared.
+	CategoryDuplicateKey = "duplicate-key"
+)
+
 // SyntaxError reports YAML that is not well formed.
 type SyntaxError struct {
 	// Line and Column are 1-based, counted in characters; Offset is the byte offset.
 	Line, Column, Offset int
-	// Category is a short stable name for the kind of error.
+	// Category is a short stable name for the kind of error: one of the Category
+	// constants. Switch on it rather than on Msg.
 	Category string
-	// Msg describes the problem.
+	// Msg describes the problem in terms of what the input got wrong.
 	Msg string
+	// Key, FirstLine and FirstColumn describe a CategoryDuplicateKey error: the
+	// text of the repeated key and the 1-based position of its first occurrence.
+	// They are zero when the first occurrence is not known, which happens when
+	// two keys are equal only after conversion to the target type.
+	Key                    string
+	FirstLine, FirstColumn int
 }
 
 // Error returns the message with its line and column.
@@ -41,6 +66,15 @@ func (e *SyntaxError) Error() string {
 
 // TypeError reports a value that cannot be converted: a YAML value that does not
 // fit its Go target when reading, or a Go value with no YAML form when writing.
+//
+// When reading, a mismatch does not stop the decode. The value that does not fit
+// is skipped and its target is left as it was (an element of a slice or array is
+// left zero, and a map entry is not added); the rest of the document is still
+// read, and every mismatch is reported. The error returned describes the first
+// one and More holds the others, in input order, so errors.As finds a
+// *TypeError whether there was one problem or many. Syntax errors, limit errors
+// and errors from your own hooks still stop at once. At most 100 mismatches are
+// kept.
 type TypeError struct {
 	// Path is the RFC 6901 pointer to the value, empty for the root.
 	Path string
@@ -52,22 +86,73 @@ type TypeError struct {
 	Msg string
 	// Err is the error a MarshalYAML or MarshalText method returned, if that was the cause.
 	Err error
+	// Kind is the sentinel error for the cause when there is one, for now only
+	// [ErrUnknownField]. errors.Is matches it.
+	Kind error
+	// More holds the mismatches after this one when a read found several. Each
+	// has an empty More.
+	More []*TypeError
 }
 
-// Error returns the message with the position and path of the value.
-func (e *TypeError) Error() string {
+// All returns this error and the ones in More, in input order.
+func (e *TypeError) All() []*TypeError {
+	if len(e.More) == 0 {
+		return []*TypeError{e}
+	}
+	return append([]*TypeError{e.single()}, e.More...)
+}
+
+// single returns e without its More list.
+func (e *TypeError) single() *TypeError {
+	c := *e
+	c.More = nil
+	return &c
+}
+
+func (e *TypeError) line() string {
 	loc := ""
 	if e.Line > 0 {
 		loc = fmt.Sprintf("line %d, column %d: ", e.Line, e.Column)
 	}
 	if e.Path != "" {
-		return fmt.Sprintf("oneyaml: %s%s: %s", loc, e.Path, e.Msg)
+		return fmt.Sprintf("%s%s: %s", loc, e.Path, e.Msg)
 	}
-	return "oneyaml: " + loc + e.Msg
+	return loc + e.Msg
+}
+
+// Error returns the message with the position and path of the value. With
+// several mismatches it lists them one to a line.
+func (e *TypeError) Error() string {
+	if len(e.More) == 0 {
+		return "oneyaml: " + e.line()
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "oneyaml: %d type errors:", len(e.More)+1)
+	sb.WriteString("\n  " + e.line())
+	for _, m := range e.More {
+		sb.WriteString("\n  " + m.line())
+	}
+	return sb.String()
 }
 
 // Unwrap returns the error from a user hook, if there was one.
 func (e *TypeError) Unwrap() error { return e.Err }
+
+// Is reports whether target is the Kind of this error or of one in More.
+func (e *TypeError) Is(target error) bool {
+	if target == nil {
+		return false
+	}
+	if e.Kind == target {
+		return true
+	}
+	for _, m := range e.More {
+		if m.Kind == target {
+			return true
+		}
+	}
+	return false
+}
 
 // LimitError reports that a limit was exceeded.
 type LimitError struct {

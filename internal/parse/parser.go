@@ -170,6 +170,21 @@ func (p *Parser) Reset(src []byte, maxDepth int) {
 // Source returns the slice being parsed.
 func (p *Parser) Source() []byte { return p.src }
 
+// expectedKeyMsg words the error for a token that cannot start a mapping key. A
+// tab among the leading white space is the usual cause, and says so.
+func (p *Parser) expectedKeyMsg(tok int) string {
+	ls := tok
+	for ls > 0 && p.src[ls-1] != '\n' && p.src[ls-1] != '\r' {
+		ls--
+	}
+	for i := ls; i < tok; i++ {
+		if p.src[i] == '\t' {
+			return "a tab cannot be used for indentation; indent with spaces"
+		}
+	}
+	return "did not find the expected key; check the indentation of this line"
+}
+
 func (p *Parser) errAt(off int, msg string) error {
 	return scan.NewError(p.src, off, Syntax, msg)
 }
@@ -416,7 +431,7 @@ func (p *Parser) step() (Event, error) {
 				p.pop()
 				return ev, nil
 			}
-			return Event{}, p.errAt(t.Start, "did not find the expected '-' indicator")
+			return Event{}, p.errAt(t.Start, "expected '- ' to continue the sequence; check the indentation of this line")
 
 		case sIndentlessSeqEntry:
 			t, err := p.peek()
@@ -481,7 +496,7 @@ func (p *Parser) step() (Event, error) {
 			if t.End > t.Start && p.startsLine(t.Start) {
 				off = t.End
 			}
-			return Event{}, p.errAt(off, "did not find the expected key")
+			return Event{}, p.errAt(off, p.expectedKeyMsg(t.Start))
 
 		case sBlockMapValue:
 			t, err := p.peek()
@@ -516,7 +531,7 @@ func (p *Parser) step() (Event, error) {
 			if t.Kind != scan.FlowSequenceEnd {
 				if !first {
 					if t.Kind != scan.FlowEntry {
-						return Event{}, p.errAt(t.Start, "did not find the expected ',' or ']'")
+						return Event{}, p.errAt(t.Start, "expected ',' or ']' after a flow sequence entry (is a closing ']' missing?)")
 					}
 					p.sc.Skip()
 					if t, err = p.peek(); err != nil {
@@ -596,7 +611,7 @@ func (p *Parser) step() (Event, error) {
 			if t.Kind != scan.FlowMappingEnd {
 				if !first {
 					if t.Kind != scan.FlowEntry {
-						return Event{}, p.errAt(t.Start, "did not find the expected ',' or '}'")
+						return Event{}, p.errAt(t.Start, "expected ',' or '}' after a flow mapping entry (is a closing '}' missing?)")
 					}
 					p.sc.Skip()
 					if t, err = p.peek(); err != nil {

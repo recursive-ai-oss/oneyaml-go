@@ -322,7 +322,11 @@ func convertError(err error) error {
 	}
 	var se *oneyaml.SyntaxError
 	if errors.As(err, &se) {
-		if se.Category == "duplicate-key" {
+		if se.Category == oneyaml.CategoryDuplicateKey {
+			if se.FirstLine > 0 && se.Key != "" {
+				// yaml.v3 words it with the line of the first key only.
+				return &TypeError{Errors: []string{fmt.Sprintf("line %d: mapping key %q already defined at line %d", se.Line, se.Key, se.FirstLine)}}
+			}
 			return &TypeError{Errors: []string{fmt.Sprintf("line %d: %s", se.Line, se.Msg)}}
 		}
 		return fmt.Errorf("yaml: line %d: %s", se.Line, se.Msg)

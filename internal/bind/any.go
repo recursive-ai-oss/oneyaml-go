@@ -187,6 +187,26 @@ func (b *Binder) dupKey(off int) error {
 	return b.syntax(off, "duplicate-key", "mapping key is defined more than once")
 }
 
+// firstFloatKey returns the index of the first pair whose key is the float fl.
+func firstFloatKey(ps []pair, fl float64) int {
+	for j := range ps {
+		if !ps[j].str {
+			if g, ok := ps[j].ka.(float64); ok && g == fl {
+				return j
+			}
+		}
+	}
+	return -1
+}
+
+// floatKeys reports two keys that are written differently but read as the same
+// float64. They are not duplicates; a Go map keyed by float64 cannot hold both.
+// Offset is the later key and First the earlier one.
+func (b *Binder) floatKeys(first, off int) error {
+	return &Error{Kind: KindType, Offset: off, First: first, Category: "float-key", GoType: "map[interface {}]interface {}",
+		Msg: "two mapping keys are different numbers that round to the same float64, which a map cannot hold apart"}
+}
+
 func (b *Binder) finishMap(f *anyFrame) (any, error) {
 	ps := b.pairs[f.base:]
 	var out any
@@ -217,6 +237,11 @@ func (b *Binder) finishMap(f *anyFrame) (any, error) {
 			m[k] = ps[i].val
 			if len(m) == n {
 				if fl, ok := k.(float64); !ok || fl == fl {
+					if ok {
+						if j := firstFloatKey(ps[:i], fl); j >= 0 {
+							return nil, b.dropPairs(f, b.floatKeys(ps[j].off, ps[i].off))
+						}
+					}
 					return nil, b.dropPairs(f, b.dupKey(ps[i].off))
 				}
 			}

@@ -137,6 +137,17 @@ type Error struct {
 	Option string
 	// Category names a KindSyntax error.
 	Category string
+	// Resume marks a type error after which the document can still be read:
+	// the value it is about has been consumed whole. A mapping or sequence that
+	// receives one keeps the error, goes on with its next entry and reports the
+	// errors together when it ends.
+	Resume bool
+	// Multi holds the errors of an aggregate; the other fields describe the first.
+	Multi []*Error
+	// First is the offset of the earlier key of a "float-key" error.
+	First int
+	// Unknown marks a key that no field of the target struct has.
+	Unknown bool
 }
 
 func (e *Error) Error() string { return e.Msg }
@@ -145,6 +156,12 @@ func (e *Error) Error() string { return e.Msg }
 func (e *Error) Unwrap() error { return e.Err }
 
 func (e *Error) prepend(seg string) {
+	if e.Multi != nil {
+		for _, m := range e.Multi {
+			m.prepend(seg)
+		}
+		return
+	}
 	var esc []byte
 	esc = append(esc, '/')
 	for i := 0; i < len(seg); i++ {
@@ -179,6 +196,39 @@ func withIdx(err error, i int) error {
 		be.prepend(strconv.Itoa(i))
 	}
 	return err
+}
+
+// maxCollected bounds the type errors kept from one document, so that input
+// made of nothing but mismatches cannot grow the error without limit.
+const maxCollected = 100
+
+// resumable reports whether err is a type error after which decoding can go on.
+func resumable(err error) bool {
+	be, ok := err.(*Error)
+	return ok && be.Resume
+}
+
+// collect adds the resumable error err to pend.
+func collect(pend []*Error, err error) []*Error {
+	be := err.(*Error)
+	if be.Multi != nil {
+		return append(pend, be.Multi...)
+	}
+	return append(pend, be)
+}
+
+// pending turns the errors a collection gathered into the error it returns when
+// it ends. Past the bound the error is no longer resumable, so decoding stops.
+func pending(pend []*Error) error {
+	switch len(pend) {
+	case 0:
+		return nil
+	case 1:
+		return pend[0]
+	}
+	f := pend[0]
+	agg := &Error{Kind: KindType, Offset: f.Offset, Path: f.Path, GoType: f.GoType, Msg: f.Msg, Resume: len(pend) < maxCollected, Multi: pend}
+	return agg
 }
 
 type logRange struct{ start, end int }

@@ -10,6 +10,8 @@ import (
 	"unicode/utf8"
 
 	"oneyaml.dev/go/internal/parse"
+	"oneyaml.dev/go/internal/resolve"
+	"oneyaml.dev/go/internal/scan"
 )
 
 // jsonHook decodes the node at ev through the json.Unmarshaler of the value: the
@@ -28,12 +30,22 @@ func (b *Binder) jsonHook(v reflect.Value, ev *parse.Event, dp *dplan) (bool, er
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	x, err := b.generic(ev)
-	if err != nil {
-		return true, err
+	var buf []byte
+	var err error
+	if num, ok, nerr := b.jsonNumber(ev); nerr != nil {
+		return true, nerr
+	} else if ok {
+		// Keep the digits as written: a float64 would round them.
+		buf = append(b.jsonBuf[:0], num...)
+		b.jsonBuf = buf[:0]
+	} else {
+		var x any
+		if x, err = b.generic(ev); err != nil {
+			return true, err
+		}
+		buf, err = appendJSON(b.jsonBuf[:0], x)
+		b.jsonBuf = buf[:0]
 	}
-	buf, err := appendJSON(b.jsonBuf[:0], x)
-	b.jsonBuf = buf[:0]
 	if err != nil {
 		return true, &Error{Kind: KindType, Offset: start, GoType: t.String(),
 			Msg: "cannot read this value into " + t.String() + " through its UnmarshalJSON: " + err.Error()}
@@ -44,6 +56,71 @@ func (b *Binder) jsonHook(v reflect.Value, ev *parse.Event, dp *dplan) (bool, er
 			Msg: "cannot unmarshal " + abbrev(buf) + " into " + t.String() + ": " + uerr.Error()}
 	}
 	return true, nil
+}
+
+// jsonNumber returns the source text of a plain scalar that the Core schema reads
+// as a number and whose text is already a JSON number. Anything else (a tag, a
+// quoted scalar, 0x1F, +5, .5) takes the generic route and is rewritten.
+func (b *Binder) jsonNumber(ev *parse.Event) ([]byte, bool, error) {
+	if ev.Kind != parse.Scalar || ev.Style != scan.Plain || ev.HasTag() || b.cfg.Dialect != DialectCore {
+		return nil, false, nil
+	}
+	text := b.src[ev.Start:ev.End]
+	if !isJSONNumber(text) {
+		return nil, false, nil
+	}
+	r := resolve.Core(text)
+	if r.Kind != resolve.Int && r.Kind != resolve.Float {
+		return nil, false, nil
+	}
+	if err := b.numLimit(&r, text, ev.Start); err != nil {
+		return nil, false, err
+	}
+	return text, true, nil
+}
+
+// isJSONNumber reports whether s is a number as the JSON grammar writes it.
+func isJSONNumber(s []byte) bool {
+	i := 0
+	if i < len(s) && s[i] == '-' {
+		i++
+	}
+	if i >= len(s) {
+		return false
+	}
+	if s[i] == '0' {
+		i++
+	} else if s[i] >= '1' && s[i] <= '9' {
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+	} else {
+		return false
+	}
+	if i < len(s) && s[i] == '.' {
+		i++
+		n := i
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		if i == n {
+			return false
+		}
+	}
+	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
+		i++
+		if i < len(s) && (s[i] == '+' || s[i] == '-') {
+			i++
+		}
+		n := i
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		if i == n {
+			return false
+		}
+	}
+	return i == len(s)
 }
 
 type jsonFrame struct {

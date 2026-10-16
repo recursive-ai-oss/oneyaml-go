@@ -101,8 +101,10 @@
 // # Errors
 //
 // Errors are values to test with [errors.As] and [errors.Is]: [*SyntaxError]
-// carries the line, column, offset and a stable category; [*TypeError] the path
-// and position of a value that does not fit its target; [*LimitError] the limit
+// carries the line, column, offset and a category (see [CategorySyntax],
+// [CategoryEncoding] and [CategoryDuplicateKey]); [*TypeError] the path
+// and position of a value that does not fit its target, all of them when a read
+// finds several, with [ErrUnknownField] to match a key the target lacks; [*LimitError] the limit
 // and the option that raises it; and [*EditError] the operation, the pointer and
 // a kind to match against [ErrNotFound], [ErrAliasWrite], [ErrAmbiguousKey],
 // [ErrTestFailed], [ErrAnchorInUse], [ErrInvalidPatch], [ErrInvalidPointer],

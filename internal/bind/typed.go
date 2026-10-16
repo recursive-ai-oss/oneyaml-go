@@ -77,8 +77,15 @@ func (b *Binder) value(v reflect.Value, ev *parse.Event) error {
 	switch ev.Kind {
 	case parse.Scalar:
 		err := b.scalarInto(v, ev)
-		if err != nil && b.cfg.Dialect == DialectV3 && b.soft(err) {
-			return nil
+		if err != nil {
+			if b.cfg.Dialect == DialectV3 {
+				if b.soft(err) {
+					return nil
+				}
+			} else if be, ok := err.(*Error); ok && be.Kind == KindType && be.Err == nil && be.Category == "" {
+				// The scalar is consumed and the target is untouched.
+				be.Resume = true
+			}
 		}
 		return err
 	case parse.SequenceStart:
@@ -319,6 +326,7 @@ func (b *Binder) seqInto(v reflect.Value, ev *parse.Event) error {
 			return err
 		}
 		n := 0
+		var pend []*Error
 		v.SetLen(0)
 		for {
 			e, err := b.next()
@@ -335,7 +343,12 @@ func (b *Binder) seqInto(v reflect.Value, ev *parse.Event) error {
 			el := v.Index(n)
 			el.SetZero()
 			if err := b.value(el, &e); err != nil {
-				return withIdx(err, n)
+				if err = withIdx(err, n); !resumable(err) {
+					return err
+				}
+				if pend = collect(pend, err); len(pend) >= maxCollected {
+					return pending(pend)
+				}
 			}
 			n++
 		}
@@ -343,12 +356,13 @@ func (b *Binder) seqInto(v reflect.Value, ev *parse.Event) error {
 		if v.IsNil() {
 			v.Set(reflect.MakeSlice(t, 0, 0))
 		}
-		return nil
+		return pending(pend)
 	case reflect.Array:
 		if err := b.enter(ev); err != nil {
 			return err
 		}
 		i := 0
+		var pend []*Error
 		for {
 			e, err := b.next()
 			if err != nil {
@@ -361,7 +375,12 @@ func (b *Binder) seqInto(v reflect.Value, ev *parse.Event) error {
 				el := v.Index(i)
 				el.SetZero()
 				if err := b.value(el, &e); err != nil {
-					return withIdx(err, i)
+					if err = withIdx(err, i); !resumable(err) {
+						return err
+					}
+					if pend = collect(pend, err); len(pend) >= maxCollected {
+						return pending(pend)
+					}
 				}
 			} else if err := b.skip(&e); err != nil {
 				return err
@@ -376,7 +395,7 @@ func (b *Binder) seqInto(v reflect.Value, ev *parse.Event) error {
 				Msg: "invalid array: want " + strconv.Itoa(v.Len()) + " elements but got " + strconv.Itoa(i)}
 		}
 		b.tdepth--
-		return nil
+		return pending(pend)
 	}
 	return b.collMismatch(ev, t, "!!seq")
 }
@@ -417,21 +436,23 @@ func (b *Binder) mapInto(v reflect.Value, ev *parse.Event) error {
 				return err
 			}
 			var st structState
-			if err := b.structPairs(v, dp, &st, false); err != nil {
+			err := b.structPairs(v, dp, &st, false)
+			if err != nil && !resumable(err) {
 				return err
 			}
 			b.tdepth--
-			return nil
+			return err
 		}
 	case reflect.Map:
 		if err := b.enter(ev); err != nil {
 			return err
 		}
-		if err := b.mapTyped(v); err != nil {
+		err := b.mapTyped(v)
+		if err != nil && !resumable(err) {
 			return err
 		}
 		b.tdepth--
-		return nil
+		return err
 	}
 	return b.collMismatch(ev, t, "!!map")
 }
@@ -481,13 +502,14 @@ type structState struct {
 // the struct v until the mapping ends. With weak set the pairs come from a merge
 // source: they fill only fields no explicit key sets.
 func (b *Binder) structPairs(v reflect.Value, dp *dplan, st *structState, weak bool) error {
+	var pend []*Error
 	for {
 		ke, err := b.nextKey()
 		if err != nil {
 			return err
 		}
 		if ke.Kind == parse.MappingEnd {
-			return nil
+			return pending(pend)
 		}
 		if ke.Kind != parse.Scalar {
 			return b.typeErr(&ke, v.Type(), "mapping keys must be scalars to decode into "+v.Type().String())
@@ -511,14 +533,24 @@ func (b *Binder) structPairs(v reflect.Value, dp *dplan, st *structState, weak b
 				st.merged = true
 			}
 			if err := b.mergeStruct(v, dp, st, &ve); err != nil {
-				return withSeg(err, "<<")
+				if err = withSeg(err, "<<"); !resumable(err) {
+					return err
+				}
+				if pend = collect(pend, err); len(pend) >= maxCollected {
+					return pending(pend)
+				}
 			}
 			continue
 		}
 		idx := dp.lookup(kb)
 		if idx < 0 {
 			if err := b.structExtra(v, dp, &ke, kb, &ve, weak); err != nil {
-				return err
+				if !resumable(err) {
+					return err
+				}
+				if pend = collect(pend, err); len(pend) >= maxCollected {
+					return pending(pend)
+				}
 			}
 			continue
 		}
@@ -553,7 +585,12 @@ func (b *Binder) structPairs(v reflect.Value, dp *dplan, st *structState, weak b
 			fv.SetZero()
 		}
 		if err := b.value(fv, &ve); err != nil {
-			return withSeg(err, f.Name)
+			if err = withSeg(err, f.Name); !resumable(err) {
+				return err
+			}
+			if pend = collect(pend, err); len(pend) >= maxCollected {
+				return pending(pend)
+			}
 		}
 	}
 }
@@ -576,11 +613,12 @@ func (b *Binder) mergeStruct(v reflect.Value, dp *dplan, st *structState, ve *pa
 		if err := b.enter(e); err != nil {
 			return err
 		}
-		if err := b.structPairs(v, dp, st, true); err != nil {
+		err := b.structPairs(v, dp, st, true)
+		if err != nil && !resumable(err) {
 			return err
 		}
 		b.tdepth--
-		return nil
+		return err
 	}
 	e := *ve
 	if e.Kind == parse.Alias {
@@ -593,16 +631,22 @@ func (b *Binder) mergeStruct(v reflect.Value, dp *dplan, st *structState, ve *pa
 	if e.Kind != parse.SequenceStart {
 		return one(&e)
 	}
+	var pend []*Error
 	for {
 		el, err := b.next()
 		if err != nil {
 			return err
 		}
 		if el.Kind == parse.SequenceEnd {
-			return nil
+			return pending(pend)
 		}
 		if err := one(&el); err != nil {
-			return err
+			if !resumable(err) {
+				return err
+			}
+			if pend = collect(pend, err); len(pend) >= maxCollected {
+				return pending(pend)
+			}
 		}
 	}
 }
@@ -640,7 +684,12 @@ func (b *Binder) structExtra(v reflect.Value, dp *dplan, ke *parse.Event, kb []b
 			b.terrs = append(b.terrs, b.typeErr(ke, v.Type(), "field "+string(kb)+" not found in type "+v.Type().String()).(*Error))
 			return b.skip(ve)
 		}
-		e := b.typeErr(ke, v.Type(), "field "+strconv.Quote(string(kb))+" not found in type "+v.Type().String())
+		e := b.typeErr(ke, v.Type(), "field "+strconv.Quote(string(kb))+" not found in type "+v.Type().String()).(*Error)
+		e.Unknown = true
+		if err := b.skip(ve); err != nil {
+			return err
+		}
+		e.Resume = true
 		return withSeg(e, string(kb))
 	}
 	return b.skip(ve)
@@ -686,13 +735,14 @@ func (b *Binder) mapTyped(v reflect.Value) error {
 }
 
 func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
+	var pend []*Error
 	for {
 		ke, err := b.nextKey()
 		if err != nil {
 			return err
 		}
 		if ke.Kind == parse.MappingEnd {
-			return nil
+			return pending(pend)
 		}
 		if ke.Kind != parse.Scalar {
 			return b.typeErr(&ke, v.Type().Key(), "mapping keys must be scalars to decode into "+v.Type().String())
@@ -737,7 +787,12 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 				st.merged = true
 			}
 			if err := b.mergeMap(v, st, &ve); err != nil {
-				return withSeg(err, "<<")
+				if err = withSeg(err, "<<"); !resumable(err) {
+					return err
+				}
+				if pend = collect(pend, err); len(pend) >= maxCollected {
+					return pending(pend)
+				}
 			}
 			continue
 		}
@@ -772,7 +827,14 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 		}
 		st.ev.SetZero()
 		if err := b.value(st.ev, &ve); err != nil {
-			return withSeg(err, b.keyLabel(&ke))
+			if err = withSeg(err, b.keyLabel(&ke)); !resumable(err) {
+				return err
+			}
+			// The entry is not added.
+			if pend = collect(pend, err); len(pend) >= maxCollected {
+				return pending(pend)
+			}
+			continue
 		}
 		if st.track {
 			v.SetMapIndex(st.kv, st.ev)
@@ -802,11 +864,12 @@ func (b *Binder) mergeMap(v reflect.Value, st *mapState, ve *parse.Event) error 
 		if err := b.enter(e); err != nil {
 			return err
 		}
-		if err := b.mapPairs(v, st, true); err != nil {
+		err := b.mapPairs(v, st, true)
+		if err != nil && !resumable(err) {
 			return err
 		}
 		b.tdepth--
-		return nil
+		return err
 	}
 	e := *ve
 	if e.Kind == parse.Alias {
@@ -819,16 +882,22 @@ func (b *Binder) mergeMap(v reflect.Value, st *mapState, ve *parse.Event) error 
 	if e.Kind != parse.SequenceStart {
 		return one(&e)
 	}
+	var pend []*Error
 	for {
 		el, err := b.next()
 		if err != nil {
 			return err
 		}
 		if el.Kind == parse.SequenceEnd {
-			return nil
+			return pending(pend)
 		}
 		if err := one(&el); err != nil {
-			return err
+			if !resumable(err) {
+				return err
+			}
+			if pend = collect(pend, err); len(pend) >= maxCollected {
+				return pending(pend)
+			}
 		}
 	}
 }

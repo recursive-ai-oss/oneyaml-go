@@ -314,11 +314,12 @@ func (b *Binder) soft(err error) bool {
 // yaml.v3 dialect the collection is skipped and the error collected.
 func (b *Binder) collMismatch(ev *parse.Event, t reflect.Type, name string) error {
 	err := b.typeErr(ev, t, "cannot unmarshal "+name+" into "+t.String())
-	if b.cfg.Dialect != DialectV3 {
-		return err
-	}
 	if serr := b.skip(ev); serr != nil {
 		return serr
+	}
+	if b.cfg.Dialect != DialectV3 {
+		err.(*Error).Resume = true
+		return err
 	}
 	b.terrs = append(b.terrs, err.(*Error))
 	return nil

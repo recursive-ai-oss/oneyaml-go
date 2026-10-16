@@ -564,7 +564,7 @@ func readDifference(it corpusItem, ya, ca any, yerr, cerr error) string {
 		return "the shim enforces the alias-expansion and depth limits (yaml.v3 allows more)"
 	case yerr != nil && cerr == nil && strings.Contains(yerr.Error(), "already defined") && duplicateKeysDifferByTag(it.data):
 		return "yaml.v3 calls true and \"true\" (or 80 and \"80\") the same key"
-	case yerr == nil && cerr != nil && strings.Contains(cerr.Error(), "defined more than once") && floatKeysRoundTogether(it.data):
+	case yerr == nil && cerr != nil && strings.Contains(cerr.Error(), "round to the same float64") && floatKeysRoundTogether(it.data):
 		return "two float keys that round to the same double: yaml.v3 silently keeps the last value, the shim refuses"
 	case yerr != nil && cerr == nil && vd == verdictInvalid && errorAfterFirstDocument(it.data, yerr):
 		return "the shim reads one document, so a later syntax error is not reached"

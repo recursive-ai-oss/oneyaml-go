@@ -19,6 +19,7 @@
 package scan
 
 import (
+	"strconv"
 	"unicode/utf8"
 )
 
@@ -152,6 +153,8 @@ type Scanner struct {
 	flow          int
 	jsonLike      bool    // the last token was a quoted scalar or a flow collection end, inside flow context
 	flowState     []uint8 // per flow level: flowIsMap, flowValueSeen
+	flowOpens     []int   // per flow level: offset of its opening bracket, for messages
+	quoteStart    int     // offset of the quoted scalar being read, for messages
 	lastKind      Kind
 
 	valueErr bool
@@ -183,6 +186,7 @@ func (s *Scanner) Reset(src []byte, maxDepth int) {
 		indents:   s.indents[:0],
 		keys:      s.keys[:0],
 		flowState: s.flowState[:0],
+		flowOpens: s.flowOpens[:0],
 		boms:      s.boms[:0],
 	}
 	if len(src) >= 3 && src[0] == 0xEF && src[1] == 0xBB && src[2] == 0xBF {
@@ -244,6 +248,28 @@ func (s *Scanner) Skip() {
 		s.tokens = s.tokens[:0]
 		s.head = 0
 	}
+}
+
+// where describes the position of offset off in a message.
+func (s *Scanner) where(off int) string {
+	e := NewError(s.src, off, Syntax, "")
+	return "line " + strconv.Itoa(e.Line) + ", column " + strconv.Itoa(e.Column)
+}
+
+// flowIndentMsg words the error for a line that ends a flow collection by its
+// indentation. The input is most likely missing a closing bracket.
+func (s *Scanner) flowIndentMsg() string {
+	if n := len(s.flowOpens); n > 0 {
+		off := s.flowOpens[n-1]
+		kind := "sequence"
+		close := "]"
+		if s.src[off] == '{' {
+			kind, close = "mapping", "}"
+		}
+		return "the flow " + kind + " opened at " + s.where(off) + " is not closed: add the missing '" + close +
+			"' or indent this line past its parent"
+	}
+	return "flow content is not indented enough"
 }
 
 func (s *Scanner) errAt(off int, cat Category, msg string, value ...bool) error {
@@ -605,7 +631,7 @@ func (s *Scanner) scanToNextToken() error {
 		default:
 			if crossed && s.flow > 0 && s.indent >= 0 && s.leadingSpaces() <= s.indent &&
 				!(s.pos == s.lineStart && s.docMarker(s.pos)) {
-				return s.errAt(s.pos, Syntax, "flow content is not indented enough")
+				return s.errAt(s.pos, Syntax, s.flowIndentMsg())
 			}
 			return nil
 		}
@@ -854,6 +880,7 @@ func (s *Scanner) fetchFlowStart(k Kind, col int) error {
 		fs = flowIsMap
 	}
 	s.flowState = append(s.flowState, fs)
+	s.flowOpens = append(s.flowOpens, s.pos)
 	s.flow++
 	s.allowKey = true
 	s.push(k, s.pos, s.pos+1)
@@ -868,6 +895,7 @@ func (s *Scanner) fetchFlowEnd(k Kind) error {
 	if s.flow > 0 {
 		s.keys = s.keys[:len(s.keys)-1]
 		s.flowState = s.flowState[:len(s.flowState)-1]
+		s.flowOpens = s.flowOpens[:len(s.flowOpens)-1]
 		if s.firstPossible > len(s.keys) {
 			s.firstPossible = len(s.keys)
 		}
@@ -1146,7 +1174,7 @@ func (s *Scanner) fetchPlain(col int) error {
 					break
 				}
 			} else if s.indent >= 0 && sp <= s.indent {
-				return s.errAt(p, Syntax, "flow content is not indented enough")
+				return s.errAt(p, Syntax, s.flowIndentMsg())
 			}
 		}
 	}
@@ -1164,6 +1192,7 @@ func (s *Scanner) fetchQuoted(double bool, col int) error {
 	s.allowKey = false
 	b := s.src
 	start := s.pos
+	s.quoteStart = start
 	q := byte('\'')
 	if double {
 		q = '"'
@@ -1171,7 +1200,7 @@ func (s *Scanner) fetchQuoted(double bool, col int) error {
 	p := start + 1
 	for {
 		if p >= len(b) {
-			return s.errAt(len(b), Syntax, "unterminated quoted scalar")
+			return s.errAt(len(b), Syntax, "the quoted scalar that starts at "+s.where(start)+" is never closed")
 		}
 		c := b[p]
 		switch {
@@ -1184,7 +1213,7 @@ func (s *Scanner) fetchQuoted(double bool, col int) error {
 			goto done
 		case c == '\\' && double:
 			if p+1 >= len(b) {
-				return s.errAt(len(b), Syntax, "unterminated quoted scalar")
+				return s.errAt(len(b), Syntax, "the quoted scalar that starts at "+s.where(start)+" is never closed")
 			}
 			e := b[p+1]
 			n := 0
@@ -1278,7 +1307,7 @@ func (s *Scanner) quotedBreak(pp *int) error {
 			sp++
 		}
 		if q < len(b) && s.indent >= 0 && sp <= s.indent {
-			return s.errAt(q, Syntax, "continuation of a quoted scalar is not indented enough")
+			return s.errAt(q, Syntax, "the quoted scalar that starts at "+s.where(s.quoteStart)+" is not closed, or this line is not indented past its parent")
 		}
 		p = q
 		break

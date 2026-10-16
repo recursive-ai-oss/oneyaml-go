@@ -1,8 +1,12 @@
 package oneyaml
 
 import (
+	"fmt"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"oneyaml.dev/go/internal/bind"
 	"oneyaml.dev/go/internal/encoding"
@@ -72,7 +76,8 @@ func (s *session) release() {
 // scalar, then json.Unmarshaler. A json.Unmarshaler is given the value as JSON
 // text, so types written for encoding/json (Kubernetes quantities, say) need no
 // YAML code; a value JSON cannot hold, such as a mapping with a key that is not a
-// string or .nan, is a *TypeError. A type with an UnmarshalYAML method of any
+// string or .nan, is a *TypeError. A plain number is passed with the digits as
+// written, so 12345678901234567890.5 reaches UnmarshalJSON unrounded. A type with an UnmarshalYAML method of any
 // other form, yaml.v3's UnmarshalYAML(*yaml.Node) error for one, is a *TypeError
 // and is not filled by its fields. A null value clears a pointer target without
 // calling any hook; of the other targets, only an Unmarshaler is called for a
@@ -91,9 +96,12 @@ func (s *session) release() {
 // how much that may produce. If data holds more than one document only the
 // first is read; if it holds none, v is left unchanged and the error is nil.
 //
-// The error is a *SyntaxError for malformed input, a *TypeError for a value that
-// does not fit its target (the first one found) and a *LimitError when a limit
-// is exceeded. UTF-16 and UTF-32 input, with or without a byte order mark, is
+// The error is a *SyntaxError for malformed input, a *TypeError for values that
+// do not fit their targets and a *LimitError when a limit is exceeded. A value
+// that does not fit is skipped and its target keeps what it held, and the rest
+// of the document is still read; the *TypeError describes the first mismatch and
+// lists the others in its More field, up to 100. A syntax error, a limit error
+// or an error from a hook of your own stops the read at once. UTF-16 and UTF-32 input, with or without a byte order mark, is
 // converted to UTF-8 first; the offsets of errors in such input index the UTF-8
 // form.
 func Unmarshal(data []byte, v any, opts ...Option) error {
@@ -152,22 +160,164 @@ func convertError(err error, src []byte, cfg *config, lineBase, offBase int) err
 		return &SyntaxError{Line: e.Line + lineBase, Column: e.Column, Offset: e.Offset + offBase,
 			Category: e.Category.String(), Msg: e.Msg}
 	case *bind.Error:
-		pos := scan.NewError(src, e.Offset, scan.Syntax, "")
 		switch e.Kind {
 		case bind.KindLimit:
 			return &LimitError{Limit: e.Limit, Max: e.Max, Option: e.Option, Path: e.Path}
 		case bind.KindSyntax:
-			return &SyntaxError{Line: pos.Line + lineBase, Column: pos.Column, Offset: e.Offset + offBase,
-				Category: e.Category, Msg: e.Msg}
+			return syntaxFromBind(e, src, lineBase, offBase)
 		}
-		if inner, ok := e.Err.(*TypeError); ok {
-			// A hook returned the error of a decode it made itself: report that
-			// error once, at the position of the value the hook was given.
-			return &TypeError{Path: e.Path + inner.Path, Line: pos.Line + lineBase, Column: pos.Column,
-				GoType: inner.GoType, Msg: inner.Msg, Err: inner.Err}
+		if e.Category == "float-key" {
+			earlier, ok1 := bind.KeyText(src, e.First)
+			later, ok2 := bind.KeyText(src, e.Offset)
+			if !ok1 || !ok2 || sameDecimal(earlier, later) {
+				// The same number, however spelled: an ordinary duplicate.
+				return sameValueKeys(e, earlier, later, src, lineBase, offBase)
+			}
 		}
-		return &TypeError{Path: e.Path, Line: pos.Line + lineBase, Column: pos.Column, GoType: e.GoType,
-			Msg: e.Msg, Err: e.Err}
+		return typeErrors(e, src, lineBase)
 	}
 	return err
+}
+
+// syntaxFromBind builds the SyntaxError for a binding failure. A duplicate key
+// names the key and says where it first appeared.
+func syntaxFromBind(e *bind.Error, src []byte, lineBase, offBase int) *SyntaxError {
+	pos := scan.NewError(src, e.Offset, scan.Syntax, "")
+	se := &SyntaxError{Line: pos.Line + lineBase, Column: pos.Column, Offset: e.Offset + offBase,
+		Category: e.Category, Msg: e.Msg}
+	if e.Category != CategoryDuplicateKey {
+		return se
+	}
+	se.Msg = "a mapping key is repeated: it equals an earlier key once converted to the target type"
+	if key, first, ok := bind.FirstKey(src, e.Offset); ok {
+		fp := scan.NewError(src, first, scan.Syntax, "")
+		se.Key, se.FirstLine, se.FirstColumn = key, fp.Line+lineBase, fp.Column
+		se.Msg = fmt.Sprintf("mapping key %s already defined at line %d, column %d", quoteKey(key), se.FirstLine, se.FirstColumn)
+	}
+	return se
+}
+
+// quoteKey quotes a key for a message, shortening a long one.
+func quoteKey(k string) string {
+	const max = 40
+	if len(k) > max {
+		cut := max
+		for cut > 0 && !utf8.RuneStart(k[cut]) {
+			cut--
+		}
+		return strconv.Quote(k[:cut]) + "..."
+	}
+	return strconv.Quote(k)
+}
+
+// typeErrors builds the TypeError for a binding failure. An aggregate becomes one
+// TypeError for the first mismatch with the rest in More.
+func typeErrors(e *bind.Error, src []byte, lineBase int) *TypeError {
+	if e.Multi == nil {
+		return typeError(e, src, lineBase)
+	}
+	out := typeError(e.Multi[0], src, lineBase)
+	for _, m := range e.Multi[1:] {
+		out.More = append(out.More, typeError(m, src, lineBase))
+	}
+	return out
+}
+
+func typeError(e *bind.Error, src []byte, lineBase int) *TypeError {
+	pos := scan.NewError(src, e.Offset, scan.Syntax, "")
+	te := &TypeError{Path: e.Path, Line: pos.Line + lineBase, Column: pos.Column, GoType: e.GoType, Msg: e.Msg, Err: e.Err}
+	if e.Unknown {
+		te.Kind = ErrUnknownField
+	}
+	if inner, ok := e.Err.(*TypeError); ok {
+		// A hook returned the error of a decode it made itself: report that
+		// error once, at the position of the value the hook was given.
+		te.Path, te.GoType, te.Msg, te.Err = e.Path+inner.Path, inner.GoType, inner.Msg, inner.Err
+	}
+	if e.Category == "float-key" {
+		fp := scan.NewError(src, e.First, scan.Syntax, "")
+		te.Msg = fmt.Sprintf("the keys at line %d, column %d and line %d, column %d are different numbers that round to the same float64, which a map cannot hold apart; quote them to read them as strings",
+			fp.Line+lineBase, fp.Column, te.Line, te.Column)
+	}
+	return te
+}
+
+// sameValueKeys builds the duplicate-key error for two keys that are spelled
+// differently but are the same number.
+func sameValueKeys(e *bind.Error, earlier, later string, src []byte, lineBase, offBase int) *SyntaxError {
+	pos := scan.NewError(src, e.Offset, scan.Syntax, "")
+	fp := scan.NewError(src, e.First, scan.Syntax, "")
+	se := &SyntaxError{Line: pos.Line + lineBase, Column: pos.Column, Offset: e.Offset + offBase, Category: CategoryDuplicateKey,
+		Key: later, FirstLine: fp.Line + lineBase, FirstColumn: fp.Column}
+	se.Msg = fmt.Sprintf("mapping key %s has the same value as the key %s at line %d, column %d",
+		quoteKey(later), quoteKey(earlier), se.FirstLine, se.FirstColumn)
+	return se
+}
+
+// sameDecimal reports whether the float texts a and b stand for the same number
+// when read exactly. Texts that are not decimal numbers (.inf, .nan) are taken
+// to be the same, because they only differ in spelling.
+func sameDecimal(a, b string) bool {
+	ca, ok1 := canonDecimal(a)
+	cb, ok2 := canonDecimal(b)
+	return !ok1 || !ok2 || ca == cb
+}
+
+// canonDecimal returns sign, significant digits without trailing zeros and a
+// decimal exponent for a decimal number, so equal values give equal strings. It
+// works on the digits, so an exponent like e999999999 costs nothing.
+func canonDecimal(s string) (string, bool) {
+	neg := false
+	if s != "" && (s[0] == '+' || s[0] == '-') {
+		neg = s[0] == '-'
+		s = s[1:]
+	}
+	var digits []byte
+	point := -1
+	i := 0
+	for ; i < len(s); i++ {
+		c := s[i]
+		if c == '.' && point < 0 {
+			point = len(digits)
+		} else if c >= '0' && c <= '9' {
+			digits = append(digits, c)
+		} else {
+			break
+		}
+	}
+	if len(digits) == 0 {
+		return "", false
+	}
+	if point < 0 {
+		point = len(digits)
+	}
+	var exp int64
+	if i < len(s) {
+		if s[i] != 'e' && s[i] != 'E' {
+			return "", false
+		}
+		n, err := strconv.ParseInt(strings.TrimPrefix(s[i+1:], "+"), 10, 64)
+		if err != nil {
+			return "", false
+		}
+		exp = n
+	}
+	// Drop leading zeros (they move the point) and trailing zeros.
+	lead := 0
+	for lead < len(digits) && digits[lead] == '0' {
+		lead++
+	}
+	digits = digits[lead:]
+	point -= lead
+	for len(digits) > 0 && digits[len(digits)-1] == '0' {
+		digits = digits[:len(digits)-1]
+	}
+	if len(digits) == 0 {
+		return "0", true // zero, signed or not
+	}
+	sign := ""
+	if neg {
+		sign = "-"
+	}
+	return sign + string(digits) + "e" + strconv.FormatInt(exp+int64(point), 10), true
 }
