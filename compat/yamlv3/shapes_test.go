@@ -136,3 +136,117 @@ func TestItemCollectionFootWrittenOnce(t *testing.T) {
 		t.Errorf("# c written %d times in %q", n, out)
 	}
 }
+
+// commentLines counts the comment lines the tree holds.
+func commentLines(n *yaml.Node) int {
+	c := 0
+	for _, s := range []string{n.HeadComment, n.LineComment, n.FootComment} {
+		for _, l := range strings.Split(s, "\n") {
+			if strings.TrimSpace(l) != "" {
+				c++
+			}
+		}
+	}
+	for _, k := range n.Content {
+		c += commentLines(k)
+	}
+	return c
+}
+
+// Comment lines that stand above a dash line belong to one node, however many
+// collections start on that line. A line is never given to two nodes, so nothing
+// is written twice and the text does not grow when it is read and written again.
+func TestDashCommentLinesAreReadOnce(t *testing.T) {
+	var doc yaml.Node
+	in := "- k: v\n- # a\n  # b\n  - # c\n    k0: v\n"
+	if err := yaml.Unmarshal([]byte(in), &doc); err != nil {
+		t.Fatal(err)
+	}
+	m := doc.Content[0].Content[1].Content[0]
+	if m.Kind != yaml.MappingNode || m.HeadComment != "# a\n# b" {
+		t.Errorf("mapping head comment %q, want %q", m.HeadComment, "# a\n# b")
+	}
+	if k := m.Content[0]; k.Value != "k0" || k.HeadComment != "# c" {
+		t.Errorf("key %q head comment %q, want %q", k.Value, k.HeadComment, "# c")
+	}
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(out), "# a"); got != 1 {
+		t.Errorf("# a written %d times in %q", got, out)
+	}
+
+	// For each input every comment line of the text is read once: the same
+	// number of lines comes back, and again after writing and reading.
+	for _, c := range []struct {
+		in   string
+		want int
+	}{
+		{"  - # c\n    - # c\n      - v # l\n", 3},
+		{"- v\n- # c\n\n  - # c\n      k2: v\n", 2},
+		{"- v\n- # c\n\n# d\n  - # c\n      text\n", 3},
+		{"k1:\n  - # c\n# d\n    - # c\n      - v\n", 3},
+		{"a:\n\n  - # c\n# d\n\n    - # c\n      k1: v # l\n", 4},
+		{"k0:\n# c\n\n  - # c\n    - # c\n      - v # l\n# c\n# d\n", 6},
+		{"- \n# d\n  - # c\n    k0: v\n", 2},
+		{"- {a: 1} # l\n- \n# d\n  - # c\n    k0: v\n", 3},
+	} {
+		var n yaml.Node
+		if err := yaml.Unmarshal([]byte(c.in), &n); err != nil {
+			t.Fatalf("%q: %v", c.in, err)
+		}
+		if got := commentLines(&n); got != c.want {
+			t.Errorf("%q: read %d comment lines, want %d", c.in, got, c.want)
+		}
+		out, err := yaml.Marshal(&n)
+		if err != nil {
+			t.Fatalf("%q: %v", c.in, err)
+		}
+		var back yaml.Node
+		if err := yaml.Unmarshal(out, &back); err != nil {
+			t.Fatalf("%q: wrote %q: %v", c.in, out, err)
+		}
+		if got := commentLines(&back); got != c.want {
+			t.Errorf("%q: wrote %q, which reads %d comment lines, want %d", c.in, out, got, c.want)
+		}
+	}
+}
+
+// Comments after the last entry of a document go to the entry that closes it.
+// When that entry has a foot comment already they are kept with the document or
+// added to the entry's, and never dropped.
+func TestEndOfDocumentCommentsAreKept(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want int
+	}{
+		{"- x\n- \n  k1:\n      k2: [a, b]\n# d\n  k2: v\n# c\n", 2},
+		{"k0:\n# c\n\n  - # c\n    - # c\n      - v # l\n# c\n# d\n", 6},
+	} {
+		var n yaml.Node
+		if err := yaml.Unmarshal([]byte(c.in), &n); err != nil {
+			t.Fatalf("%q: %v", c.in, err)
+		}
+		if got := commentLines(&n); got != c.want {
+			t.Errorf("%q: read %d comment lines, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+// A comment block and a blank line right under a key whose value is a mapping
+// are the head of the mapping's first key with what follows, not the foot of
+// the key above, as yaml.v3 reads them.
+func TestCommentsUnderAKeyWithAMappingValue(t *testing.T) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte("k:\n  # a\n\n  # b\n  j: v\n"), &doc); err != nil {
+		t.Fatal(err)
+	}
+	m := doc.Content[0]
+	if m.Content[0].FootComment != "" {
+		t.Errorf("key k has foot comment %q", m.Content[0].FootComment)
+	}
+	if j := m.Content[1].Content[0]; j.HeadComment != "# a\n\n# b" {
+		t.Errorf("key j head comment %q, want %q", j.HeadComment, "# a\n\n# b")
+	}
+}

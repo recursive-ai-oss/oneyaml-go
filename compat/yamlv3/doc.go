@@ -70,7 +70,10 @@
 //     a value of the Node type of gopkg.in/yaml.v3, including one that a
 //     MarshalYAML method returns: yaml.v3 writes the node, this package cannot
 //     read that type without importing it, so Marshal returns an error naming
-//     the type; build this package's Node instead;
+//     the type; build this package's Node instead. Reading into such a value
+//     (Unmarshal, or Decode, into that Node, a field of that type or a pointer to
+//     it) returns an error naming the type too, where an empty node would be a
+//     silent loss; a null value leaves a pointer to it nil;
 //   - alias expansion is counted across the whole call: a type that decodes its
 //     own Node again counts against the same budget, which yaml.v3 starts afresh;
 //   - what yaml.v3 writes but cannot read back is written correctly: a block

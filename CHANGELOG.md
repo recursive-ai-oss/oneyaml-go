@@ -20,6 +20,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
   **Migrate:** put a space after the colon (`{a: {}}`), and write such a tag as a local tag (`!<!name>`), a full URI (`!<tag:example.com,2026:name>`) or a shorthand tag (`!name`).
 - `compat/yamlv3`: `Marshal` now returns an error naming the type and the method for a `MarshalYAML` method that is not `MarshalYAML() (interface{}, error)`. It used to skip the method and write the value field by field, as yaml.v3 does. The `oneyaml` package already refused such a method. **Migrate:** give the method the signature `MarshalYAML() (interface{}, error)`, or remove it.
 - `compat/yamlv3`: `Marshal` now returns an error naming the type for a value of the `Node` type of `gopkg.in/yaml.v3` or `go.yaml.in/yaml/v3`. This covers such a value given directly, held in a field, or returned by a `MarshalYAML` method. The adapter used to write the node's Go fields (`kind: 8`, `style: 0`, ...), where yaml.v3 writes the YAML the node holds. **Migrate:** build the adapter's own `yaml.Node`, or write that value with yaml.v3 ([Migrating from yaml.v3](docs/migrate-yaml-v3.md#check-after-the-swap)).
+- `compat/yamlv3`: `Unmarshal` and `Decode` now return an error naming the type when the target is the `Node` type of `gopkg.in/yaml.v3` or `go.yaml.in/yaml/v3`, held directly, in a field, in a slice or map, or behind a pointer. They used to return no error and leave the node empty. A null value still leaves a pointer to it nil. **Migrate:** decode into the adapter's `yaml.Node`.
 
 ### Added
 
@@ -56,6 +57,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
   - A folded scalar (`>`) always reads back as the value written. Some values used to read back with a line break turned into a space or an extra line break, such as a line followed by an indented line. In some of these cases yaml.v3's own text does not read back.
   - A foot comment held by a block collection that is an item of a sequence is written once, after that collection. It used to be dropped.
   - A blank line between the lines of a head comment is written without indentation, as yaml.v3 writes it.
+- `compat/yamlv3` reads each comment line once. When several sequences start on one dash line (`- # a`, then `- # b`, then a mapping), the comment lines above the dashes were given to more than one node, and writing the result repeated them, adding a copy on every round trip. Comments at the end of a document are no longer dropped when the key that would take them has a foot comment already, and a comment block under `key:` followed by a blank line and another block heads the first key of the value, as in yaml.v3.
 
 ## [0.3.0] - 2026-10-16
 

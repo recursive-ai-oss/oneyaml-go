@@ -97,11 +97,39 @@ func commentShapeInput(r *rand.Rand) string {
 	return b.String()
 }
 
+// compatCommentLines counts the non-blank comment lines of a tree.
+func compatCommentLines(n *compat.Node) int {
+	c := 0
+	for _, s := range []string{n.HeadComment, n.LineComment, n.FootComment} {
+		for _, l := range strings.Split(s, "\n") {
+			if strings.TrimSpace(l) != "" {
+				c++
+			}
+		}
+	}
+	for _, k := range n.Content {
+		c += compatCommentLines(k)
+	}
+	return c
+}
+
+// sourceCommentLines counts the lines of a generated text that hold a comment.
+// The generator writes "#" only to start one.
+func sourceCommentLines(in string) int {
+	c := 0
+	for _, l := range strings.Split(in, "\n") {
+		if strings.Contains(l, "#") {
+			c++
+		}
+	}
+	return c
+}
+
 // commentShapeCeiling is how many of the generated inputs may still differ from
 // yaml.v3. The count only goes down: a change that raises it fails, and a
 // change that lowers it should lower this number too.
 const (
-	commentShapeReadCeiling  = 1082
+	commentShapeReadCeiling  = 997
 	commentShapeWriteCeiling = 83
 )
 
@@ -128,6 +156,9 @@ func TestCompatV3CommentShapesGenerated(t *testing.T) {
 			continue
 		}
 		parsed++
+		if got, src := compatCommentLines(&c), sourceCommentLines(in); got > src {
+			t.Errorf("%q: the shim reads %d comment lines from a text with %d", in, got, src)
+		}
 		if a, b := dumpV3(&y, nodeFields{comments: true}), dumpCompat(&c, nodeFields{comments: true}); a != b {
 			readDiff++
 			if len(readEx) < 5 {

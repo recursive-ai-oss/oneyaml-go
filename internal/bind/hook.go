@@ -336,6 +336,14 @@ func (b *Binder) hookV3(v reflect.Value, ev *parse.Event) (bool, error) {
 		return false, nil
 	}
 	dp := b.plan(t)
+	if dp.tp.ForeignNode {
+		// The Node of another yaml.v3 module: reading into it would leave it empty
+		// without a word, so say so, as writing one does.
+		if v.Kind() == reflect.Pointer && b.isNull(ev) {
+			return false, nil
+		}
+		return true, b.skippedErr(ev, t, "cannot decode into "+t.PkgPath()+".Node: it is the Node of another yaml.v3 module, which this package cannot fill; decode into this package's yaml.Node, or read the value with that module")
+	}
 	if !dp.v3Unm {
 		return false, nil
 	}

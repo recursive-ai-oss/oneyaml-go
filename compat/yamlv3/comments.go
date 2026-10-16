@@ -71,6 +71,9 @@ type commentState struct {
 	// text at all ("key:" and nothing after it). yaml.v3 does not close a key's
 	// comments at a blank line after such a value.
 	prevEmpty bool
+	// firstKey is set while the first key of a mapping that is the value of the
+	// key before it is placed: nothing but that key's colon comes before it.
+	firstKey bool
 	// gap and text are reused by gapComments.
 	gap  []gapLine
 	text []byte
@@ -85,6 +88,14 @@ type commentState struct {
 	// keepHead is the part of that head comment that stays on the collection: what
 	// stands above the dash line, on the line of the document start.
 	keepHead string
+	// collNode and collAt are the last collection item to take a head comment and
+	// the offset where it starts (the start of its line is found when needed).
+	// Text above that line is what it took, and a node read later must not take it
+	// again.
+	collNode *Node
+	collAt   int
+	// gapLS is the start of the line gapComments was last called for.
+	gapLS int
 }
 
 func (b *builder) initComments() {
@@ -302,6 +313,7 @@ func (b *builder) commentsFor(t *cst.Tree, c int32, n *Node, r role) {
 		col, ok := firstOnLineIn(src, start, valueScalar, flowParent)
 		if ls := lineStart(src, start); ok && ls+1 != b.cs.headLine {
 			b.cs.headLine = ls + 1
+			b.cs.firstKey = r == roleKey && nd.Parent != 0 && c == nd.Parent+1
 			if b.cs.seenToken || dashAbove(src, ls) {
 				// Placed from the whole stretch of comments and blank lines above. When
 				// there is no comment in it there is nothing to place.
@@ -371,6 +383,9 @@ func (b *builder) commentsFor(t *cst.Tree, c int32, n *Node, r role) {
 			}
 			b.cs.recent = append(b.cs.recent, newRecent(n, col, col, r == roleItem))
 		}
+	}
+	if r == roleItem && collection {
+		b.cs.collNode, b.cs.collAt = n, start
 	}
 	if r == roleItem && collection && n.HeadComment != "" && (nd.Prop != 0 || b.cs.tokenHead) {
 		// With a tag or an anchor in front, yaml.v3 gives the comment above the item
@@ -456,6 +471,8 @@ type gapLine struct {
 // It reports false, having changed nothing, when the stretch is not of that
 // kind, so the caller can use the simpler rules.
 func (b *builder) gapComments(src []byte, ls int, n *Node) bool {
+	prevGap := b.cs.gapLS
+	b.cs.gapLS = ls
 	up := b.cs.gap[:0]
 	defer func() { b.cs.gap = up[:0] }()
 	hasComment := false
@@ -518,7 +535,7 @@ func (b *builder) gapComments(src []byte, ls int, n *Node) bool {
 	for idx, l := range lines {
 		if l.blank {
 			if !recentEmpty {
-				if firstEmpty && ((startIdx == 0 && !lines[0].tokenLine && !b.cs.prevEmpty) || textCol < indent) {
+				if firstEmpty && ((startIdx == 0 && !lines[0].tokenLine && !b.cs.prevEmpty && !b.cs.firstKey) || textCol < indent) {
 					if len(text) > 0 {
 						b.footFor(string(text), textCol)
 						text = text[:0]
@@ -553,14 +570,14 @@ func (b *builder) gapComments(src []byte, ls int, n *Node) bool {
 		// other block above the dash heads the collection; a block above that one,
 		// set off by a blank line and directly under the content, is the foot.
 		if above, astart, ablank := b.commentBlockAbove(src, tokLS, nil); len(above) > 0 && astart > 0 {
-			if ablank > 0 && !b.blankAbove(astart) {
+			if ablank > 0 && !b.blankAbove(astart) && !b.pendingHolds(joinSpans(src, above), tokLS) {
 				b.footFor(joinSpans(src, above), indentOf("", src, astart))
 			} else {
 				aboveHead = joinSpans(src, above)
 				if ablank > 0 {
 					aboveHead += "\n"
 				}
-				if up2, s2, blank2 := b.commentBlockAbove(src, astart, nil); len(up2) > 0 && blank2 > 0 && s2 > 0 && !b.blankAbove(s2) {
+				if up2, s2, blank2 := b.commentBlockAbove(src, astart, nil); len(up2) > 0 && blank2 > 0 && s2 > 0 && !b.blankAbove(s2) && !b.pendingHolds(joinSpans(src, up2), tokLS) {
 					b.footFor(joinSpans(src, up2), indentOf("", src, s2))
 				}
 			}
@@ -576,6 +593,8 @@ func (b *builder) gapComments(src []byte, ls int, n *Node) bool {
 	n.HeadComment = string(text)
 	b.cs.tokenHead = lines[0].tokenLine
 	if aboveHead != "" {
+		aboveHead = b.narrowAbove(aboveHead, tokLS, prevGap)
+		b.takeFromOuter(aboveHead, tokLS)
 		b.cs.keepHead = aboveHead
 		n.HeadComment = aboveHead + "\n" + n.HeadComment
 	}
@@ -593,6 +612,62 @@ func (b *builder) gapComments(src []byte, ls int, n *Node) bool {
 		}
 	}
 	return true
+}
+
+// collLS returns the start of the line of the collection item last read.
+func (b *builder) collLS() int { return lineStart(b.ref.Src, b.cs.collAt) }
+
+// pendingHolds reports whether the waiting head comment of an outer item holds
+// the text s, read from above the line at ls: that item took the lines.
+func (b *builder) pendingHolds(s string, ls int) bool {
+	p := strings.TrimRight(b.cs.pendHead, "\n")
+	return b.cs.collNode != nil && ls == b.collLS() && p != "" && strings.Contains(p, s)
+}
+
+// narrowAbove cuts the text above the dash line at ls down to what the collection
+// that starts there still holds: the earlier lines were given away as the foot of
+// something else when that collection was read.
+func (b *builder) narrowAbove(above string, ls, prevGap int) string {
+	if b.cs.collNode == nil || ls != b.collLS() {
+		return above
+	}
+	t := strings.TrimRight(above, "\n")
+	for _, held := range []string{strings.TrimRight(b.cs.pendHead, "\n"), strings.TrimRight(b.cs.collNode.HeadComment, "\n")} {
+		if held != "" && held != t && strings.HasSuffix(t, "\n"+held) {
+			return held + above[len(t):]
+		}
+		if held == t {
+			return above
+		}
+	}
+	if prevGap == ls {
+		// That collection read the whole stretch and kept none of it.
+		return ""
+	}
+	return above
+}
+
+// takeFromOuter takes, from the head comment waiting for an outer item and from
+// the head comment of the collection item that starts on the line at ls, the
+// lines of the text above that this node reads again: yaml.v3 gives them to the
+// innermost collection that starts at the dash line, and no line is given out
+// twice.
+func (b *builder) takeFromOuter(above string, ls int) {
+	if b.cs.collNode == nil || ls != b.collLS() {
+		return
+	}
+	trim := func(s string) string { return strings.TrimRight(s, "\n") }
+	if p := b.cs.pendHead; p != "" {
+		switch {
+		case strings.HasSuffix(trim(above), trim(p)):
+			b.cs.pendHead = ""
+		case strings.HasSuffix(trim(p), trim(above)):
+			b.cs.pendHead = strings.TrimSuffix(strings.TrimSuffix(trim(p), trim(above)), "\n")
+		}
+	}
+	if n := b.cs.collNode; n != nil && n.HeadComment != "" && trim(n.HeadComment) == trim(above) {
+		n.HeadComment = ""
+	}
 }
 
 // indexNonBlank returns the offset of the first byte of l that is not a space or
@@ -640,11 +715,22 @@ func indentOf(line string, src []byte, ls int) int {
 // indented no deeper than the comment. It reports true when that entry is an
 // item that has a foot comment already, so nothing was attached.
 func (b *builder) footFor(text string, col int) (full bool) {
+	return b.footForAt(text, col, true)
+}
+
+// footForAt is footFor. With join, text that finds a key which has a foot
+// comment already is added to it, so that the comments at the end of a document
+// are not lost.
+func (b *builder) footForAt(text string, col int, join bool) (full bool) {
 	for i := len(b.cs.recent) - 1; i >= 0; i-- {
 		if int(b.cs.recent[i].col) <= col {
 			n := b.cs.recent[i].n
 			if n.FootComment == "" {
 				n.FootComment = text
+				return false
+			}
+			if join && !b.cs.recent[i].isItem() {
+				n.FootComment += "\n" + text
 				return false
 			}
 			return b.cs.recent[i].isItem()
@@ -716,7 +802,7 @@ func (b *builder) documentComments(d *Node) {
 		d.FootComment = strings.Join(block, "\n")
 		return
 	}
-	if text := strings.Join(block, "\n"); b.footFor(text, indentOf(block[0], src, first)) && d.FootComment == "" {
+	if text := strings.Join(block, "\n"); b.footForAt(text, indentOf(block[0], src, first), true) && d.FootComment == "" {
 		// The entry that would take it has a foot comment already; the comment
 		// stays with the document rather than being lost.
 		d.FootComment = text
