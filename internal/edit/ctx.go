@@ -40,6 +40,16 @@ type Ctx struct {
 	// missing (Loc.Merged says it is not) and a path below it is refused.
 	Merge bool
 
+	// MergeAddOnly tells Resolve that the write is a Set or an add, which put an
+	// explicit key in the mapping whether or not a merge source has it: a missing
+	// last token is then not looked for in the sources. Remove and replace leave it
+	// off, since they must tell a merged-only key (refused) from a missing one.
+	MergeAddOnly bool
+
+	// MergeWork counts the entries and aliases that merge searches have read, for
+	// tests that show the work stays in step with the size of the document.
+	MergeWork int32
+
 	scratch []byte
 	nl      string // the first line break in the source, "\n" if none; "" until firstNL looks
 }
@@ -134,7 +144,7 @@ func (c *Ctx) Resolve(toks []string, write bool) (Loc, error) {
 			if ambiguous {
 				return Loc{}, wrap(ErrAmbiguous, "key %q occurs more than once", tok)
 			}
-			if found == 0 && c.Merge {
+			if found == 0 && c.Merge && !(write && last && c.MergeAddOnly) {
 				mv, err := c.MergedValue(cur, tok)
 				if err != nil {
 					return Loc{}, err

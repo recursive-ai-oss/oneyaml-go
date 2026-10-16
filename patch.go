@@ -521,9 +521,18 @@ func (s *docStream) relocate(doc int, st *patchStep, b *patchBudget) error {
 	}
 	// A move reads below no alias, since it removes what it reads.
 	c := s.ctx(doc)
+	if move {
+		// Tell a key that only a merge brings in (a write into the source, refused)
+		// from a missing one.
+		c.Merge = s.cfg.mergeKeys
+	}
 	loc, err := c.Resolve(fromToks, move)
+	c.Merge = false
 	if err != nil {
 		return s.fail(st, editKind(err))
+	}
+	if loc.Merged {
+		return s.fail(st, editKind(edit.MergedKeyError(loc.Tok)))
 	}
 	if loc.Node == 0 {
 		return s.fail(st, fmt.Errorf("%w: nothing at %s", ErrNotFound, st.from))

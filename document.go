@@ -479,6 +479,7 @@ func (s *docStream) editTree(doc int, op editKindOp, ptr string, v *edit.Value) 
 			// themselves.
 			c = s.ctxLagging(doc)
 			c.Merge = s.cfg.mergeKeys
+			c.MergeAddOnly = op == opSet || op == opAdd
 			loc, rerr := c.Resolve(toks, true)
 			if rerr != nil || loc.Node == 0 || loc.Merged || loc.Node+lagMargin > front || s.tree.Nodes[loc.Node].Kind != cst.Scalar {
 				lazy = false
@@ -488,6 +489,7 @@ func (s *docStream) editTree(doc int, op editKindOp, ptr string, v *edit.Value) 
 			s.tree.Settle()
 			c = s.ctx(doc)
 			c.Merge = s.cfg.mergeKeys
+			c.MergeAddOnly = op == opSet || op == opAdd
 		}
 		pl, err := s.plan(c, op, toks, v, opt)
 		if err != nil {
@@ -508,6 +510,7 @@ func (s *docStream) editTree(doc int, op editKindOp, ptr string, v *edit.Value) 
 			s.tree.Settle()
 			c = s.ctx(doc)
 			c.Merge = s.cfg.mergeKeys
+			c.MergeAddOnly = op == opSet || op == opAdd
 			if pl, err = s.plan(c, op, toks, v, opt); err != nil {
 				return fail(editKind(err))
 			}

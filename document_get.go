@@ -15,8 +15,10 @@ import (
 // With MergeKeys, a pointer also finds the keys a "<<" merge brings in, with the
 // precedence Decode gives them: a key the mapping has itself wins, and an earlier
 // merge source wins over a later one. The pointer to the merge key itself still
-// reads the merged source as written. Without MergeKeys the pointer addresses
-// only the keys as written.
+// reads the merged source as written. Merge sources are searched depth-first,
+// each mapping once; the keys read count against MaxAliasNodes, and a search
+// past it fails with a *LimitError. Without MergeKeys the pointer addresses only
+// the keys as written.
 //
 // If v is a *Node it receives the node itself, and the alias at the end of the
 // pointer, if there is one, is not followed.

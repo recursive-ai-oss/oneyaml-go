@@ -39,7 +39,10 @@ var ErrUnsupportedEdit = errors.New("oneyaml: unsupported edit")
 // editKind maps an engine error to the public error kinds, keeping the detail.
 func editKind(err error) error {
 	detail := err.Error()
+	var mb *edit.MergeBudgetError
 	switch {
+	case errors.As(err, &mb):
+		return &LimitError{Limit: "alias expansion nodes", Max: mb.Max, Option: "Limits (MaxAliasNodes)"}
 	case errors.Is(err, edit.ErrAlias):
 		return wrapKind(ErrAliasWrite, detail)
 	case errors.Is(err, edit.ErrAmbiguous):

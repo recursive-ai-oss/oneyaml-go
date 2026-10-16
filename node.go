@@ -556,7 +556,9 @@ func (n Node) Entries() iter.Seq2[Node, Node] {
 // merge sources, with the precedence Decode and Get use, because it answers the
 // question "what value has this key?". Entries, Items and Len describe the
 // mapping as written and do not include merged keys. A false result for a Node
-// that is not valid is explained by Err.
+// that is not valid is explained by Err. Merge sources are searched depth-first,
+// each mapping once; the keys read count against MaxAliasNodes, and a search past
+// it finds nothing (Get reports it as a *LimitError).
 func (n Node) Lookup(key string) (Node, bool) {
 	nd := n.nd()
 	if nd == nil || nd.Kind != cst.Mapping {
