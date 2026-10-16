@@ -101,7 +101,7 @@ func commentShapeInput(r *rand.Rand) string {
 // yaml.v3. The count only goes down: a change that raises it fails, and a
 // change that lowers it should lower this number too.
 const (
-	commentShapeReadCeiling  = 1136
+	commentShapeReadCeiling  = 1082
 	commentShapeWriteCeiling = 83
 )
 

@@ -41,6 +41,22 @@ type recent struct {
 	ind int32
 }
 
+// itemBit marks, in recent.ind, an entry that is a sequence item. It shares the
+// field so that the entry stays 16 bytes.
+const itemBit = 1 << 30
+
+func (r recent) indent() int { return int(r.ind &^ itemBit) }
+
+func (r recent) isItem() bool { return r.ind&itemBit != 0 }
+
+func newRecent(n *Node, col, ind int, item bool) recent {
+	r := recent{n: n, col: int32(col), ind: int32(ind)}
+	if item {
+		r.ind |= itemBit
+	}
+	return r
+}
+
 type commentState struct {
 	on     bool
 	recent []recent
@@ -66,6 +82,9 @@ type commentState struct {
 	// line of an item that has no value ("- # c"). yaml.v3 hands such a comment to
 	// the first scalar of the item's collection, not to the collection.
 	tokenHead bool
+	// keepHead is the part of that head comment that stays on the collection: what
+	// stands above the dash line, on the line of the document start.
+	keepHead string
 }
 
 func (b *builder) initComments() {
@@ -237,7 +256,7 @@ func (b *builder) commentsFor(t *cst.Tree, c int32, n *Node, r role) {
 	}
 	src := b.ref.Src
 	nd := &t.Nodes[c]
-	b.cs.tokenHead = false
+	b.cs.tokenHead, b.cs.keepHead = false, ""
 	start := int(t.FullStart(c))
 	end := int(nd.End)
 	// Line comment.
@@ -341,7 +360,7 @@ func (b *builder) commentsFor(t *cst.Tree, c int32, n *Node, r role) {
 				ind = bytes.LastIndexByte(src[lineStart(src, start):start], '?')
 			}
 			if r != roleValue {
-				b.cs.recent = append(b.cs.recent, recent{n: n, col: int32(col), ind: int32(ind)})
+				b.cs.recent = append(b.cs.recent, newRecent(n, col, ind, r == roleItem))
 			}
 		} else if ok && (r == roleKey || r == roleItem) {
 			// A second node that starts on the line (the key of "- key: v") is not
@@ -350,13 +369,22 @@ func (b *builder) commentsFor(t *cst.Tree, c int32, n *Node, r role) {
 			if r == roleItem {
 				col = dashColumn(src, start, col)
 			}
-			b.cs.recent = append(b.cs.recent, recent{n: n, col: int32(col), ind: int32(col)})
+			b.cs.recent = append(b.cs.recent, newRecent(n, col, col, r == roleItem))
 		}
 	}
 	if r == roleItem && collection && n.HeadComment != "" && (nd.Prop != 0 || b.cs.tokenHead) {
 		// With a tag or an anchor in front, yaml.v3 gives the comment above the item
 		// to the first scalar inside it.
-		b.cs.pendHead, n.HeadComment = n.HeadComment, ""
+		head := n.HeadComment
+		n.HeadComment = ""
+		if k := b.cs.keepHead; k != "" && strings.HasPrefix(head, k+"\n") {
+			head, n.HeadComment = head[len(k)+1:], k
+		}
+		if b.cs.pendHead != "" {
+			// An outer item's comment is still waiting: both go to the first scalar.
+			head = b.cs.pendHead + "\n" + head
+		}
+		b.cs.pendHead = head
 	}
 	b.applyPending(n, nd, collection)
 	b.cs.prevEmpty = r == roleValue && nd.Kind == cst.Scalar && nd.Start == nd.End && nd.Prop == 0
@@ -369,6 +397,13 @@ func (b *builder) commentsFor(t *cst.Tree, c int32, n *Node, r role) {
 // starts at ls are headed by an item with no value and a comment ("- # c"). At
 // the start of a document those lines need the same reading as anywhere else.
 func dashAbove(src []byte, ls int) bool {
+	_, ok := dashLineAbove(src, ls)
+	return ok
+}
+
+// dashLineAbove returns the start of the line of an item with no value and a
+// comment that the comment and blank lines above the line at ls lead up to.
+func dashLineAbove(src []byte, ls int) (int, bool) {
 	for i := ls; i > 0; {
 		ps := lineStart(src, i-1)
 		t := bytes.TrimSpace(src[ps : i-1])
@@ -376,9 +411,9 @@ func dashAbove(src []byte, ls int) bool {
 			i = ps
 			continue
 		}
-		return dashComment(t)
+		return ps, dashComment(t)
 	}
-	return false
+	return 0, false
 }
 
 // dashColumn returns the column of the "-" that stands just before offset pos
@@ -424,6 +459,7 @@ func (b *builder) gapComments(src []byte, ls int, n *Node) bool {
 	up := b.cs.gap[:0]
 	defer func() { b.cs.gap = up[:0] }()
 	hasComment := false
+	tokLS := -1
 	i := ls
 	for {
 		if i <= 0 {
@@ -449,6 +485,7 @@ func (b *builder) gapComments(src []byte, ls int, n *Node) bool {
 			h := bytes.IndexByte(l, '#')
 			up = append(up, gapLine{col: h, a: ps + h, e: ps + lead + len(t), tokenLine: true, dash: dashColumn(src, ps+h, lead)})
 			hasComment = true
+			tokLS = ps
 			break
 		}
 		if t[0] == '%' || isMarkerLine(t) {
@@ -466,7 +503,7 @@ func (b *builder) gapComments(src []byte, ls int, n *Node) bool {
 	}
 	indent := 0
 	if r := b.cs.recent; len(r) > 0 {
-		indent = int(r[len(r)-1].ind)
+		indent = r[len(r)-1].indent()
 	}
 	if lines[0].tokenLine {
 		// Reading the dash ended every collection that was more deeply indented.
@@ -506,6 +543,29 @@ func (b *builder) gapComments(src []byte, ls int, n *Node) bool {
 		text = append(text, src[l.a:l.e]...)
 		recentEmpty = false
 	}
+	aboveHead := ""
+	// With a second dash on the dash line ("- - # c") the item before it took what
+	// stands above the line, and a sibling at the dash's column is not the content of an item.
+	singleDash := tokLS > 0 && lines[0].tokenLine && lines[0].dash == indentOf("", src, tokLS) && nodeCol > lines[0].dash
+	if singleDash && b.cs.seenToken {
+		// The stretch stops at the dash line. The block above it, set off by a blank
+		// line and directly under the previous content, is that content's foot. Any
+		// other block above the dash heads the collection; a block above that one,
+		// set off by a blank line and directly under the content, is the foot.
+		if above, astart, ablank := b.commentBlockAbove(src, tokLS, nil); len(above) > 0 && astart > 0 {
+			if ablank > 0 && !b.blankAbove(astart) {
+				b.footFor(joinSpans(src, above), indentOf("", src, astart))
+			} else {
+				aboveHead = joinSpans(src, above)
+				if ablank > 0 {
+					aboveHead += "\n"
+				}
+				if up2, s2, blank2 := b.commentBlockAbove(src, astart, nil); len(up2) > 0 && blank2 > 0 && s2 > 0 && !b.blankAbove(s2) {
+					b.footFor(joinSpans(src, up2), indentOf("", src, s2))
+				}
+			}
+		}
+	}
 	if len(text) == 0 {
 		return true
 	}
@@ -515,6 +575,23 @@ func (b *builder) gapComments(src []byte, ls int, n *Node) bool {
 	}
 	n.HeadComment = string(text)
 	b.cs.tokenHead = lines[0].tokenLine
+	if aboveHead != "" {
+		b.cs.keepHead = aboveHead
+		n.HeadComment = aboveHead + "\n" + n.HeadComment
+	}
+	if b.cs.tokenHead && !b.cs.seenToken && singleDash && len(b.cs.recent) == 0 {
+		// The line of the document start, with what stands above it, heads the
+		// collection; the dash line and what follows go to its first scalar. So
+		// do comments that stand right above the dash line.
+		if h, ok := b.docStartHead(src, nil, tokLS, 0); ok {
+			b.cs.keepHead = h
+			n.HeadComment = h + "\n" + n.HeadComment
+		} else if above, _, ablank := b.commentBlockAbove(src, tokLS, nil); len(above) > 0 && ablank == 0 {
+			h := joinSpans(src, above)
+			b.cs.keepHead = h
+			n.HeadComment = h + "\n" + n.HeadComment
+		}
+	}
 	return true
 }
 
@@ -560,17 +637,20 @@ func indentOf(line string, src []byte, ls int) int {
 }
 
 // footFor attaches a foot comment to the most recent key or item that is
-// indented no deeper than the comment.
-func (b *builder) footFor(text string, col int) {
+// indented no deeper than the comment. It reports true when that entry is an
+// item that has a foot comment already, so nothing was attached.
+func (b *builder) footFor(text string, col int) (full bool) {
 	for i := len(b.cs.recent) - 1; i >= 0; i-- {
 		if int(b.cs.recent[i].col) <= col {
 			n := b.cs.recent[i].n
 			if n.FootComment == "" {
 				n.FootComment = text
+				return false
 			}
-			return
+			return b.cs.recent[i].isItem()
 		}
 	}
+	return false
 }
 
 // documentComments finishes the comments of a document node: the comment block
@@ -636,7 +716,11 @@ func (b *builder) documentComments(d *Node) {
 		d.FootComment = strings.Join(block, "\n")
 		return
 	}
-	b.footFor(strings.Join(block, "\n"), indentOf(block[0], src, first))
+	if text := strings.Join(block, "\n"); b.footFor(text, indentOf(block[0], src, first)) && d.FootComment == "" {
+		// The entry that would take it has a foot comment already; the comment
+		// stays with the document rather than being lost.
+		d.FootComment = text
+	}
 }
 
 // emptyItemFoot handles a document whose last entry is a sequence item with no
@@ -922,8 +1006,21 @@ func (b *builder) applyPending(n *Node, nd *cst.Node, collection bool) {
 		return
 	}
 	if nd.Kind == cst.Scalar && nd.Start == nd.End {
-		// An empty key or value has no place for them.
+		// An empty key or value has no place for a line comment. A head comment
+		// stays with it: it is the first node of the item, and left waiting it
+		// would end up on an unrelated scalar further down.
+		if cs.pendHead != "" && n.HeadComment == "" {
+			n.HeadComment, cs.pendHead = cs.pendHead, ""
+		}
 		return
+	}
+	if flow := nd.Kind != cst.Scalar && nd.Kind != cst.Alias && (nd.Flow || nd.Pair); flow && cs.pendHead != "" {
+		// A flow collection is the first node of the item: the head comment is its.
+		if n.HeadComment == "" {
+			n.HeadComment = cs.pendHead
+		} else {
+			n.HeadComment = cs.pendHead + "\n" + n.HeadComment
+		}
 	}
 	if nd.Kind == cst.Scalar {
 		if cs.pendHead != "" {

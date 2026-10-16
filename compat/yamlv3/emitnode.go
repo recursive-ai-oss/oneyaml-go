@@ -755,10 +755,17 @@ func (w *nodeWriter) blockSeq(n *Node, col int, inline bool) {
 		it.HeadComment = ""
 		w.node(it, npos{m: nItem, col: col}, "")
 		it.HeadComment = head
-		if it.FootComment != "" {
+		if it.FootComment != "" && !writesOwnFoot(it) {
 			w.footComment(col, it.FootComment)
 		}
 	}
+}
+
+// writesOwnFoot reports whether node writes the foot comment of a non-empty
+// block collection itself, after its last entry, so the entry that holds it
+// must not write it again.
+func writesOwnFoot(n *Node) bool {
+	return (n.Kind == SequenceNode || n.Kind == MappingNode) && len(n.Content) > 0 && n.Style&FlowStyle == 0
 }
 
 // simpleKey reports whether a key can be written inline: a scalar or alias on
@@ -847,7 +854,7 @@ func (w *nodeWriter) blockMap(n *Node, col int, inline bool) {
 		if k.FootComment != "" {
 			w.footComment(col, k.FootComment)
 		}
-		if v.FootComment != "" && v.Kind != ScalarNode {
+		if v.FootComment != "" && v.Kind != ScalarNode && !writesOwnFoot(v) {
 			w.footComment(col, v.FootComment)
 		}
 	}

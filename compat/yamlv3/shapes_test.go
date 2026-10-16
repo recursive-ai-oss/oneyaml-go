@@ -1,6 +1,7 @@
 package yaml_test
 
 import (
+	"strings"
 	"testing"
 
 	yaml "oneyaml.dev/go/compat/yamlv3"
@@ -64,5 +65,74 @@ func TestFoldedScalarStartingWithBreak(t *testing.T) {
 	const want = "k: >4\n\n    a b\n\n    c\n\n"
 	if string(out) != want {
 		t.Errorf("wrote %q, want %q", out, want)
+	}
+}
+
+// A folded scalar must read back as the value that was written, whatever it
+// starts with and whatever follows its line breaks: a blank line goes only where
+// folding would otherwise turn a break into a space.
+func TestFoldedScalarReadsBack(t *testing.T) {
+	for _, v := range []string{
+		"\na\n\n", "\na\n b", "\na\n\tb", "aaaa\n a", "\na\n\n\nb\n", "a\n\n b\n", "\n a\nb\n", "a\n\n", " a\nb\n\n",
+	} {
+		n := &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "k"},
+			{Kind: yaml.ScalarNode, Tag: "!!str", Style: yaml.FoldedStyle, Value: v},
+		}}
+		out, err := yaml.Marshal(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back map[string]string
+		if err := yaml.Unmarshal(out, &back); err != nil || back["k"] != v {
+			t.Errorf("%q: wrote %q, read back %q (%v)", v, out, back["k"], err)
+		}
+	}
+}
+
+// Comments next to an item with no value are kept where yaml.v3 puts them.
+func TestDashCommentPlacement(t *testing.T) {
+	var doc yaml.Node
+	// The comment goes to the flow mapping, the first node of the item.
+	if err := yaml.Unmarshal([]byte("- # c\n  - {a: 1}\n"), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if got := firstHead(&doc); got != "# c" {
+		t.Errorf("flow mapping head %q, want %q", got, "# c")
+	}
+	out, err := yaml.Marshal(&doc)
+	if err != nil || string(out) != "- # c\n  - {a: 1}\n" {
+		t.Errorf("wrote %q (%v)", out, err)
+	}
+	// The foot of the item before the dash line stays with that item.
+	doc = yaml.Node{}
+	if err := yaml.Unmarshal([]byte("- v\n# f\n\n- # c\n\n  # d\n# e\n  k0: v\n"), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if foot := doc.Content[0].Content[0].FootComment; foot != "# f" {
+		t.Errorf("foot of the first item %q, want %q", foot, "# f")
+	}
+	// The line of the document start stays on the item; the dash line goes on to its first key.
+	doc = yaml.Node{}
+	if err := yaml.Unmarshal([]byte("--- # a\n- # c\n  k: v\n"), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if h := doc.Content[0].Content[0]; h.HeadComment != "# a" || h.Content[0].HeadComment != "# c" {
+		t.Errorf("item head %q, first key head %q, want %q and %q", h.HeadComment, h.Content[0].HeadComment, "# a", "# c")
+	}
+}
+
+// A foot comment held by a block collection that is an item is written once.
+func TestItemCollectionFootWrittenOnce(t *testing.T) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte("- k: v\n# c\n\n- # d\n  - v\n"), &doc); err != nil {
+		t.Fatal(err)
+	}
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(out), "# c"); n != 1 {
+		t.Errorf("# c written %d times in %q", n, out)
 	}
 }

@@ -44,6 +44,9 @@ func nodeShape(n *compat.Node) []string {
 // aliasKeyGapRE matches an alias key followed by a space and its colon.
 var aliasKeyGapRE = regexp.MustCompile(`(\*[^\s,\[\]{}]+) :`)
 
+// keepHeaderRE matches a block scalar header with keep chomping.
+var keepHeaderRE = regexp.MustCompile(`(?m)[|>][1-9]?\+[^\n]*$`)
+
 // writeDifference names the reason the shim's output may differ from yaml.v3's.
 // A difference is intended only when yaml.v3's output is the wrong one:
 //   - yaml.v3 cannot read its own output back, or
@@ -87,8 +90,16 @@ func writeDifference(v any, ybytes, cbytes []byte, yerr, cerr error) string {
 		// that follows it; the reader takes that line as part of the scalar, so the
 		// value changes. The shim leaves it out and keeps the value.
 		var orig any
-		if n.Decode(&orig) == nil && compatSame(orig, yc) && !compatSame(orig, yy) {
-			return "yaml.v3 writes a blank line before a trailing comment that a keep-chomped block scalar takes as text (its output reads back as a different value)"
+		if n.Decode(&orig) == nil && !compatSame(orig, yy) {
+			// Ours reads back to the value with yaml.v3's reader or with a reader that
+			// follows the YAML 1.2 text (a top-level indicator differs between them).
+			var spec any
+			if compatSame(orig, yc) || (oneyaml.Unmarshal(cbytes, &spec) == nil && compatSame(orig, spec)) {
+				if !keepHeaderRE.Match(ybytes) {
+					return "yaml.v3 writes a blank line in folded text before a line that starts with white space, or before the trailing breaks of a value that starts with a line break; its reader takes the line as text (its output reads back as a different value)"
+				}
+				return "yaml.v3 writes a blank line before a trailing comment that a keep-chomped block scalar takes as text (its output reads back as a different value)"
+			}
 		}
 	}
 	if compatSame(yy, yc) && indicatorRE.ReplaceAllString(string(ybytes), "|") == indicatorRE.ReplaceAllString(string(cbytes), "|") {

@@ -427,25 +427,25 @@ func AppendBlockV3(dst []byte, s string, folded bool, col, parent int) []byte {
 	}
 	atLineStart := true
 	leadingSpaces := true
-	// libyaml decides whether a break needs a blank line by looking at the text
-	// after the run of breaks at the start of the whole value, not after the
-	// break being written. A value that starts with a break therefore gets blank
-	// lines (also before its last break), and one that starts with a space or tab
-	// gets none. The same rule is kept so that the text is identical.
-	blankLines := false
+	// libyaml looks at the start of the whole value rather than after the break
+	// it writes. For a value that starts with text it therefore also writes a
+	// blank line before the final break of a clipped value. Clip chomping drops
+	// trailing blank lines, so the text still reads back; the same bytes are kept.
+	lead := false
 	if folded {
 		k := 0
 		for k < len(s) && (s[k] == '\n' || s[k] == '\r') {
 			k++
 		}
-		blankLines = k < len(s) && s[k] != ' ' && s[k] != '\t'
+		lead = k < len(s) && s[k] != ' ' && s[k] != '\t'
 	}
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if c == '\n' {
-			if blankLines && !atLineStart && !leadingSpaces {
-				// A break in folded text is written as a blank line, so that reading
-				// it folds back to a break.
+			clipEnd := lead && i == len(s)-1
+			if folded && !atLineStart && !leadingSpaces && (clipEnd || foldNeedsBlank(s, i)) {
+				// Folding turns a single break into a space, so a break that
+				// stays one is written as a blank line.
 				dst = append(dst, '\n')
 			}
 			dst = append(dst, '\n')
@@ -463,6 +463,19 @@ func AppendBlockV3(dst []byte, s string, folded bool, col, parent int) []byte {
 		dst = append(dst, '\n')
 	}
 	return dst
+}
+
+// foldNeedsBlank reports whether the break at s[i], which ends a line that does
+// not start with white space, needs an extra blank line in a folded scalar: it
+// does when the text after the run of breaks starts with a character that is
+// neither white space nor the end of the value. Breaks before an indented line
+// are not folded, and a trailing run is kept by the chomping indicator.
+func foldNeedsBlank(s string, i int) bool {
+	k := i
+	for k < len(s) && (s[k] == '\n' || s[k] == '\r') {
+		k++
+	}
+	return k < len(s) && s[k] != ' ' && s[k] != '\t'
 }
 
 // appendKeyV3 appends s as an implicit key: a single line of at most 128 bytes.
