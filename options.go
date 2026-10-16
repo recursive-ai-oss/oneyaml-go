@@ -100,6 +100,8 @@ type config struct {
 	mergeKeys   bool
 	// compactSeq is set by the yaml.v3 compat package for CompactSeqIndent.
 	compactSeq bool
+	// yaml11 is set by YAML11Strings.
+	yaml11 bool
 	// exactNodes and exactBytes mark an alias bound the caller set: the ratio
 	// does not raise it.
 	exactNodes, exactBytes bool
@@ -137,6 +139,20 @@ func applyOptions(opts []Option) config {
 // The default is 2. Values below 1 select the default and values above 9 are
 // treated as 9.
 func Indent(n int) Option { return func(c *config) { c.indent = n } }
+
+// YAML11Strings makes a Document quote the new strings it writes that a YAML 1.1
+// reader would take for another type. By default an edit judges plainness by the
+// YAML 1.2 Core schema, so Set("/a", "yes") writes a: yes, a string to oneyaml but
+// a boolean to a program that reads the file with YAML 1.1 rules, such as
+// Kubernetes tooling built on sigs.k8s.io/yaml or yaml.v2. With YAML11Strings the
+// strings written by Set, by the add, replace and copy operations of a patch, by a
+// merge patch, and the new keys written by Rename and add use the rule Marshal
+// uses: yes, on, y, 0755, 1_000, 12:30 and 2001-01-01 are quoted, hello is not.
+//
+// An existing quoted or block style is kept as it is, and values that are not
+// strings are written as before. The option applies to Parse and is remembered by
+// the Document and by the views Doc returns; other functions ignore it.
+func YAML11Strings() Option { return func(c *config) { c.yaml11 = true } }
 
 // KnownFields makes reading into a struct fail on a mapping key that matches no
 // field. The key is reported as a *TypeError that errors.Is matches with

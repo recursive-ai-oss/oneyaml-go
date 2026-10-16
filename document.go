@@ -1009,7 +1009,7 @@ func (s *docStream) firstDocument(v *edit.Value, fail func(error) error) error {
 		if n := len(out); n > 0 && out[n-1] != '\n' && out[n-1] != '\r' {
 			out = append(out, nl...)
 		}
-		out = append(out, edit.RenderRoot(v, nl, attempt == 1)...)
+		out = append(out, edit.RenderRoot(v, nl, attempt == 1, s.cfg.yaml11)...)
 		var nt cst.Tree
 		if err := s.buildTree(&nt, out, s.depth()); err != nil || len(nt.Docs) != 1 || !edit.Equal(&nt, out, nt.Docs[0].Root, v) {
 			continue

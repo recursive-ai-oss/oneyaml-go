@@ -57,7 +57,7 @@ func (c *Ctx) EntryLo(first int32) int {
 // after its line break.
 func (c *Ctx) EntryHi(last int32) int {
 	e := int(c.T.Nodes[last].End)
-	if e > c.bom && e <= len(c.Src) && isBreak(c.Src[e-1]) {
+	if e > int(c.bom) && e <= len(c.Src) && isBreak(c.Src[e-1]) {
 		return e
 	}
 	return c.afterBreak(e)

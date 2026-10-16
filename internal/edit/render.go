@@ -41,7 +41,7 @@ func singleOK(s string) bool {
 // plainOK reports whether s can be written as a plain scalar and read back as
 // the same string under the Core schema. flow says the scalar is inside [] or {};
 // key says it is a mapping key.
-func plainOK(s string, flow, key bool) bool {
+func plainOK(s string, flow, key, yaml11 bool) bool {
 	n := len(s)
 	if n == 0 || !singleOK(s) {
 		return false
@@ -73,6 +73,10 @@ func plainOK(s string, flow, key bool) bool {
 	if key && (s == "<<" || n > 1000) {
 		return false
 	}
+	if yaml11 {
+		// The encoder's own rule: no reader of YAML 1.1 takes it for another type.
+		return resolve.ReadsAsStringS(s)
+	}
 	return resolve.Core([]byte(s)).Kind == resolve.String
 }
 
@@ -85,6 +89,7 @@ type layout struct {
 	hint   scan.Style // preferred style of new strings: Plain, SingleQuoted, DoubleQuoted
 	keyH   scan.Style // preferred style of new keys
 	flow   bool       // write collections in flow style
+	yaml11 bool       // plain only when YAML 1.1 readers also read a string
 	safe   bool       // fallback: strings double-quoted, collections in flow style
 }
 
@@ -102,7 +107,7 @@ func (l *layout) stringText(dst []byte, s string, h scan.Style, flow, key bool) 
 		return emit.AppendDouble(dst, s)
 	case h == scan.SingleQuoted:
 		return emit.AppendSingle(dst, s)
-	case plainOK(s, flow, key):
+	case plainOK(s, flow, key, l.yaml11):
 		return append(dst, s...)
 	}
 	return emit.AppendSingle(dst, s)
@@ -403,8 +408,8 @@ func valueDepth(v *Value) error {
 
 // RenderRoot writes v as the content of a document, ending with a line break nl.
 // It is used to give a stream without any document its first one.
-func RenderRoot(v *Value, nl string, safe bool) []byte {
-	l := &layout{nl: nl, step: 2, seqOff: 2, gap: 1, safe: safe}
+func RenderRoot(v *Value, nl string, safe, yaml11 bool) []byte {
+	l := &layout{nl: nl, step: 2, seqOff: 2, gap: 1, safe: safe, yaml11: yaml11}
 	switch {
 	case (v.Kind == Map || v.Kind == Seq) && len(v.Items) > 0 && !safe:
 		if v.Kind == Map {

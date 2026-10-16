@@ -578,3 +578,15 @@ func ExampleMarshal_omitempty() {
 	// name: api
 	// env: []
 }
+
+// A file that Kubernetes tooling also reads is written so that programs using
+// the YAML 1.1 rules read the same strings.
+func ExampleYAML11Strings() {
+	doc, _ := oneyaml.Parse([]byte("debug: false\nname: x\n"), oneyaml.YAML11Strings())
+	_ = doc.Set("/debug", "yes")
+	_ = doc.Set("/name", "hello")
+	fmt.Print(doc.String())
+	// Output:
+	// debug: 'yes'
+	// name: hello
+}

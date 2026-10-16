@@ -415,6 +415,7 @@ func (s *docStream) fail(st *patchStep, kind error) error {
 func (s *docStream) ctx(doc int) *edit.Ctx {
 	c := edit.NewCtx(&s.tree, s.src, doc)
 	c.MaxAliasHops = s.cfg.limits.MaxAliasNodes
+	c.YAML11 = s.cfg.yaml11
 	s.attach(c)
 	return c
 }

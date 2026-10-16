@@ -187,7 +187,7 @@ func (c *Ctx) Rename(loc Loc, newKey string, safe bool) (repls []Repl, sp Splice
 		}
 	}
 	par := &c.T.Nodes[loc.Parent]
-	l := &layout{safe: safe}
+	l := &layout{safe: safe, yaml11: c.YAML11}
 	h := kn.Style
 	if h != scan.SingleQuoted && h != scan.DoubleQuoted {
 		h = scan.Plain
@@ -257,7 +257,7 @@ func (c *Ctx) docFloor() int {
 	if d := &c.T.Docs[c.Doc]; d.ExplicitStart {
 		return int(d.StartMarker[1])
 	}
-	return c.bom
+	return int(c.bom)
 }
 
 // HeadComment plans the replacement of the comment lines above the entry that

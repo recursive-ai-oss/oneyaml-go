@@ -28,7 +28,12 @@ type Ctx struct {
 	// document is read once and that an add does not read the whole container.
 	tailVisits, hintReads int32
 
-	bom     int // length of a leading byte order mark
+	bom int8 // length of a leading byte order mark
+
+	// YAML11 makes the strings an edit writes plain only when YAML 1.1 readers
+	// also read them as strings. It shares a word with bom to keep Ctx small.
+	YAML11 bool
+
 	scratch []byte
 	nl      string // the first line break in the source, "\n" if none; "" until firstNL looks
 }
@@ -279,8 +284,8 @@ func (c *Ctx) lineStart(i int) int {
 	for i > 0 && !isBreak(c.Src[i-1]) {
 		i--
 	}
-	if i < c.bom {
-		return c.bom
+	if i < int(c.bom) {
+		return int(c.bom)
 	}
 	return i
 }
@@ -384,7 +389,7 @@ func (c *Ctx) blankLine(ls int) bool {
 
 // prevLine returns the start of the line before the one starting at ls, or -1.
 func (c *Ctx) prevLine(ls int) int {
-	if ls <= c.bom {
+	if ls <= int(c.bom) {
 		return -1
 	}
 	i := ls - 1
@@ -449,7 +454,7 @@ func (c *Ctx) entryStart(n int32) int {
 	for i >= 0 && (c.Src[i] == ' ' || c.Src[i] == '\t') {
 		i--
 	}
-	if i >= 0 && c.Src[i] == '?' && (i == 0 || c.Src[i-1] == ' ' || isBreak(c.Src[i-1]) || i == c.bom) {
+	if i >= 0 && c.Src[i] == '?' && (i == 0 || c.Src[i-1] == ' ' || isBreak(c.Src[i-1]) || i == int(c.bom)) {
 		return i
 	}
 	// An implicit key has its colon right after it on the same line; only a
@@ -560,7 +565,7 @@ func (c *Ctx) textEnd(n int32) int {
 // offset right after the last character of the node's text.
 func (c *Ctx) contentEnd(n int32) int {
 	e := c.textEnd(n)
-	if e > c.bom && isBreak(c.Src[e-1]) {
+	if e > int(c.bom) && isBreak(c.Src[e-1]) {
 		if c.Src[e-1] == '\n' && e >= 2 && c.Src[e-2] == '\r' {
 			return e - 2
 		}

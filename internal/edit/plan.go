@@ -47,7 +47,7 @@ func (c *Ctx) parentFlow(n int32) bool {
 }
 
 func (c *Ctx) newLayout(at int, opt Options) *layout {
-	return &layout{nl: c.nlNear(at), step: 2, seqOff: 2, gap: 1, safe: opt.Safe}
+	return &layout{nl: c.nlNear(at), step: 2, seqOff: 2, gap: 1, safe: opt.Safe, yaml11: c.YAML11}
 }
 
 // nlWindow bounds how far nlNear reads for a line break.
@@ -558,7 +558,7 @@ func (c *Ctx) inlineReplace(n int32, text string, l *layout) []Repl {
 					// whatever else the key's line holds (a comment).
 					nl := c.nlAt(int(nd.Start))
 					colon := strings.Repeat(" ", c.keyCol(n)) + ": " + text
-					if at := int(nd.Start); at > c.bom && isBreak(c.Src[at-1]) {
+					if at := int(nd.Start); at > int(c.bom) && isBreak(c.Src[at-1]) {
 						// The key ends with its line break (a block scalar): the colon
 						// line goes right there.
 						return []Repl{{Start: at, End: at, Text: []byte(colon + nl)}}

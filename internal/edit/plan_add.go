@@ -9,7 +9,7 @@ import (
 // start of the line after n's last line.
 func (c *Ctx) insertAfter(n int32) int {
 	e := c.textEnd(n)
-	if e > c.bom && isBreak(c.Src[e-1]) {
+	if e > int(c.bom) && isBreak(c.Src[e-1]) {
 		return e
 	}
 	return c.afterBreak(e)
