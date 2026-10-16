@@ -4,7 +4,7 @@ How oneyaml-go compares with the Go YAML libraries it is most often weighed agai
 
 **Bias.** This page is written by the authors of oneyaml-go. We chose the criteria, and they are the ones oneyaml-go was built for: YAML 1.2 behaviour, editing a file without disturbing it, and bounded handling of untrusted input. A project with other priorities would draw a different table. We tried to state each library's strengths as its own users would. Where a statement rests on a source, the source is named; library status was surveyed on 2026-09-30 (yaml/v4 on 2026-10-15) and changes.
 
-This page compares features and behaviour. It has no benchmark results.
+This page compares features and behaviour. Time and memory are measured on [Performance](performance.md), from a full benchmark run of v0.3.0 against these libraries. That page has the evidence, and this one does not repeat it.
 
 ## What each library is
 
@@ -24,6 +24,7 @@ Compare libraries on the job they share.
 - **Limits on input:** oneyaml-go bounds depth, alias expansion, number size and patch work by default and has an `Untrusted()` preset ([Limits](limits.md)). yaml/v4 has a limit plugin (`WithPlugin` with `plugin/limit`) that checks nesting depth and alias expansion, configured per call.
 - **Patching:** oneyaml-go applies RFC 6902 and 7396 to YAML, with `test` comparing values by the YAML data model rather than as JSON values ([details](patches.md#the-test-operation)). None of the other four has a patch API; third-party packages build one on top of them.
 - **Kubernetes manifests:** sigs.k8s.io/yaml is the reference for how a manifest binds to a type with `json` tags. `compat/k8syaml` reproduces it.
+- **Benchmarks:** the benchmark times a library on a task only after it checks the library's answer. On the document tasks, a library counts only where its document wrote the input back byte for byte, so on many inputs yaml.v3, yaml/v4 and goccy/go-yaml have no number. Those rows [have no rival](performance.md#rows-with-no-rival) and are not wins.
 
 ## Where oneyaml-go is the better fit
 
@@ -31,6 +32,7 @@ Compare libraries on the job they share.
 - You need YAML 1.2 as the specification says, with the result checked against the yaml-test-suite ([Conformance](conformance.md)).
 - You read input from outside, and want bounds on nesting, alias expansion and number size on by default, and a tighter preset in one option that also bounds input size. See [Limits](limits.md) and what they do not cover.
 - You want RFC 6902 or 7396 patches on a YAML file.
+- Time and memory matter for loading, writing or editing. In the v0.3.0 run it was ahead of the strongest competitor on every workload where one gave a correct answer; [Performance](performance.md) shows each workload, and explains why the unchanged-emit row is [not a rendering speed](performance.md#unchanged-emit).
 
 ## Where the others are the better fit
 

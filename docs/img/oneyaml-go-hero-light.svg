@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="266" viewBox="0 0 860 266" role="img" aria-label="oneyaml-go: time per task, ours against the strongest competitor. Geometric mean over the workloads of each task; the mark comes from the per-workload verdicts. Ours ÷ strongest competitor (a † names one that did less than the full task), log scale: left of the 1.0× line is better for us, right of it is a loss. 7 tasks: 7 better, 0 level, 0 mixed, 0 worse, 0 not comparable. typed load 0.49× win (ours 161 µs vs 326 µs; workloads: 1 better, 0 level, 0 worse of 1); generic load 0.34× win (ours 62.2 µs vs 184 µs; workloads: 7 better, 0 level, 0 worse of 7); dump 0.10× win (ours 14 µs vs 145 µs; workloads: 6 better, 0 level, 0 worse of 6); document parse 0.22× win (ours 119 µs vs 535 µs; workloads: 3 better, 0 level, 0 worse of 3); unchanged emit &lt;0.01× win (ours 7.16 ns vs 256 µs; workloads: 3 better, 0 level, 0 worse of 3); edit script 0.05× win (ours 18.8 µs vs 358 µs; workloads: 2 better, 0 level, 0 worse of 2); patch (RFC 6902) 0.15× win (ours 20.9 µs vs 142 µs; workloads: 1 better, 0 level, 0 worse of 1).">
+<title>oneyaml-go: time per task, ours against the strongest competitor</title><desc>oneyaml-go: time per task, ours against the strongest competitor. Geometric mean over the workloads of each task; the mark comes from the per-workload verdicts. Ours ÷ strongest competitor (a † names one that did less than the full task), log scale: left of the 1.0× line is better for us, right of it is a loss. 7 tasks: 7 better, 0 level, 0 mixed, 0 worse, 0 not comparable. typed load 0.49× win (ours 161 µs vs 326 µs; workloads: 1 better, 0 level, 0 worse of 1); generic load 0.34× win (ours 62.2 µs vs 184 µs; workloads: 7 better, 0 level, 0 worse of 7); dump 0.10× win (ours 14 µs vs 145 µs; workloads: 6 better, 0 level, 0 worse of 6); document parse 0.22× win (ours 119 µs vs 535 µs; workloads: 3 better, 0 level, 0 worse of 3); unchanged emit &lt;0.01× win (ours 7.16 ns vs 256 µs; workloads: 3 better, 0 level, 0 worse of 3); edit script 0.05× win (ours 18.8 µs vs 358 µs; workloads: 2 better, 0 level, 0 worse of 2); patch (RFC 6902) 0.15× win (ours 20.9 µs vs 142 µs; workloads: 1 better, 0 level, 0 worse of 1).</desc>
+<rect width="860" height="266" fill="#ffffff"/>
+<g font-family="system-ui, -apple-system, Segoe UI, sans-serif" fill="#1f2328">
+<text x="16" y="24" font-size="15" font-weight="600">oneyaml-go: time per task, ours against the strongest competitor</text>
+<text x="16" y="44" font-size="12" fill="#59636e">Geometric mean over the workloads of each task; the mark comes from the per-workload verdicts. Ours ÷ strongest competitor (a † names one that did less than the full task), log scale: left of the 1.0× line is better for us, right of it is a loss.</text>
+<line x1="230.0" y1="58" x2="230.0" y2="232" stroke="#d1d9e0" stroke-width="1"/>
+<text x="230.0" y="248" font-size="11" text-anchor="middle" fill="#59636e">1/8×</text>
+<line x1="303.3" y1="58" x2="303.3" y2="232" stroke="#d1d9e0" stroke-width="1"/>
+<text x="303.3" y="248" font-size="11" text-anchor="middle" fill="#59636e">1/4×</text>
+<line x1="376.7" y1="58" x2="376.7" y2="232" stroke="#d1d9e0" stroke-width="1"/>
+<text x="376.7" y="248" font-size="11" text-anchor="middle" fill="#59636e">1/2×</text>
+<line x1="450.0" y1="58" x2="450.0" y2="232" stroke="#d1d9e0" stroke-width="2" stroke-dasharray="4 3"/>
+<text x="450.0" y="248" font-size="11" text-anchor="middle" fill="#59636e">1×</text>
+<line x1="523.3" y1="58" x2="523.3" y2="232" stroke="#d1d9e0" stroke-width="1"/>
+<text x="523.3" y="248" font-size="11" text-anchor="middle" fill="#59636e">2×</text>
+<line x1="596.7" y1="58" x2="596.7" y2="232" stroke="#d1d9e0" stroke-width="1"/>
+<text x="596.7" y="248" font-size="11" text-anchor="middle" fill="#59636e">4×</text>
+<line x1="670.0" y1="58" x2="670.0" y2="232" stroke="#d1d9e0" stroke-width="1"/>
+<text x="670.0" y="248" font-size="11" text-anchor="middle" fill="#59636e">8×</text>
+<text x="222" y="79" font-size="12" text-anchor="end">typed load</text>
+<rect x="375.6" y="67" width="74.4" height="16" fill="#1a7f37"/>
+<text x="369.6" y="79" font-size="11" text-anchor="end">0.49×  ▲ win</text>
+<text x="760" y="79" font-size="10" fill="#59636e" text-anchor="start">161 µs vs 326 µs</text>
+<text x="222" y="103" font-size="12" text-anchor="end">generic load</text>
+<rect x="335.1" y="91" width="114.9" height="16" fill="#1a7f37"/>
+<text x="329.1" y="103" font-size="11" text-anchor="end">0.34×  ▲ win</text>
+<text x="760" y="103" font-size="10" fill="#59636e" text-anchor="start">62.2 µs vs 184 µs</text>
+<text x="222" y="127" font-size="12" text-anchor="end">dump</text>
+<rect x="230.0" y="115" width="220.0" height="16" fill="#1a7f37"/>
+<text x="224.0" y="127" font-size="11" text-anchor="end">0.10× ◂  ▲ win</text>
+<text x="760" y="127" font-size="10" fill="#59636e" text-anchor="start">14 µs vs 145 µs</text>
+<text x="222" y="151" font-size="12" text-anchor="end">document parse</text>
+<rect x="290.9" y="139" width="159.1" height="16" fill="#1a7f37"/>
+<text x="284.9" y="151" font-size="11" text-anchor="end">0.22×  ▲ win</text>
+<text x="760" y="151" font-size="10" fill="#59636e" text-anchor="start">119 µs vs 535 µs</text>
+<text x="222" y="175" font-size="12" text-anchor="end">unchanged emit</text>
+<rect x="230.0" y="163" width="220.0" height="16" fill="#1a7f37"/>
+<text x="224.0" y="175" font-size="11" text-anchor="end">&lt;0.01× ◂  ▲ win</text>
+<text x="760" y="175" font-size="10" fill="#59636e" text-anchor="start">7.16 ns vs 256 µs</text>
+<text x="222" y="199" font-size="12" text-anchor="end">edit script</text>
+<rect x="230.0" y="187" width="220.0" height="16" fill="#1a7f37"/>
+<text x="224.0" y="199" font-size="11" text-anchor="end">0.05× ◂  ▲ win</text>
+<text x="760" y="199" font-size="10" fill="#59636e" text-anchor="start">18.8 µs vs 358 µs</text>
+<text x="222" y="223" font-size="12" text-anchor="end">patch (RFC 6902)</text>
+<rect x="247.6" y="211" width="202.4" height="16" fill="#1a7f37"/>
+<text x="241.6" y="223" font-size="11" text-anchor="end">0.15×  ▲ win</text>
+<text x="760" y="223" font-size="10" fill="#59636e" text-anchor="start">20.9 µs vs 142 µs</text>
+</g></svg>
