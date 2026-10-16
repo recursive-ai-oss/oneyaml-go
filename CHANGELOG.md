@@ -4,7 +4,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-10-15
+## [0.1.1] - 2026-10-16
 
 ### Fixed
 
