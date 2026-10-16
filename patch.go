@@ -87,6 +87,13 @@ func (d *Document) ApplyPatch(rfc6902 []byte) error {
 		return &EditError{Op: "patch", Kind: err}
 	}
 	ops, bad, err := patch.ParseOps(rfc6902, d.s.cfg.limits.MaxDepth)
+	if err != nil && bad < 0 && errors.Is(err, patch.ErrSyntax) {
+		// Not JSON. A patch kept as YAML (a sequence of operations, as Kustomize
+		// users write them) reads the same way.
+		if yops, ybad, yerr, ok := d.s.yamlPatchOps(rfc6902); ok {
+			ops, bad, err = yops, ybad, yerr
+		}
+	}
 	if err != nil {
 		ee := &EditError{Op: "patch", Index: max(bad, 0), Patch: bad >= 0, Kind: kindOf(err, d.s.cfg.limits.MaxDepth)}
 		if bad >= 0 && bad < len(ops) {
@@ -103,6 +110,63 @@ func (d *Document) ApplyPatch(rfc6902 []byte) error {
 		pops[i] = patchStep{op: ops[i].Name, path: ops[i].Path, from: ops[i].From, val: ops[i].Value}
 	}
 	return d.s.applySteps(d.idx, pops, len(rfc6902))
+}
+
+// yamlPatchOps reads text that is not JSON as a patch written in YAML. ok is false
+// when the text is not a YAML sequence either, and the caller then reports the JSON
+// error. A YAML patch may not use aliases or hold the same key twice in a mapping,
+// which JSON cannot either, and must be a single document.
+func (s *docStream) yamlPatchOps(text []byte) (ops []patch.Op, bad int, err error, ok bool) {
+	var t cst.Tree
+	if cst.Build(&t, text, s.depth()) != nil || len(t.Docs) != 1 {
+		return nil, 0, nil, false
+	}
+	root := t.Docs[0].Root
+	if root == 0 || t.Nodes[root].Kind != cst.Sequence {
+		return nil, 0, nil, false
+	}
+	v, verr := edit.FromTree(&t, text, root)
+	if verr != nil {
+		return nil, -1, &LimitError{Limit: "depth", Max: edit.MaxValueDepth, Option: "Limits or NoLimits"}, true
+	}
+	if msg := yamlPatchProblem(&v); msg != "" {
+		return nil, -1, fmt.Errorf("%w: %s", patch.ErrSyntax, msg), true
+	}
+	ops, bad, err = patch.OpsFromValue(v)
+	return ops, bad, err, true
+}
+
+// yamlPatchProblem names what in a patch value written in YAML has no JSON
+// counterpart and is refused: an alias, or a mapping that names a key twice.
+func yamlPatchProblem(root *edit.Value) string {
+	stack := []*edit.Value{root}
+	for len(stack) > 0 {
+		v := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		switch v.Kind {
+		case edit.Alias:
+			return "a patch may not use aliases"
+		case edit.Map:
+			seen := make(map[string]struct{}, len(v.Items)/2)
+			for i := 0; i+1 < len(v.Items); i += 2 {
+				k := &v.Items[i]
+				if k.Kind == edit.Map || k.Kind == edit.Seq || k.Kind == edit.Alias {
+					return "a patch may not use a collection as a key"
+				}
+				id := string(rune('0'+k.Kind)) + k.Text
+				if _, dup := seen[id]; dup {
+					return "a mapping names the key " + fmt.Sprintf("%q", k.Text) + " twice"
+				}
+				seen[id] = struct{}{}
+			}
+		}
+		for i := range v.Items {
+			if it := &v.Items[i]; !it.IsScalar() || it.Kind == edit.Alias {
+				stack = append(stack, it)
+			}
+		}
+	}
+	return ""
 }
 
 // Apply applies RFC 6902 operations to the document in order, all or nothing, as

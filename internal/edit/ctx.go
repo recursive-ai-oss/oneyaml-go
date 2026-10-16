@@ -647,17 +647,11 @@ func (e *detailError) Error() string { return e.kind.Error() + ": " + e.msg }
 func (e *detailError) Unwrap() error { return e.kind }
 
 // LineCommentSpan returns the span of the comment that follows node n on its
-// line, empty if there is none. Block collections have no line comment.
+// line, empty if there is none. A block collection has one only after the
+// indicator that introduces it, when its content starts on a later line.
 func (c *Ctx) LineCommentSpan(n int32) (int, int) {
-	nd := &c.T.Nodes[n]
-	i := int(nd.End)
-	switch {
-	case isBlockScalarNode(nd):
-		i = int(nd.Start) + 1
-		for i < len(c.Src) && (c.Src[i] == '-' || c.Src[i] == '+' || c.Src[i] >= '1' && c.Src[i] <= '9') {
-			i++
-		}
-	case (nd.Kind == cst.Mapping || nd.Kind == cst.Sequence) && !nd.Flow:
+	i, ok := c.lineCommentBase(n)
+	if !ok {
 		return 0, 0
 	}
 	for i < len(c.Src) && (c.Src[i] == ' ' || c.Src[i] == '\t') {
@@ -672,19 +666,10 @@ func (c *Ctx) LineCommentSpan(n int32) (int, int) {
 // HeadCommentSpan returns the span of the comment lines directly above the entry
 // that node n belongs to, empty if there are none.
 func (c *Ctx) HeadCommentSpan(n int32) (int, int) {
-	first := n
-	if nd := &c.T.Nodes[n]; nd.Parent != 0 && c.T.Nodes[nd.Parent].Kind == cst.Mapping && !c.T.IsKey(n) {
-		first = c.T.Prev(n)
-	}
-	if c.T.Nodes[first].Parent == 0 || c.T.Nodes[c.T.Nodes[first].Parent].Flow {
+	from, ls, ok := c.headSpan(n)
+	if !ok {
 		return 0, 0
 	}
-	s0 := c.entryStart(first)
-	if !c.onlyBlankBefore(s0) {
-		return 0, 0
-	}
-	ls := c.lineStart(s0)
-	from := c.ownedStart(ls, c.floorOf(first))
 	return from, ls
 }
 

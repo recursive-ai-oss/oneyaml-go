@@ -289,6 +289,15 @@ func (d *Document) bytes(expose bool) []byte {
 	return s.src[:len(s.src):len(s.src)]
 }
 
+// String returns the text of the stream, so that printing a *Document prints its
+// YAML. A nil Document gives "".
+func (d *Document) String() string {
+	if d.isNil() {
+		return ""
+	}
+	return string(d.bytes(false))
+}
+
 // WriteTo writes the stream to w.
 func (d *Document) WriteTo(w io.Writer) (int64, error) {
 	if d.isNil() {
@@ -466,54 +475,71 @@ func (s *docStream) editTree(doc int, op editKindOp, ptr string, v *edit.Value) 
 			s.keysAfterRemove(gone, genBefore)
 			return nil
 		}
-		out, err := edit.Apply(s.takeBuf(), s.src, repls)
+		done, lerr, err := s.applyRepls(repls, check)
 		if err != nil {
-			return fail(editKind(err))
+			return fail(err)
 		}
-		// Parse into the slices of the current tree when nothing else holds them:
-		// the old tree is not needed once the new text is written, and if the new
-		// text is refused it is parsed again from the old one. A shared tree (a
-		// snapshot holds it) gets slices of its own.
-		inPlace := !s.shared
-		var nt cst.Tree
-		if inPlace {
-			nt = s.tree
-		} else {
-			nt = s.takeSpare()
+		if lerr != nil && limitErr == nil {
+			limitErr = lerr
 		}
-		s.ed.work.wholes++
-		growNodes(&nt, len(out), len(s.src), len(s.tree.Nodes))
-		if err := s.buildTree(&nt, out, s.depth()); err != nil || !check(&nt, out, nil) {
-			if err != nil && limitErr == nil {
-				// Text that nests past the depth limit is a limit error, not a failed edit.
-				if le, ok := docSyntaxError(err, s.cfg.limits).(*LimitError); ok {
-					limitErr = le
-				}
-			}
-			if inPlace {
-				if err := s.buildTree(&nt, s.src, s.depth()); err != nil {
-					// The text parsed when the edit began, so this does not happen. The
-					// old tree is gone, though: stop, keep the text, and refuse
-					// further edits instead of going on with a tree that does not match.
-					s.lose()
-					return fail(errInternal)
-				}
-				s.tree = nt
-			} else {
-				s.es().spare = nt // nothing else has seen it
-			}
-			continue
+		if done {
+			s.keysAfterAdd(doc, op, &pl, toks, genBefore)
+			return nil
 		}
-		s.setSrc(out)
-		s.tree, s.dirty, s.shared = nt, true, false
-		s.gen++
-		s.keysAfterAdd(doc, op, &pl, toks, genBefore)
-		return nil
 	}
 	if limitErr != nil {
 		return fail(limitErr)
 	}
 	return fail(errEdit)
+}
+
+// applyRepls writes repls into the text, parses the result and keeps it if check
+// accepts the new tree. It reports done when the text was kept. When the text was
+// refused the stream is as it was and lerr holds a depth limit error if that is
+// why. err is an error that ends the edit.
+func (s *docStream) applyRepls(repls []edit.Repl, check func(nt *cst.Tree, out []byte, rg *regionInfo) bool) (done bool, lerr, err error) {
+	out, err := edit.Apply(s.takeBuf(), s.src, repls)
+	if err != nil {
+		return false, nil, editKind(err)
+	}
+	// Parse into the slices of the current tree when nothing else holds them:
+	// the old tree is not needed once the new text is written, and if the new
+	// text is refused it is parsed again from the old one. A shared tree (a
+	// snapshot holds it) gets slices of its own.
+	inPlace := !s.shared
+	var nt cst.Tree
+	if inPlace {
+		nt = s.tree
+	} else {
+		nt = s.takeSpare()
+	}
+	s.ed.work.wholes++
+	growNodes(&nt, len(out), len(s.src), len(s.tree.Nodes))
+	if err := s.buildTree(&nt, out, s.depth()); err != nil || !check(&nt, out, nil) {
+		if err != nil {
+			// Text that nests past the depth limit is a limit error, not a failed edit.
+			if le, ok := docSyntaxError(err, s.cfg.limits).(*LimitError); ok {
+				lerr = le
+			}
+		}
+		if inPlace {
+			if err := s.buildTree(&nt, s.src, s.depth()); err != nil {
+				// The text parsed when the edit began, so this does not happen. The
+				// old tree is gone, though: stop, keep the text, and refuse
+				// further edits instead of going on with a tree that does not match.
+				s.lose()
+				return false, nil, errInternal
+			}
+			s.tree = nt
+		} else {
+			s.es().spare = nt // nothing else has seen it
+		}
+		return false, lerr, nil
+	}
+	s.setSrc(out)
+	s.tree, s.dirty, s.shared = nt, true, false
+	s.gen++
+	return true, nil, nil
 }
 
 // growNodes gives t room for the nodes that text of n bytes is likely to hold,

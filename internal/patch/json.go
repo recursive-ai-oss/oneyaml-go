@@ -376,6 +376,13 @@ func ParseOps(data []byte, maxDepth int) ([]Op, int, error) {
 	if err != nil {
 		return nil, -1, err
 	}
+	return OpsFromValue(root)
+}
+
+// OpsFromValue reads the operations of a patch from its value: a sequence of
+// mappings with the members "op", "path", "from" and "value", whether the value
+// came from JSON or from YAML. It reports as ParseOps does.
+func OpsFromValue(root edit.Value) ([]Op, int, error) {
 	if root.Kind != edit.Seq {
 		return nil, -1, fmt.Errorf("%w: a patch is a JSON array of operations", ErrSyntax)
 	}

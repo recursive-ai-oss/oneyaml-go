@@ -12,6 +12,18 @@ import (
 // ErrInvalidPointer means a string is not an RFC 6901 JSON Pointer.
 var ErrInvalidPointer = errors.New("oneyaml: invalid JSON pointer")
 
+// ErrKeyExists means a rename would give two entries of a mapping the same key.
+var ErrKeyExists = errors.New("oneyaml: key already exists")
+
+// ErrNotAnEntry means a pointer does not address an entry of a mapping, which is
+// what Rename needs.
+var ErrNotAnEntry = errors.New("oneyaml: not a mapping entry")
+
+// ErrInvalidComment means comment text cannot be written as a comment: it is not
+// valid UTF-8, holds a control character or a line separator other than the line
+// feed, or (for a line comment) holds a line break.
+var ErrInvalidComment = errors.New("oneyaml: invalid comment text")
+
 // errEdit means an edit could not be written so that it reads back exactly. It
 // should not happen; the document is left unchanged.
 var errEdit = errors.New("oneyaml: edit could not be applied")
@@ -34,6 +46,12 @@ func editKind(err error) error {
 		return wrapKind(ErrAmbiguousKey, detail)
 	case errors.Is(err, edit.ErrAnchorInUse):
 		return wrapKind(ErrAnchorInUse, detail)
+	case errors.Is(err, edit.ErrKeyExists):
+		return wrapKind(ErrKeyExists, detail)
+	case errors.Is(err, edit.ErrNotEntry):
+		return wrapKind(ErrNotAnEntry, detail)
+	case errors.Is(err, edit.ErrBadComment):
+		return wrapKind(ErrInvalidComment, detail)
 	case errors.Is(err, edit.ErrNotFound):
 		return wrapKind(ErrNotFound, detail)
 	case errors.Is(err, edit.ErrDepth):

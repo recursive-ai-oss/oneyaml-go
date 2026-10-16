@@ -272,7 +272,7 @@ func TestNodeView(t *testing.T) {
 	if !ok || name.Value() != "api" || name.Style() != PlainStyle || name.LineComment() != "# tail" {
 		t.Errorf("name: %q %v %q", name.Value(), name.Style(), name.LineComment())
 	}
-	if h := name.HeadComment(); h != "# head\n" {
+	if h := name.HeadComment(); h != "# head" {
 		t.Errorf("head comment %q", h)
 	}
 	if l, c := name.Position(); l != 2 || c != 7 {

@@ -563,24 +563,41 @@ func (n Node) Source() string {
 	return string(n.s.src[nd.Start:nd.End])
 }
 
-// LineComment returns the comment that follows the node on its line, including
-// the "#", or "".
+// LineComment returns the comment that follows the node on its line, trimmed: it
+// starts with the "#" and has no trailing blanks. It is "" when there is none.
+// The comment of a block collection or an empty value is the one after the colon
+// or dash that introduces it.
 func (n Node) LineComment() string {
 	nd := n.nd()
 	if nd == nil {
 		return ""
 	}
 	s, e := n.ctx().LineCommentSpan(n.i)
-	return string(n.s.src[s:e])
+	return edit.TrimComment(string(n.s.src[s:e]))
 }
 
 // HeadComment returns the comment lines directly above the entry the node belongs
-// to (no blank line between), each line as written, or "".
+// to (no blank line between), trimmed as yaml.v3 does: each line without its
+// indentation and with its "#", the lines joined by line feeds, no line break at
+// the end. It is "" when there is none. Use SetHeadComment to change it.
 func (n Node) HeadComment() string {
 	nd := n.nd()
 	if nd == nil {
 		return ""
 	}
 	s, e := n.ctx().HeadCommentSpan(n.i)
-	return string(n.s.src[s:e])
+	return edit.TrimComment(string(n.s.src[s:e]))
+}
+
+// String returns the source text of the node (see Source), so that printing a Node
+// prints its YAML. A stale Node prints "<stale node>" and the zero Node
+// "<invalid node>".
+func (n Node) String() string {
+	if n.nd() == nil {
+		if n.Stale() {
+			return "<stale node>"
+		}
+		return "<invalid node>"
+	}
+	return n.Source()
 }
