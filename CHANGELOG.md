@@ -6,7 +6,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ### Added
 
-- `ApplyMergePatch` also reads a merge patch written in YAML, with the same rules and refusals as a YAML `ApplyPatch`. Text that starts with `{` or `[`, or is valid JSON, is still read as JSON.
+- `ApplyMergePatch` also reads a merge patch written in YAML, with the same rules and refusals as a YAML `ApplyPatch`. Text that starts with `{` or `[`, or is valid JSON, is still read as JSON. A mapping key that is not a string (`1: 5`, `true: 5`, an empty key) is refused at any depth, with its line and column, because a merge patch is a JSON object; quote the name to use it.
 
 ### Changed
 

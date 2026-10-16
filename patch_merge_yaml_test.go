@@ -104,3 +104,39 @@ func mustParseDoc(t *testing.T, src string, opts ...oneyaml.Option) *oneyaml.Doc
 	}
 	return d
 }
+
+// Member names of a merge patch are strings: a key that YAML reads as a number,
+// boolean or null is refused at any depth, with its position, and the document
+// is left as it was.
+func TestMergePatchYAMLNonStringKeys(t *testing.T) {
+	const src = "a: 1\nc: {d: 2}\n"
+	for _, c := range []struct{ name, patch, pos string }{
+		{"int", "1: 5\n", "line 1, column 1"},
+		{"bool", "true: 5\n", "line 1, column 1"},
+		{"int and string collide", "1: 5\n\"1\": 6\n", "line 1, column 1"},
+		{"null", "~: 5\n", "line 1, column 1"},
+		{"empty key", ": 5\n", ""},
+		{"nested merged", "c:\n  1: x\n", "line 2, column 3"},
+		{"nested set whole", "new: {1: x}\n", "line 1, column 7"},
+		{"in a sequence", "new: [{2.5: x}]\n", "line 1, column 8"},
+	} {
+		d := mustParseDoc(t, src)
+		err := d.ApplyMergePatch([]byte(c.patch))
+		if !errors.Is(err, oneyaml.ErrInvalidPatch) {
+			t.Errorf("%s: err = %v, want ErrInvalidPatch", c.name, err)
+		} else if !strings.Contains(err.Error(), "must be a string") || !strings.Contains(err.Error(), c.pos) {
+			t.Errorf("%s: message %q lacks the reason or position %q", c.name, err, c.pos)
+		}
+		if string(d.Bytes()) != src {
+			t.Errorf("%s: document changed to %q", c.name, d.Bytes())
+		}
+	}
+	// Quoted or tagged names are strings and stay allowed.
+	d := mustParseDoc(t, src)
+	if err := d.ApplyMergePatch([]byte("\"1\": 5\n!!str 2: 6\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(d.Bytes()); !strings.Contains(got, "1") || !strings.Contains(got, "2") {
+		t.Errorf("got %q", got)
+	}
+}

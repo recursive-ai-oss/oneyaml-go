@@ -28,7 +28,7 @@ import (
 // document, which may be any value, as a merge patch kept in a YAML file is
 // written, and gives the same result as the JSON form. The refusals are those of
 // ApplyPatch for a YAML patch: aliases, tags outside the core schema, a
-// collection as a key, keys that repeat by value, a scalar with a bad escape and
+// collection as a key, a key that is not a string (a merge patch is a JSON object, so write `"1"`, not `1`), keys that repeat by value, a scalar with a bad escape and
 // more than one document are all ErrInvalidPatch, a YAML syntax error is
 // reported with its position, and nesting past the depth limit is a *LimitError.
 //

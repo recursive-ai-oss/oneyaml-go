@@ -3,12 +3,14 @@ package oneyaml
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"oneyaml.dev/go/internal/cst"
 	"oneyaml.dev/go/internal/edit"
 	"oneyaml.dev/go/internal/patch"
 	"oneyaml.dev/go/internal/pointer"
+	"oneyaml.dev/go/internal/scan"
 )
 
 // ErrInvalidPatch means a patch is not well formed: it is not valid JSON, it is not
@@ -181,6 +183,11 @@ func (s *docStream) yamlPatchValue(text []byte, seqOnly bool) (v edit.Value, err
 	if perr := edit.CheckPatchTree(&t, text); perr != nil {
 		return v, fmt.Errorf("%w: %s", patch.ErrSyntax, perr), true
 	}
+	if !seqOnly {
+		if perr := stringKeysOnly(&t, text); perr != nil {
+			return v, fmt.Errorf("%w: %s", patch.ErrSyntax, perr), true
+		}
+	}
 	v, verr := edit.FromTree(&t, text, root)
 	if verr != nil {
 		return v, &LimitError{Limit: "depth", Max: edit.MaxValueDepth, Option: "Limits or NoLimits"}, true
@@ -199,6 +206,33 @@ func (s *docStream) yamlPatchValue(text []byte, seqOnly bool) (v edit.Value, err
 		return v, fmt.Errorf("%w: %s", patch.ErrSyntax, derr), true
 	}
 	return v, nil, true
+}
+
+// stringKeysOnly refuses a mapping key that is not a string. A merge patch is a
+// JSON object, whose member names are strings, so `1: 5` or `true: 5` would
+// otherwise be turned into the names "1" and "true" (and could collide with a
+// real "1"). The rule holds in every mapping of the patch, including values that
+// are set whole, so that the same text means the same thing at any depth. Write
+// such a name quoted. Collections and aliases as keys are refused elsewhere.
+func stringKeysOnly(t *cst.Tree, src []byte) error {
+	var kids []int32
+	for i := 1; i < len(t.Nodes); i++ {
+		if t.Nodes[i].Kind != cst.Mapping {
+			continue
+		}
+		kids = t.Children(kids[:0], int32(i))
+		for j := 0; j < len(kids); j += 2 {
+			k := kids[j]
+			if t.Nodes[k].Kind != cst.Scalar {
+				continue
+			}
+			kv, err := edit.FromTree(t, src, k)
+			if err == nil && kv.Kind != edit.String {
+				return scan.NewError(src, int(t.Nodes[k].Start), scan.Syntax, "a merge patch member name must be a string; quote it: "+strconv.Quote(string(src[t.Nodes[k].Start:t.Nodes[k].End])))
+			}
+		}
+	}
+	return nil
 }
 
 // yamlPatchProblem names what in a patch value written in YAML has no JSON
