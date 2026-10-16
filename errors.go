@@ -20,7 +20,9 @@ var (
 	// ErrAliasWrite means an edit would write through an alias, or, with
 	// MergeKeys, into the "<<" merge source a key comes from.
 	ErrAliasWrite = errors.New("oneyaml: write through an alias")
-	// ErrAmbiguousKey means a key occurs more than once, so an edit cannot choose.
+	// ErrAmbiguousKey means a key occurs more than once in its mapping, or, with
+	// MergeKeys, a "<<" merge brings it in from two places of one source, so
+	// Document.Get, Node.Find or an edit cannot choose one value.
 	ErrAmbiguousKey = errors.New("oneyaml: ambiguous key")
 	// ErrTestFailed means a patch "test" operation did not match.
 	ErrTestFailed = errors.New("oneyaml: patch test failed")
@@ -36,7 +38,8 @@ var ErrUnknownField = errors.New("oneyaml: unknown field")
 // Each error type answers errors.Is for its kind, so one call tells what went
 // wrong and errors.As gives the details: a SyntaxError matches ErrSyntax and the
 // sentinel of its Category, a LimitError matches ErrLimit and the sentinel of its
-// Limit, a TypeError matches its Kind, and an EditError matches its Kind.
+// Limit, a TypeError matches its Kind, and an EditError matches its Kind, which
+// may itself be a LimitError.
 
 // Sentinels for the kinds of a [*SyntaxError].
 var (
@@ -140,15 +143,19 @@ func (e *SyntaxError) Error() string {
 // Node used as a target) is a mismatch like any other. Syntax errors, limit
 // errors and errors from your own hooks stop the read at once and are returned
 // alone, without the mismatches collected before them. When a hook returns the
-// error of a Node.Decode it made, the mismatches in it are reported as if the
-// hook were not there: each mismatch is reported at the line and column of its
-// own value. Its path is the path of the hook's value followed by the path
+// error of a Node.Decode it made (or of the function a func-style hook is
+// given), the mismatches in it are reported as if the hook were not there,
+// every one of them, at any depth of nested hooks: each mismatch is reported at
+// the line and column of its own value. Its path is the path of the hook's value followed by the path
 // inside the node the hook decoded, so a hook that decodes the node it was given
 // reports the same paths as a read without the hook. Inside the hook, the error
 // of its own Node.Decode holds the paths inside that node; a path of more than
 // 4 KiB that runs through hooks nested in one another is completed when the
 // outermost read ends, so it stays incomplete in an error the hook keeps or
-// wraps (with %w, say) instead of returning it.
+// wraps (with %w, say) instead of returning it. An error a hook returns from
+// reading other text, such as an Unmarshal of its own input, is reported at the
+// hook's value with the hook's type as GoType; the position and path inside the
+// other text are part of Msg.
 //
 // Error shortens a Path longer than 512 bytes to its first and last 256 bytes
 // joined by "..."; the Path field always holds the whole pointer.
@@ -162,7 +169,9 @@ type TypeError struct {
 	GoType reflect.Type
 	// Msg describes the problem.
 	Msg string
-	// Err is the error a MarshalYAML or MarshalText method returned, if that was the cause.
+	// Err is the error one of your hooks returned, such as an UnmarshalYAML,
+	// MarshalYAML or MarshalText method, if that was the cause. errors.Is and
+	// errors.As look inside it.
 	Err error
 	// Kind is the sentinel error for the cause when there is one, for now only
 	// [ErrUnknownField]. errors.Is matches it.
@@ -256,7 +265,8 @@ const (
 	// A patch that copies more than this much text also reports it.
 	LimitMaxAliasBytes Limit = "MaxAliasBytes"
 	// LimitMaxInputBytes is the largest input accepted. A patch that is too long,
-	// or one that would make the document too large, also reports it.
+	// and an edit or patch that would make the document too large, also report
+	// it, as does the fixed 2 GiB bound on the size of a Document.
 	LimitMaxInputBytes Limit = "MaxInputBytes"
 	// LimitMaxScalarBytes is the longest single scalar accepted.
 	LimitMaxScalarBytes Limit = "MaxScalarBytes"
@@ -282,13 +292,22 @@ type LimitError struct {
 	// Max is the bound that was exceeded.
 	Max int
 	// Option names the option and the [LimitSet] field that raise the bound, in
-	// the form "Limits (MaxDepth)"; NoLimits removes every bound. It is empty when
-	// the bound cannot be changed, which is also the case for the compat packages,
-	// which take no limit options.
+	// the form "Limits (MaxDepth)"; NoLimits removes every bound. It is empty for
+	// a bound that no option changes: the nesting of a patch value (10,000
+	// levels), the nesting of typed Go values (100,000 levels) and the 2 GiB size
+	// of a Document. It is also empty in the errors of the compat packages, which
+	// take no limit options.
 	Option string
-	// Path is the RFC 6901 pointer to the value where the limit was hit. It is
-	// empty when the limit was hit before there was a path: the size of the input,
-	// the number of documents, or nesting that the parser stopped at.
+	// Path is the RFC 6901 pointer to where the limit was hit: the value being
+	// read (alias expansion, scalar size, number digits, the nesting of typed
+	// values), or, for most patch limits, the pointer of the operation that hit
+	// it. It is empty when there is no single value to point at: every limit
+	// Parse reports, the size of the input, the number of documents, nesting that
+	// the parser stopped at, the nesting of a patch value, a search of "<<"
+	// merge sources, and the size of the text that an edit or a merge patch would
+	// leave. A limit hit by a decode inside an UnmarshalYAML hook comes back as
+	// the error the hook returned, wrapped in a [*TypeError] at the hook's value,
+	// and its Path is relative to the node the hook decoded.
 	Path string
 }
 

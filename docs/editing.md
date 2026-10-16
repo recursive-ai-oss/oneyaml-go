@@ -501,7 +501,7 @@ Without `MergeKeys()`, `<<` is an ordinary key, and pointers address only the ke
 
 An edit that cannot be made leaves the document unchanged and returns an `*EditError`. It names the operation and the pointer, and `errors.Is` matches its kind against `ErrNotFound`, `ErrAliasWrite`, `ErrAmbiguousKey`, `ErrAnchorInUse`, `ErrUnsupportedEdit`, `ErrKeyExists`, `ErrNotAnEntry`, `ErrInvalidComment` and the other sentinel errors.
 
-When the document was parsed with a bound on input size (`MaxInputBytes`, which `Untrusted()` sets), `Set`, `Rename`, `SetHeadComment`, `SetLineComment` and patches refuse an edit that would make the text longer than the bound. `errors.As` finds the `*LimitError` inside the `*EditError` ([Limits](limits.md#each-limit)). An edit that makes the text shorter is always allowed.
+When the document was parsed with a bound on input size (`MaxInputBytes`, which `Untrusted()` sets), `Set`, `Rename`, `SetHeadComment`, `SetLineComment` and patches refuse an edit that would make the text longer than the bound, counted in the encoding the document is written in. `errors.As` finds the `*LimitError` inside the `*EditError` ([Limits](limits.md#each-limit)). An edit that makes the text shorter is always allowed.
 
 <!-- example: ExampleEditError -->
 ```go
@@ -520,7 +520,7 @@ if errors.As(err, &ee) {
 
 ## Reading values back
 
-`Get(ptr, &v)` reads the value at a pointer into any target `Unmarshal` accepts, `Decode(&v)` reads the whole document, and `Node.Decode` reads the part below a node. Options given to one of these reads apply to that call only, on top of the options the document was parsed with, so one file can be read strictly in one place and loosely in another. `KnownFields`, `MergeKeys`, `Limits`, `Untrusted` and `NoLimits` take effect. The size bounds that concern parsing (`MaxInputBytes`, `MaxDocuments`) do nothing to a document that is already parsed, and options that concern writing are ignored. `KnownFields`, `MergeKeys` and `YAML11Strings` take an optional bool, and the last option wins, so `KnownFields(false)` turns off an earlier `KnownFields()`:
+`Get(ptr, &v)` reads the value at a pointer into any target `Unmarshal` accepts, `Decode(&v)` reads the whole document, and `Node.Decode` reads the part below a node. Options given to one of these reads apply to that call only, on top of the options the document was parsed with, so one file can be read strictly in one place and loosely in another. `KnownFields`, `MergeKeys`, `Limits`, `Untrusted` and `NoLimits` take effect, also in the decodes an `UnmarshalYAML` hook makes during the read. A bound given to a read replaces the document's own for that read, looser as well as tighter, so `NoLimits()` on a document parsed with `Untrusted()` lifts its bounds; pass such options only for input you trust. The size bounds that concern parsing (`MaxInputBytes`, `MaxDocuments`) do nothing to a document that is already parsed, and options that concern writing are ignored. `KnownFields`, `MergeKeys` and `YAML11Strings` take an optional bool, and the last option wins, so `KnownFields(false)` turns off an earlier `KnownFields()`:
 
 <!-- example: ExampleDocument_Get_options -->
 ```go

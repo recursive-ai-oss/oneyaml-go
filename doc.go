@@ -39,8 +39,8 @@
 // types written for encoding/json, such as Kubernetes API types with json tags
 // and UnmarshalJSON methods, load as they are. An UnmarshalYAML method of any
 // other form, such as yaml.v3's UnmarshalYAML(*yaml.Node) error, is reported as
-// a [*TypeError] rather than skipped. A [Node] is not a decode target; read one
-// with [Document.Get].
+// a [*TypeError] rather than skipped, and the rest of the document is still
+// read. A [Node] is not a decode target; read one with [Document.Get].
 //
 // # Edit
 //
@@ -113,30 +113,44 @@
 //
 // # Errors
 //
-// Errors are values to test with [errors.As] and [errors.Is]. Ask what kind of
+// Errors are values to test with [errors.Is] and [errors.As]. Ask what kind of
 // failure it was with errors.Is, which every error type answers, and read the
 // details with errors.As:
 //
-//   - [*SyntaxError] carries the line, column, offset and a [Category]
-//     ([CategorySyntax], [CategoryEncoding] or [CategoryDuplicateKey], which also
-//     names the key and where it first appeared). It matches [ErrSyntax] and the
-//     sentinel of its category, [ErrEncoding] or [ErrDuplicateKey].
-//   - [*TypeError] carries the path and position of a value that does not fit its
-//     target, and of every other one when a read finds several, and the
-//     [reflect.Type] involved. It matches [ErrUnknownField] for a key the target
-//     lacks. A value under an UnmarshalYAML hook is reported where it is in the
-//     input, as it is without the hook.
-//   - [*LimitError] carries the [Limit] that was hit, named like the field of
-//     [LimitSet], the bound, the option that raises it and, when the limit was
-//     hit at a value, its path. It matches [ErrLimit] and the sentinel of its
-//     limit, such as [ErrMaxDepth]. The compat packages take no limit options,
-//     so their limit errors name none.
+//   - [*SyntaxError] carries the line, column and offset, and a [Category]:
+//     [CategorySyntax], [CategoryEncoding] or [CategoryDuplicateKey], for which
+//     Key, FirstLine and FirstColumn name the key and where it first appeared.
+//     It matches [ErrSyntax], and also [ErrEncoding] or [ErrDuplicateKey] for
+//     those categories.
+//   - [*TypeError] carries the path and position of a value that does not fit
+//     its target, and the [reflect.Type] involved as GoType. A read goes on
+//     past such a value, and More holds every other one it found; [TypeError.All]
+//     lists them all. A type whose UnmarshalYAML method has a form the package
+//     cannot call, and a [Node] used as a target, are collected the same way. A
+//     mismatch found by a decode inside an UnmarshalYAML hook is reported where
+//     the value is in the input, and its path is the hook's path followed by the
+//     path inside the node the hook decoded. It matches [ErrUnknownField] for a
+//     key the target struct lacks under [KnownFields].
+//   - [*LimitError] carries the [Limit] that was hit, named like its [LimitSet]
+//     field, the bound as Max, and What, a description in words. Option names
+//     the option that raises the bound, such as "Limits (MaxDepth)", and is
+//     empty for the few fixed bounds and in the compat packages, which take no
+//     limit options. Path points to the value where the limit was hit when
+//     there is one. It matches [ErrLimit] and the sentinel of its limit, such as
+//     [ErrMaxDepth] or [ErrMaxInputBytes].
 //   - [*EditError] carries the operation and the pointer, and matches a kind:
 //     [ErrNotFound], [ErrAliasWrite], [ErrAmbiguousKey], [ErrTestFailed],
 //     [ErrAnchorInUse], [ErrInvalidPatch], [ErrInvalidPointer],
 //     [ErrUndefinedAlias], [ErrUnsupportedEdit], [ErrKeyExists],
 //     [ErrNotAnEntry], [ErrInvalidComment], [ErrStaleNode], [ErrNoPointer] and
-//     [ErrNilDocument]; a limit hit by an edit matches its limit as well.
+//     [ErrNilDocument]. An edit or patch stopped by a limit wraps a
+//     [*LimitError], which errors.Is and errors.As find through it.
+//
+// [Node.Find] reports why a key has no value with the same sentinels:
+// [ErrNotFound], [ErrStaleNode], or [ErrAmbiguousKey] for a key written more
+// than once in its mapping, which [Document.Get] refuses too; a search of "<<"
+// merge sources that passes its bound is a [*LimitError]. [Node.Lookup]
+// reports each of these as false.
 //
 // Match errors by type and kind: the text of a message is written for people and
 // may change in any release.
