@@ -615,8 +615,8 @@ func TestMergeKeyPointers(t *testing.T) {
 		t.Fatalf("decoded mapping: %v %v", m, err)
 	}
 	var x int
-	if err := d.Get("/use/x", &x); !errors.Is(err, ErrNotFound) {
-		t.Errorf("a merged key has no pointer: %v", err)
+	if err := d.Get("/use/x", &x); err != nil || x != 1 {
+		t.Errorf("a merged key is read through its pointer: %v %v", x, err)
 	}
 	if err := d.Set("/use/<</x", 5); !errors.Is(err, ErrAliasWrite) {
 		t.Errorf("writing through the merge key: %v", err)

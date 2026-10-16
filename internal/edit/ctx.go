@@ -34,6 +34,12 @@ type Ctx struct {
 	// also read them as strings. It shares a word with bom to keep Ctx small.
 	YAML11 bool
 
+	// Merge makes Resolve read through "<<" merge keys: a key a mapping does not
+	// have itself is looked for in its merge sources. A read finds the merged
+	// value; a write never writes into a source, so a merged-only key counts as
+	// missing (Loc.Merged says it is not) and a path below it is refused.
+	Merge bool
+
 	scratch []byte
 	nl      string // the first line break in the source, "\n" if none; "" until firstNL looks
 }
@@ -70,6 +76,9 @@ type Loc struct {
 	Index int
 	// Dash reports that Tok was "-".
 	Dash bool
+	// Merged is set, for a write with Ctx.Merge, when Tok is missing from the
+	// mapping itself but a merge source has it.
+	Merged bool
 }
 
 // IsRoot reports whether the location is the document root.
@@ -115,6 +124,25 @@ func (c *Ctx) Resolve(toks []string, write bool) (Loc, error) {
 			found, key, ambiguous := c.findKey(cur, tok)
 			if ambiguous {
 				return Loc{}, wrap(ErrAmbiguous, "key %q occurs more than once", tok)
+			}
+			if found == 0 && c.Merge {
+				mv, err := c.MergedValue(cur, tok)
+				if err != nil {
+					return Loc{}, err
+				}
+				switch {
+				case mv == 0:
+				case !write:
+					if last {
+						return Loc{Node: mv, Parent: cur, Tok: tok}, nil
+					}
+					cur = mv
+					continue
+				case last:
+					return Loc{Parent: cur, Tok: tok, Merged: true}, nil
+				default:
+					return Loc{}, wrap(ErrAlias, "below the key %q that a merge brings in", tok)
+				}
 			}
 			if found == 0 {
 				if last {

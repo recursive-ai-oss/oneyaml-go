@@ -438,6 +438,7 @@ func (s *docStream) testStep(doc int, st *patchStep) error {
 		return s.fail(st, ErrNotFound)
 	}
 	c := s.ctx(doc)
+	c.Merge = s.cfg.mergeKeys
 	loc, err := c.Resolve(toks, false)
 	if err != nil {
 		return s.fail(st, editKind(err))

@@ -56,9 +56,12 @@ const (
 // A Node is a read-only view of one node of a Document. It is a small value and
 // is cheap to copy. A Node becomes stale when the Document is edited: Stale then
 // reports true, methods that return an error report ErrStaleNode, and the others
-// return zero values ("", 0, false, an invalid Node). Zero values are easy to
-// write back by mistake, so to edit while reading, collect the pointers first
-// (see Pointer) and edit afterwards, or read the nodes again after each edit.
+// return zero values ("", 0, false, an invalid Node). A zero value looks like a
+// real answer: Value of a stale Node is "", the same as an empty scalar. Err
+// tells the two apart, so a program that keeps Nodes across edits can check
+// n.Err() == nil before it trusts what an accessor returned, or after a loop that
+// read many values. To edit while reading, collect the pointers first (see
+// Pointer) and edit afterwards, or read the nodes again after each edit.
 type Node struct {
 	s   *docStream
 	i   int32
@@ -98,6 +101,20 @@ func (n Node) IsValid() bool { return n.nd() != nil }
 // invalid.
 func (n Node) Stale() bool {
 	return n.s != nil && n.gen != n.s.gen && n.gen != n.s.epoch()
+}
+
+// Err reports whether n can be read: it is nil for a valid Node, an error
+// matching ErrStaleNode when the Document was edited after n was read, and one
+// matching ErrNotFound for the zero Node. Like bufio.Scanner.Err, it is the
+// check to make when an accessor's zero value could mean either "empty" or
+// "unreadable": Value, Kind, Len, Item, Entry, Lookup, Tag, Anchor, Span, Source,
+// the comment getters and the iterators all return zero values (or nothing) for
+// a Node that is not valid. Err allocates only when it returns an error.
+func (n Node) Err() error {
+	if n.nd() != nil {
+		return nil
+	}
+	return n.errInvalid("node")
 }
 
 // errInvalid is the error for a Node that is not usable: ErrStaleNode when the
@@ -520,13 +537,22 @@ func (n Node) Entries() iter.Seq2[Node, Node] {
 }
 
 // Lookup returns the value of the first entry of a mapping whose key has the
-// scalar text key. Aliases are not followed.
+// scalar text key. Aliases are not followed. When the Document was parsed with
+// MergeKeys and the mapping has no such key itself, Lookup looks in its "<<"
+// merge sources, with the precedence Decode and Get use, because it answers the
+// question "what value has this key?". Entries, Items and Len describe the
+// mapping as written and do not include merged keys. A false result for a Node
+// that is not valid is explained by Err.
 func (n Node) Lookup(key string) (Node, bool) {
 	nd := n.nd()
 	if nd == nil || nd.Kind != cst.Mapping {
 		return Node{}, false
 	}
 	c := n.ctx()
+	if n.s.cfg.mergeKeys {
+		c.Merge = true
+		c.MaxAliasHops = n.s.cfg.limits.MaxAliasNodes
+	}
 	for k := n.s.tree.First(n.i); k != 0; {
 		v := n.s.tree.Nodes[k].Next
 		if v == 0 {
@@ -536,6 +562,11 @@ func (n Node) Lookup(key string) (Node, bool) {
 			return n.child(v), true
 		}
 		k = n.s.tree.Nodes[v].Next
+	}
+	if c.Merge {
+		if v, err := c.MergedValue(n.i, key); err == nil && v != 0 {
+			return n.child(v), true
+		}
 	}
 	return Node{}, false
 }

@@ -352,7 +352,7 @@ fmt.Print(string(doc.Bytes()))
 // t: !custom bar
 ```
 
-A pointer addresses the keys written in the file. With `MergeKeys()`, a key that a `<<` merge brings into a mapping has no pointer of its own: in `use: {<<: *base, z: 3}`, `Get("/use/x")` fails with `ErrNotFound` even when `base` has `x`. `Get("/use/<<")` reads the merged source. `Set("/use/x", v)` adds an explicit `x` to `use`, which takes precedence over the merged one. Writing through the merge key, as in `/use/<</x`, is a write below an alias and is refused.
+With `MergeKeys()`, pointers also read the keys a `<<` merge brings into a mapping, with the precedence decoding uses: a key the mapping has itself wins, and an earlier merge source wins over a later one. In `use: {<<: *base, z: 3}`, `Get("/use/x")` finds the `x` of `base`, and a patch `test` reads it too. `Node.Lookup` follows merges the same way; `Entries`, `Items` and `Len` describe the mapping as written. Writes never go into a merge source, which would be a write through an alias. `Set("/use/x", v)` adds an explicit `x` to `use`, which takes precedence over the merged one. `Remove` and patch `remove` or `replace` of a key that only a merge has are refused with `ErrAliasWrite`, as is a write below it (`/use/x/y`) or through the merge key (`/use/<</x`). Without `MergeKeys()` the `<<` key is an ordinary key and pointers address only the keys as written.
 
 Two edits are refused because they would change a value you did not address:
 
@@ -416,7 +416,7 @@ if errors.As(err, &ee) {
 
 ## Reading while you edit
 
-A `Node` is a view of the document as it was when you read it. An edit makes every `Node` read before it stale: `Stale` reports `true`, `Decode` and `Pointer` return an error matching `ErrStaleNode`, and the other methods return zero values. Zero values are easy to write back by mistake, so read a node again after an edit rather than keeping it.
+A `Node` is a view of the document as it was when you read it. An edit makes every `Node` read before it stale: `Stale` reports `true`, `Decode` and `Pointer` return an error matching `ErrStaleNode`, and the other methods return zero values. A zero value looks like an answer (`Value` of a stale node is `""`, the same as an empty scalar), so `Node.Err` is the check: it is `nil` for a readable node and matches `ErrStaleNode` for a stale one. Reading the node again after an edit is still the better habit.
 
 A `range` over `Items` or `Entries` may edit the document, as a loop over a Go map may change the map. After an edit, the loop finds its collection again by the pointer it had before the edit (an edit that inserts or removes items of a list on the way to it moves the pointer along), and goes on at the next position with fresh nodes. The loop ends if the collection is removed or replaced, is no longer the same kind, or has no pointer. Entries added at the end during the loop are yielded, so a body that adds one on every pass never ends. Any number of loops, over one collection or several, can follow edits at once. Changing values as you go is the simple case:
 

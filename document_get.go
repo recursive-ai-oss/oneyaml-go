@@ -12,9 +12,11 @@ import (
 // expanding them is charged to the alias limits. A *TypeError's Path is the
 // pointer ptr followed by the path inside the value.
 //
-// The pointer addresses keys as they are written. With MergeKeys, a key that a
-// "<<" merge brings in is not found (ErrNotFound); the pointer to the merge key
-// itself reads the merged source.
+// With MergeKeys, a pointer also finds the keys a "<<" merge brings in, with the
+// precedence Decode gives them: a key the mapping has itself wins, and an earlier
+// merge source wins over a later one. The pointer to the merge key itself still
+// reads the merged source as written. Without MergeKeys the pointer addresses
+// only the keys as written.
 //
 // If v is a *Node it receives the node itself, and the alias at the end of the
 // pointer, if there is one, is not followed.
@@ -32,6 +34,7 @@ func (d *Document) Get(ptr string, v any) error {
 	}
 	c := edit.NewCtx(&d.s.tree, d.s.src, d.idx)
 	c.MaxAliasHops = d.s.cfg.limits.MaxAliasNodes
+	c.Merge = d.s.cfg.mergeKeys
 	loc, err := c.Resolve(toks, false)
 	if err != nil {
 		return fail(editKind(err))

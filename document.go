@@ -458,6 +458,7 @@ func (s *docStream) editTree(doc int, op editKindOp, ptr string, v *edit.Value) 
 	genBefore := s.gen
 	for attempt := 0; attempt < 2; attempt++ {
 		c := s.ctx(doc)
+		c.Merge = s.cfg.mergeKeys
 		opt := edit.Options{Safe: attempt == 1}
 		pl, err := s.plan(c, op, toks, v, opt)
 		if err != nil {
@@ -759,6 +760,11 @@ func (s *docStream) plan(c *edit.Ctx, op editKindOp, toks []string, v *edit.Valu
 	loc, err := c.Resolve(toks, true)
 	if err != nil {
 		return pl, err
+	}
+	if loc.Merged && (op == opRemove || op == opReplace) {
+		// The key is not in this mapping but in a merge source: removing or
+		// replacing it would write into the source, through an alias.
+		return pl, edit.MergedKeyError(loc.Tok)
 	}
 	doc := c.Doc
 	var parentToks []string
