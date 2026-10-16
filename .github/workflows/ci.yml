@@ -236,7 +236,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: recursive-ai-oss/oneyaml-kit
-          ref: 8452eac464a209e3842e3ba6f4001c7ad223d1b0 # oneyaml-kit main, 2026-10-16
+          ref: fbae83885fd334b2829474fd87541dcc86ff9e7a # oneyaml-kit main, 2026-10-16
           path: oneyaml-kit
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
