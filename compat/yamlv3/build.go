@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync/atomic"
 
 	"oneyaml.dev/go/internal/bind"
@@ -32,7 +33,7 @@ func init() {
 		})
 	bind.SetV3Hook(
 		func(pt reflect.Type) bool {
-			return pt.Implements(unmarshalerType) || pt.Implements(obsoleteUnmarshType) || pt == reflect.PointerTo(nodeType)
+			return pt.Implements(unmarshalerType) || pt.Implements(obsoleteUnmarshType) || pt == reflect.PointerTo(nodeType) || foreignHook(pt)
 		},
 		func(t reflect.Type) bool { return t == nodeType },
 		callHook,
@@ -74,7 +75,41 @@ func callHook(inst any, ref bind.NodeRef) error {
 			return n.decode(v, cfg)
 		}))
 	}
-	return errors.New("yaml: unexpected unmarshaler")
+	return foreignHookError(inst)
+}
+
+// foreignHook reports whether pt has an UnmarshalYAML method that the adapter
+// cannot call: typically one that takes the Node of another YAML package, such
+// as gopkg.in/yaml.v3, which is a different type from this package's Node. The
+// answer is cached with the type's decoding plan, so the lookup runs once.
+func foreignHook(pt reflect.Type) bool {
+	_, ok := pt.MethodByName("UnmarshalYAML")
+	return ok
+}
+
+// foreignHookError names the type and the method that cannot be called. yaml.v3
+// itself skips a method it does not recognise and fills the value by its
+// fields; the adapter refuses instead, because the skipped method usually
+// validates or converts the value and a silent skip would drop that.
+func foreignHookError(inst any) error {
+	t := reflect.TypeOf(inst)
+	m, ok := t.MethodByName("UnmarshalYAML")
+	if !ok {
+		return errors.New("yaml: unexpected unmarshaler")
+	}
+	name := t.Elem().String()
+	var ins []string
+	for i := 1; i < m.Type.NumIn(); i++ {
+		ins = append(ins, m.Type.In(i).String())
+	}
+	sig := "UnmarshalYAML(" + strings.Join(ins, ", ") + ")"
+	why := "the signature is neither UnmarshalYAML(*yaml.Node) error nor UnmarshalYAML(func(interface{}) error) error with this package's Node"
+	if m.Type.NumIn() == 2 {
+		if p := m.Type.In(1); p.Kind() == reflect.Pointer && p.Elem().Name() == "Node" && p.Elem().PkgPath() != nodeType.PkgPath() {
+			why = "the parameter is " + p.Elem().PkgPath() + ".Node, a different type from this package's Node"
+		}
+	}
+	return fmt.Errorf("yaml: cannot decode into %s: its method %s is not one this package can call (%s); the adapter can't call a hook written for another YAML package, and does not fill the value field by field behind its back (yaml.v3 would skip the method silently). Give the type a hook with this package's signature, or read it through a wrapper type of your own", name, sig, why)
 }
 
 // softened marks a *TypeError from a user's hook so the decoder collects its

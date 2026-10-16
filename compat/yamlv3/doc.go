@@ -60,6 +60,11 @@
 //     comment is written as a comment, and the lines after the first of a comment
 //     on a block scalar follow the scalar, where yaml.v3 puts them inside it and
 //     makes them part of its text;
+//   - a type whose UnmarshalYAML method this package cannot call, for example one
+//     that takes the Node of gopkg.in/yaml.v3 because it comes from a module that
+//     still imports it, makes the read return an error naming the type and the
+//     method; yaml.v3 skips such a method silently and fills the value by its
+//     fields, which drops whatever the method validated;
 //   - alias expansion is counted across the whole call: a type that decodes its
 //     own Node again counts against the same budget, which yaml.v3 starts afresh;
 //   - what yaml.v3 writes but cannot read back is written correctly: a block
