@@ -82,7 +82,9 @@
 // [Marshal] and [Encoder] write Go values as block-style YAML. A string is
 // written plain only when every common reader, under the Core schema and under
 // YAML 1.1, reads it back as the same string, so "yes", "0755" and "1:30" come
-// out quoted. Output is deterministic: map keys are sorted and struct fields keep
+// out quoted. Edits to a [Document] judge plainness by the Core schema alone,
+// and follow this stricter rule only with the [YAML11Strings] option. Output is
+// deterministic: map keys are sorted and struct fields keep
 // their declaration order. A type can choose its own form by implementing
 // [Marshaler], [encoding.TextMarshaler] or [encoding/json.Marshaler], tried in
 // that order. A [Node] is written as the value it holds. The omitempty tag

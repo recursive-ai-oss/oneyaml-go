@@ -73,9 +73,8 @@ c: 13
 }
 
 // When the existing style cannot hold the new value, only that value moves to
-// the nearest style that can. A plain scalar stays plain when every reader,
-// under the Core schema and under YAML 1.1, reads it back as the same string,
-// and becomes quoted when one would not.
+// the nearest style that can. A plain scalar stays plain when the Core schema
+// reads it back as the same string, and becomes quoted when it would not.
 func ExampleDocument_Set_styleFallback() {
 	doc, err := oneyaml.Parse([]byte("a: plain\nb: plain\nc: plain\nd: \"quoted\"\n"))
 	if err != nil {
@@ -85,8 +84,8 @@ func ExampleDocument_Set_styleFallback() {
 		ptr string
 		v   any
 	}{
-		{"/a", "nginx:1.25"},  // every reader reads this as a string: it stays plain
-		{"/b", "true"},        // a reader would take this for a boolean: it is quoted
+		{"/a", "nginx:1.25"},  // Core reads this as a string: it stays plain
+		{"/b", "true"},        // Core reads this as a boolean: it is quoted
 		{"/c", "two\nlines"},  // a line break needs an escape: double quotes
 		{"/d", "now: plain?"}, // a double-quoted scalar stays double-quoted
 	} {

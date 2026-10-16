@@ -73,11 +73,11 @@ fmt.Printf("%q\n", b)
 // "this is a test2"
 ```
 
-Setters are exact: whatever you set, `Get` returns, because this package reads the file with the YAML 1.2 Core schema. Many other tools read YAML with YAML 1.1 rules, where `yes` is a boolean and `0755` is octal. A new string that such a reader would take for something else is quoted, so they read the same string ([below](#when-the-style-cannot-hold-the-value)).
+Setters are exact: whatever you set, `Get` returns, because this package reads the file with the YAML 1.2 Core schema. Programs that read YAML with YAML 1.1 rules, such as Kubernetes tooling built on sigs.k8s.io/yaml and code on yaml.v2, may read a new value differently: to them a plain `yes` is a boolean and `0755` is octal. If such programs also read the file, parse it with `YAML11Strings()` ([below](#when-the-style-cannot-hold-the-value)).
 
 ## When the style cannot hold the value
 
-A value keeps its style when that style can hold the new value. When it cannot, only that value is rewritten, in the nearest style that can. A new string stays plain only when it reads back as the same string both under the Core schema and under YAML 1.1, so `true`, `yes`, `on`, `0755` and `12:30` are quoted. This is the rule `Marshal` follows, and it applies to `Set`, patches, merge patches and `Rename`. Values already in the file are not touched, so a plain `yes` you did not edit stays as it is. A string with a line break that replaces an inline scalar is written double-quoted.
+A value keeps its style when that style can hold the new value. When it cannot, only that value is rewritten, in the nearest style that can. Plainness is judged by the Core schema, because that is how this package reads the file: `yes` stays plain, `true` is quoted. A string with a line break that replaces an inline scalar is written double-quoted.
 
 <!-- example: ExampleDocument_Set_styleFallback -->
 ```go
@@ -89,8 +89,8 @@ for _, edit := range []struct {
 	ptr string
 	v   any
 }{
-	{"/a", "nginx:1.25"},  // every reader reads this as a string: it stays plain
-	{"/b", "true"},        // a reader would take this for a boolean: it is quoted
+	{"/a", "nginx:1.25"},  // Core reads this as a string: it stays plain
+	{"/b", "true"},        // Core reads this as a boolean: it is quoted
 	{"/c", "two\nlines"},  // a line break needs an escape: double quotes
 	{"/d", "now: plain?"}, // a double-quoted scalar stays double-quoted
 } {
@@ -104,6 +104,41 @@ fmt.Print(string(doc.Bytes()))
 // b: 'true'
 // c: "two\nlines"
 // d: "now: plain?"
+```
+
+A YAML 1.1 reader takes a plain `yes`, `on`, `0755` or `12:30` for a boolean, a number or a time. If the file is also read by such programs (Kubernetes tooling built on sigs.k8s.io/yaml, or code on yaml.v2), pass `YAML11Strings()` to `Parse`. New strings written by `Set`, patches and merge patches, and keys written by `Rename`, then follow the stricter rule that `Marshal` always uses: a string stays plain only when YAML 1.1 readers read the same string too. An existing quoted or block style is kept, and values you do not edit are not touched.
+
+<!-- example: ExampleYAML11Strings -->
+```go
+src := []byte("debug: false\nname: x\n")
+
+// By default the Core schema decides: "yes" is a string there, so it stays plain.
+doc, err := oneyaml.Parse(src)
+if err != nil {
+	log.Fatal(err)
+}
+if err := doc.Set("/debug", "yes"); err != nil {
+	log.Fatal(err)
+}
+fmt.Print(doc)
+
+// With YAML11Strings, a string that YAML 1.1 reads as a boolean is quoted.
+doc, err = oneyaml.Parse(src, oneyaml.YAML11Strings())
+if err != nil {
+	log.Fatal(err)
+}
+if err := doc.Set("/debug", "yes"); err != nil {
+	log.Fatal(err)
+}
+if err := doc.Set("/name", "hello"); err != nil {
+	log.Fatal(err)
+}
+fmt.Print(doc)
+// Output:
+// debug: yes
+// name: x
+// debug: 'yes'
+// name: hello
 ```
 
 ## Adding and removing
@@ -156,7 +191,7 @@ Removing the root is refused.
 
 ## Renaming a key
 
-`Rename(ptr, newKey)` changes the key of the entry at `ptr` where it stands. The value, the entry's place in its mapping, its comments, and an anchor or tag on the key stay as they are. The new key keeps the old key's style (plain, single- or double-quoted) when that style can hold it. Otherwise it gets the nearest style that can: single quotes for a plain key that needs quoting, including one that YAML 1.1 readers would take for something else (renaming to `on` writes `'on'`), double quotes for one with a line break or an unprintable character. The new key is always a string, so renaming the key `1` to `"2"` writes `'2'`.
+`Rename(ptr, newKey)` changes the key of the entry at `ptr` where it stands. The value, the entry's place in its mapping, its comments, and an anchor or tag on the key stay as they are. The new key keeps the old key's style (plain, single- or double-quoted) when that style can hold it. Otherwise it gets the nearest style that can: single quotes for a plain key that needs quoting (and, with `YAML11Strings()`, for one that YAML 1.1 readers would take for something else, so renaming to `on` writes `'on'`), double quotes for one with a line break or an unprintable character. The new key is always a string, so renaming the key `1` to `"2"` writes `'2'`.
 
 <!-- example: ExampleDocument_Rename -->
 ```go
