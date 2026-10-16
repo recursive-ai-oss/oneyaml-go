@@ -4,6 +4,8 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-16
+
 ### Added
 
 - `Node.Find(key)` is the checked form of `Lookup`: it returns the value with a `nil` error, or an error that says why there is none. The error matches `ErrNotFound` for an absent key (or a node that is not a mapping), `ErrStaleNode` for a node read before an edit, and `ErrAmbiguousKey` when a merge brings the key in from two places of one source, and it is a `*LimitError` when a merge search was refused by `MaxAliasNodes`. `Lookup` reports all of these as `false`. See [Reading while you edit](docs/editing.md#reading-while-you-edit).
@@ -38,6 +40,8 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - An escaped UTF-16 surrogate pair in a double-quoted scalar, as JSON writes characters outside the Basic Multilingual Plane, is one character: `"\ud83d\ude00"` reads as 😀. It used to be refused as an escape that is not a Unicode scalar value.
 - `compat/yamlv3` places head, line and foot comments on the same nodes as yaml.v3 in many more layouts: a comment after `---`, after a lone dash, after an anchor or tag on a collection, or after an explicit key (`? k # c`), and comment lines between a key and its value. These comments used to be dropped. A value's head comment is written below its line, at the column of its key, as yaml.v3 writes it. See [Migrating from yaml.v3](docs/migrate-yaml-v3.md#check-after-the-swap) for the layouts that still differ.
 - `compat/yamlv3` writes the comments inside a flow collection back where yaml.v3 writes them, and keeps the foot comment of a root scalar or a root flow collection. Both used to be read and then dropped on writing. A comment line just before the closing bracket of a flow collection is still not read.
+- Adding an entry after a block scalar whose last line starts with a tab, at the end of the input, no longer changes that scalar's value: the header now strips the final line break, so the scalar reads back as it was.
+- `compat/yamlv3` writes an alias used as a mapping key with a space before the colon (`*a : 1`), so the output reads back. Without it, a YAML 1.2 reader takes `*a:` as an alias named `a:`.
 
 ## [0.2.0] - 2026-10-16
 
@@ -94,7 +98,8 @@ The first release. It has no benchmark results; those come in a later update.
 - Conformance: the tests that run the [oneyaml-kit](https://github.com/recursive-ai-oss/oneyaml-kit) cases run in CI against a pinned kit revision. See [Conformance](docs/conformance.md).
 - Documentation: [Editing](docs/editing.md), [Patches](docs/patches.md), [Limits](docs/limits.md), [Conformance](docs/conformance.md), [Comparison](docs/comparison.md) and the two migration guides.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/recursive-ai-oss/oneyaml-go/releases/tag/v0.1.0
