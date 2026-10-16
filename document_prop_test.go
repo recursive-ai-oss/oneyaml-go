@@ -165,6 +165,7 @@ func randomEdits(d *Document, r *rand.Rand, n int, strict bool) error {
 			continue
 		}
 		editStats.ok++
+		d.s.tree.Settle() // a run of Sets leaves offsets stale until something reads them
 		var fresh cst.Tree
 		if err := cst.Build(&fresh, d.s.src, -1); err != nil {
 			return fmt.Errorf("step %d: output does not parse: %v", step, err)

@@ -148,6 +148,7 @@ func checkDecoded(in, out []byte, after *Document, doc int, op editKindOp, ptr s
 
 // sameAsFreshParse reports whether the kept tree equals a parse of the kept text.
 func sameAsFreshParse(d *Document) error {
+	d.s.tree.Settle()
 	var fresh cst.Tree
 	if err := cst.Build(&fresh, d.s.src, -1); err != nil {
 		return fmt.Errorf("text does not parse: %v", err)

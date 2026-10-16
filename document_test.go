@@ -503,6 +503,7 @@ func TestEditRegressions(t *testing.T) {
 			if err := checkReadBack(before, d, 0, tc.op, tc.ptr, tc.v); err != nil {
 				t.Error(err)
 			}
+			d.s.tree.Settle()
 			var fresh cst.Tree
 			if err := cst.Build(&fresh, d.s.src, -1); err != nil || !reflect.DeepEqual(fresh.Nodes, d.s.tree.Nodes) {
 				t.Errorf("tree differs from a fresh parse (%v)", err)

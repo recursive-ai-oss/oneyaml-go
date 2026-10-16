@@ -80,13 +80,22 @@ func (n Node) nd() *cst.Node {
 	if n.s == nil || (n.gen != n.s.gen && n.gen != n.s.epoch()) || n.i <= 0 || int(n.i) >= len(n.s.tree.Nodes) {
 		return nil
 	}
+	n.s.tree.SettleTo(n.i)
 	return &n.s.tree.Nodes[n.i]
 }
 
 func (n Node) child(i int32) Node { return Node{s: n.s, i: i, doc: n.doc, gen: n.gen, sc: n.sc} }
 
 func (n Node) ctx() *edit.Ctx {
-	c := edit.NewCtx(&n.s.tree, n.s.src, int(n.doc))
+	n.s.tree.Settle() // see Document.Get for why NewCtx is not used
+	c := edit.NewCtxLagging(&n.s.tree, n.s.src, int(n.doc))
+	n.s.attach(c)
+	return c
+}
+
+// ctxLagging is ctx for a reader that settles the nodes it reads (see path).
+func (n Node) ctxLagging() *edit.Ctx {
+	c := edit.NewCtxLagging(&n.s.tree, n.s.src, int(n.doc))
 	n.s.attach(c)
 	return c
 }
@@ -164,7 +173,10 @@ func (n Node) path(withSeq bool) (toks []string, seq []bool, _ error) {
 		return nil, nil, n.errInvalid("pointer")
 	}
 	t := &n.s.tree
-	c := n.ctx()
+	// A node reads its ancestors and their keys, which all come before it, so the
+	// offsets after it may stay stale: a loop that sets every entry as it goes
+	// would otherwise settle the whole tree on each pass.
+	c := n.ctxLagging()
 	fail := &EditError{Op: "pointer", Kind: ErrNoPointer}
 	for cur := n.i; t.Nodes[cur].Parent != 0; {
 		par := t.Nodes[cur].Parent

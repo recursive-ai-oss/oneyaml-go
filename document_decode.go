@@ -116,6 +116,9 @@ func (s *docStream) decode(doc int, root int32, v any, sc *bind.Scope) error {
 	if err := checkTarget(v); err != nil {
 		return err
 	}
+	s.tree.Settle()
+	defer func(was bool) { s.decoding = was }(s.decoding)
+	s.decoding = true
 	in := &treeInput{s: s, doc: doc}
 	in.w.reset(&s.tree, root)
 	sess := sessionPool.Get().(*session)

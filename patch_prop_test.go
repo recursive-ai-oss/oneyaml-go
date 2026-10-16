@@ -481,6 +481,7 @@ func randomPatches(d *Document, r *rand.Rand, n int, checked bool) error {
 			if !bytes.Equal(d.Bytes(), in) {
 				return fmt.Errorf("step %d: failed patch changed the document\npatch %s\n in: %q\nout: %q (%v)", step, buf.Bytes(), in, d.Bytes(), err)
 			}
+			d.s.tree.Settle()
 			if fresh, perr := Parse(in); perr != nil || !reflect.DeepEqual(fresh.s.tree.Nodes, d.s.tree.Nodes) ||
 				!reflect.DeepEqual(fresh.s.tree.Docs, d.s.tree.Docs) || !reflect.DeepEqual(fresh.s.tree.Props, d.s.tree.Props) {
 				return fmt.Errorf("step %d: tree after a failed patch differs from a fresh parse of the input\npatch %s", step, buf.Bytes())
@@ -501,6 +502,7 @@ func randomPatches(d *Document, r *rand.Rand, n int, checked bool) error {
 		if modelErr != nil && strict {
 			return fmt.Errorf("step %d: patch succeeded but the model fails at op %d with %v\npatch %s\non %q", step, failAt, modelErr, buf.Bytes(), in)
 		}
+		d.s.tree.Settle()
 		var fresh cst.Tree
 		if err := cst.Build(&fresh, d.s.src, -1); err != nil {
 			return fmt.Errorf("step %d: output does not parse: %v\npatch %s", step, err, buf.Bytes())

@@ -132,6 +132,55 @@ func (ca *Cache) KeepKeys(from, to uint32) {
 	}
 }
 
+// KeyHash is the hash a key index files the decoded text of a key under.
+func KeyHash(text []byte) uint32 { return hashKey(text) }
+
+// KeyHashString is KeyHash for a string.
+func KeyHashString(text string) uint32 { return uint32(maphash.String(keySeed, text)) }
+
+// RenameKey records that the edit from version from to version to changed the text
+// of key node k of mapping cn from one that hashed to oldHash into one that hashes to newHash, and moved
+// no node. The entry is replaced in place, so a loop that renames many keys of one
+// mapping keeps its index instead of reading every key again for each rename. The
+// indexes of other mappings are untouched by the edit and stay valid.
+func (ca *Cache) RenameKey(cn, k int32, oldHash, newHash uint32, from, to uint32) {
+	if ca.Keys == nil {
+		return
+	}
+	for i := range ca.Keys.slots {
+		s := &ca.Keys.slots[i]
+		if s.tab == nil || s.gen != from {
+			continue
+		}
+		if s.cn != cn {
+			s.gen = to
+			continue
+		}
+		mask := uint32(len(s.tab) - 1)
+		found := false
+		for j := oldHash & mask; ; j = (j + 1) & mask {
+			e := &s.tab[j]
+			if e.idx == 0 {
+				break
+			}
+			if e.idx == k {
+				if e.hash == oldHash {
+					e.idx = -1 // keeps the probe sequence of the keys behind it
+					s.dead++
+					found = true
+				}
+				break
+			}
+		}
+		if !found || int(s.dead)*4 > len(s.tab) {
+			s.tab = nil // not where it should be, or mostly renamed keys: build again
+			continue
+		}
+		s.insert(keyEntry{idx: k, hash: newHash})
+		s.gen = to
+	}
+}
+
 // AddKey records that the edit from version from to version to added the key text
 // at the end of mapping cn and changed nothing else about the keys. The tree t is
 // the one after the edit. The entries just before the new key are looked up again
@@ -272,6 +321,7 @@ func (c *Ctx) KeyBytes(k int32) (text []byte, ok bool) { return c.keyBytes(k) }
 // call; ok is false for a key that is not a scalar. Plain and quoted keys without
 // escapes or line breaks are returned as they stand in the source.
 func (c *Ctx) keyBytes(k int32) (text []byte, ok bool) {
+	c.T.SettleTo(k)
 	nd := &c.T.Nodes[k]
 	if nd.Kind != cst.Scalar {
 		return nil, false
@@ -410,6 +460,7 @@ func (c *Ctx) buildKeys(s *keySlot, cn int32) {
 		size *= 2
 	}
 	s.tab = make([]keyEntry, size)
+	s.dead = 0 // a new table holds no removed keys
 	for k := c.T.First(cn); k != 0; {
 		v := c.T.Nodes[k].Next
 		if v == 0 {

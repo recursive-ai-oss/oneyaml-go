@@ -85,6 +85,9 @@ type Tree struct {
 	Nodes []Node
 	Props []Prop
 	Docs  []Doc
+
+	// lagFrom and lagDelta note offsets that are stale; see ShiftAfterNode.
+	lagFrom, lagDelta int32
 }
 
 // Build parses src and returns its tree. maxDepth is passed to the parser.
@@ -568,6 +571,9 @@ func (t *Tree) ShiftAfter(from, delta int32) {
 	if delta == 0 {
 		return
 	}
+	if ShiftHook != nil {
+		ShiftHook(len(t.Nodes))
+	}
 	for i := range t.Nodes {
 		nd := &t.Nodes[i]
 		if nd.Start >= from {
@@ -588,6 +594,174 @@ func (t *Tree) ShiftAfter(from, delta int32) {
 			p.TagEnd += delta
 		}
 	}
+	for i := range t.Docs {
+		d := &t.Docs[i]
+		for j := range d.StartMarker {
+			if d.StartMarker[j] >= from {
+				d.StartMarker[j] += delta
+			}
+			if d.EndMarker[j] >= from {
+				d.EndMarker[j] += delta
+			}
+		}
+	}
+}
+
+// Lagging offsets.
+//
+// A run of scalar edits through a wide mapping would shift every later offset once
+// per edit, which is quadratic. Instead ShiftAfterNode shifts the nodes close to the
+// edit at once and notes the shift of the rest as a debt: nodes at or after
+// lagFrom are stale by lagDelta. Nodes come in text order, so "the rest" is a
+// suffix of Nodes. Whoever is about to read an offset of a node past lagFrom calls
+// Settle (everything) or SettleTo (that node and the ones before it) first. A
+// Tree that is not being edited has lagFrom == 0 and costs the readers one test.
+
+// lagWindow is how many nodes after an edited node are shifted at once. A loop
+// that edits entry after entry then finds the next entry settled, and the work of
+// an edit does not depend on the size of the tree.
+const lagWindow = 64
+
+// LagPoison, when not zero, makes a tree that starts to lag store its stale offsets
+// wrong by this much, so that a test finds any read that did not settle first. It
+// is for tests only.
+var LagPoison int32
+
+// ShiftHook, when set, is told how many nodes each shift of offsets moves. Tests use
+// it to show that the work of an edit does not grow with the size of the tree.
+var ShiftHook func(nodes int)
+
+// Lagging reports whether some offsets are stale.
+func (t *Tree) Lagging() bool { return t.lagFrom != 0 }
+
+// Frontier is the index from which nodes may be stale: every node before it has
+// true offsets.
+func (t *Tree) Frontier() int32 {
+	if t.lagFrom != 0 {
+		return t.lagFrom
+	}
+	return int32(len(t.Nodes))
+}
+
+// Settle brings every offset up to date.
+func (t *Tree) Settle() {
+	if t.lagFrom != 0 {
+		t.settle()
+	}
+}
+
+// settle is the work of Settle, kept out of line so that the test in front of it is
+// small enough to be inlined into the readers.
+//
+//go:noinline
+func (t *Tree) settle() {
+	t.shiftNodes(t.lagFrom, int32(len(t.Nodes)), t.lagDelta)
+	t.lagFrom, t.lagDelta = 0, 0
+}
+
+// SettleTo brings the offsets of node i, and of every node before it, up to date.
+func (t *Tree) SettleTo(i int32) {
+	if t.lagFrom != 0 && i >= t.lagFrom {
+		t.settleTo(i)
+	}
+}
+
+//go:noinline
+func (t *Tree) settleTo(i int32) {
+	e := i + 1
+	if int(e) >= len(t.Nodes) {
+		t.Settle()
+		return
+	}
+	t.shiftNodes(t.lagFrom, e, t.lagDelta)
+	t.lagFrom = e
+}
+
+// shiftNodes adds delta to the offsets of nodes a to b-1 and of their anchors and
+// tags. The properties of a node lie in front of it, so they are in the same range
+// as the node.
+func (t *Tree) shiftNodes(a, b, delta int32) {
+	if delta == 0 {
+		return
+	}
+	if ShiftHook != nil {
+		ShiftHook(int(b - a))
+	}
+	for i := a; i < b; i++ {
+		nd := &t.Nodes[i]
+		nd.Start += delta
+		nd.End += delta
+		if nd.Prop != 0 {
+			p := &t.Props[nd.Prop]
+			if p.AnchorStart != 0 {
+				p.AnchorStart += delta
+				p.AnchorEnd += delta
+			}
+			if p.TagStart != 0 {
+				p.TagStart += delta
+				p.TagEnd += delta
+			}
+		}
+	}
+}
+
+// ShiftAfterNode is ShiftAfter for an edit inside the text of node n, whose text
+// ended at from before the edit: it gives the same offsets once Settle has run, but
+// shifts only the ancestors of n and a window of the nodes after it now.
+func (t *Tree) ShiftAfterNode(n, from, delta int32) {
+	if delta == 0 {
+		return
+	}
+	// The ancestors are the only nodes before n whose text reaches past it.
+	for p := t.Nodes[n].Parent; p != 0; p = t.Nodes[p].Parent {
+		nd := &t.Nodes[p]
+		if nd.Start >= from {
+			nd.Start += delta
+		}
+		if nd.End >= from {
+			nd.End += delta
+		}
+	}
+	size := int32(len(t.Nodes))
+	e := n + 1 + lagWindow
+	if e > size {
+		e = size
+	}
+	old := t.lagDelta
+	if t.lagFrom != 0 {
+		// The edit is behind the frontier by more than the stale tail is long:
+		// bring the tail up to date and lag from the window on, which costs less
+		// than shifting the nodes in between.
+		if f := t.lagFrom; f-e > size-f {
+			t.shiftNodes(f, size, old)
+			t.lagFrom, t.lagDelta, old = 0, 0, 0
+		}
+	}
+	if t.lagFrom != 0 {
+		// Nodes up to the window that were stale are brought up to date first.
+		if e < t.lagFrom {
+			e = t.lagFrom
+		}
+		t.shiftNodes(t.lagFrom, e, old)
+	}
+	t.shiftNodes(n+1, e, delta)
+	switch {
+	case e >= size:
+		t.lagFrom, t.lagDelta = 0, 0
+	case t.lagFrom == 0:
+		// The tail is still true: it becomes the debt.
+		t.lagFrom, t.lagDelta = e, delta
+		if LagPoison != 0 {
+			t.shiftNodes(e, size, -LagPoison)
+			t.lagDelta += LagPoison
+		}
+	default:
+		t.lagFrom, t.lagDelta = e, old+delta
+		if t.lagDelta == 0 {
+			t.lagFrom = 0
+		}
+	}
+	// The markers of the documents are few; they are kept true.
 	for i := range t.Docs {
 		d := &t.Docs[i]
 		for j := range d.StartMarker {

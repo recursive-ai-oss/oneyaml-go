@@ -32,7 +32,8 @@ func (d *Document) Get(ptr string, v any) error {
 	if err != nil {
 		return fail(ErrInvalidPointer)
 	}
-	c := edit.NewCtx(&d.s.tree, d.s.src, d.idx)
+	d.s.tree.Settle() // (NewCtx would do it, but it is too big to inline and the Ctx would be put on the heap)
+	c := edit.NewCtxLagging(&d.s.tree, d.s.src, d.idx)
 	c.MaxAliasHops = d.s.cfg.limits.MaxAliasNodes
 	c.Merge = d.s.cfg.mergeKeys
 	loc, err := c.Resolve(toks, false)

@@ -149,3 +149,53 @@ func BenchmarkSetInRange(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkRenameInRange renames every key of a mapping while ranging over it, and
+// compares with collecting the keys first. The cost per rename must not grow with
+// the size of the mapping.
+func BenchmarkRenameInRange(b *testing.B) {
+	noSpliceCheck(b)
+	for _, n := range []int{4000, 16000} {
+		var sb strings.Builder
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&sb, "k%d: %d\n", i, i%10)
+		}
+		src := []byte(sb.String())
+		b.Run(fmt.Sprintf("in-loop/n=%d", n), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				b.StopTimer()
+				d, err := Parse(src)
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.StartTimer()
+				for k := range d.Root().Entries() {
+					if err := d.Rename("/"+k.Value(), "renamed"+k.Value()); err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+		})
+		b.Run(fmt.Sprintf("collect-then-rename/n=%d", n), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				b.StopTimer()
+				d, err := Parse(src)
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.StartTimer()
+				var keys []string
+				for k := range d.Root().Entries() {
+					keys = append(keys, k.Value())
+				}
+				for _, k := range keys {
+					if err := d.Rename("/"+k, "renamed"+k); err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+		})
+	}
+}

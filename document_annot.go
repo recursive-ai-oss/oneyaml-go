@@ -49,11 +49,18 @@ func (d *Document) Rename(ptr, newKey string) error {
 		if loc.Node == 0 {
 			return annotPlan{}, edit.ErrNotFound
 		}
+		var oldHash, newHash uint32
+		var hashed bool
+		if c.HasKeyIndex(loc.Parent) { // the index follows the rename, if there is one
+			if kb, ok := c.KeyBytes(loc.Key); ok {
+				oldHash, newHash, hashed = edit.KeyHash(kb), edit.KeyHashString(newKey), true
+			}
+		}
 		repls, sp, key, err := c.Rename(loc, newKey, safe)
 		if err != nil || len(repls) == 0 {
 			return annotPlan{}, err
 		}
-		return annotPlan{repls: repls, sp: sp, skip: key, parent: loc.Parent, anchor: loc.Node, keys: true, verify: func(nt *cst.Tree, out []byte, _ int, off int32) bool {
+		return annotPlan{repls: repls, sp: sp, skip: key, parent: loc.Parent, anchor: loc.Node, keys: true, keyHash: oldHash, newHash: newHash, hashed: hashed, verify: func(nt *cst.Tree, out []byte, _ int, off int32) bool {
 			return string(edit.DecodeScalar(nil, nt, out, key+off)) == newKey
 		}}, nil
 	})
@@ -96,7 +103,7 @@ func (d *Document) SetHeadComment(ptr, text string) error {
 			return annotPlan{}, err
 		}
 		return annotPlan{repls: repls, sp: sp, parent: loc.Parent, anchor: n, verify: func(nt *cst.Tree, out []byte, d int, off int32) bool {
-			s, e := edit.NewCtx(nt, out, d).HeadCommentSpan(n + off)
+			s, e := edit.NewCtxLagging(nt, out, d).HeadCommentSpan(n + off)
 			return edit.TrimComment(string(out[s:e])) == want
 		}}, nil
 	})
@@ -149,7 +156,7 @@ func (d *Document) SetLineComment(ptr, text string) error {
 			return annotPlan{}, err
 		}
 		return annotPlan{repls: repls, sp: sp, parent: loc.Parent, anchor: n, verify: func(nt *cst.Tree, out []byte, d int, off int32) bool {
-			s, e := edit.NewCtx(nt, out, d).LineCommentSpan(n + off)
+			s, e := edit.NewCtxLagging(nt, out, d).LineCommentSpan(n + off)
 			return edit.TrimComment(string(out[s:e])) == comment
 		}}, nil
 	})
@@ -164,7 +171,10 @@ type annotPlan struct {
 	// parent is the container the edit is in, and anchor a node of its entry: where
 	// a region edit looks. keys is set when the edit changes the text of a key.
 	parent, anchor int32
-	keys           bool
+	keys, hashed   bool
+	// For a rename in a mapping that has a key index: what the index needs to follow
+	// the key (the hash of its old text, and the new text).
+	keyHash, newHash uint32
 	// verify reads the new text back as intended. nt is the new tree and doc the
 	// document in it; off is added to the number of a node of the old tree to give
 	// its number in nt.
@@ -209,6 +219,8 @@ func (s *docStream) annotate(doc int, op, ptr string, attempts int, mk func(c *e
 		}}) {
 			if !pl.keys {
 				s.ed.cache.KeepKeys(gen, s.gen) // no node moved and no key changed
+			} else if pl.hashed {
+				s.ed.cache.RenameKey(pl.parent, pl.skip, pl.keyHash, pl.newHash, gen, s.gen) // no node moved
 			}
 			if op == "rename" && s.ranging() {
 				s.noteEditAt(doc, opReplace, toks)

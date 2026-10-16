@@ -452,6 +452,9 @@ func (d *keptDigest) ofOld(t *cst.Tree, src []byte, par int32, removed map[int32
 	roots := make([]int32, 0, len(t.Docs))
 	next, g, doc := int32(1), 0, 0
 	for i := int32(1); int(i) < len(t.Nodes); i++ {
+		if doc < len(t.Docs) && t.Docs[doc].Root == 0 {
+			doc, roots = rootless(t.Docs, doc, roots)
+		}
 		for g < len(gone) && i > gone[g][1] {
 			g++
 		}
@@ -470,8 +473,19 @@ func (d *keptDigest) ofOld(t *cst.Tree, src []byte, par int32, removed map[int32
 		d.fold(nd, indent, src, t.Props)
 		next++
 	}
+	doc, roots = rootless(t.Docs, doc, roots)
 	d.flush()
 	return d, roots, doc == len(t.Docs)
+}
+
+// rootless passes the documents from number doc on that have no root node (Root is
+// 0), which stay as they are, and notes 0 as the root of each.
+func rootless(docs []cst.Doc, doc int, roots []int32) (int, []int32) {
+	for doc < len(docs) && docs[doc].Root == 0 {
+		roots = append(roots, 0)
+		doc++
+	}
+	return doc, roots
 }
 
 // ofNew folds all the nodes of nt, as ofOld folds the ones that stay in the old tree.

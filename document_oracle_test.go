@@ -19,6 +19,7 @@ import (
 
 // streamValues returns the value tree of every document of d.
 func streamValues(d *Document) ([]edit.Value, error) {
+	d.s.tree.Settle()
 	var out []edit.Value
 	for i := 0; i < d.Len(); i++ {
 		v, err := edit.FromTree(&d.s.tree, d.s.src, d.s.tree.Docs[i].Root)

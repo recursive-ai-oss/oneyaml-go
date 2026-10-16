@@ -114,6 +114,7 @@ type nodeCopy struct {
 }
 
 func copyNodes(d *Document) []nodeCopy {
+	d.s.tree.Settle()
 	var out []nodeCopy
 	for _, n := range d.s.tree.Nodes {
 		out = append(out, nodeCopy{uint8(n.Kind), n.Start, n.End, n.Parent, n.Next})

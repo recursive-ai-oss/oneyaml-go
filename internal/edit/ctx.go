@@ -44,8 +44,17 @@ type Ctx struct {
 	nl      string // the first line break in the source, "\n" if none; "" until firstNL looks
 }
 
-// NewCtx prepares a Ctx for document doc of t.
+// NewCtx prepares a Ctx for document doc of t. The offsets of t are brought up to
+// date first (see cst.Tree.Settle), so everything the Ctx reads is true.
 func NewCtx(t *cst.Tree, src []byte, doc int) *Ctx {
+	t.Settle()
+	return NewCtxLagging(t, src, doc)
+}
+
+// NewCtxLagging is NewCtx for a caller that can work with a tree whose later offsets
+// are stale: it reads only the nodes it settles itself (the reads of keys do) and
+// checks where its answer lies.
+func NewCtxLagging(t *cst.Tree, src []byte, doc int) *Ctx {
 	c := &Ctx{T: t, Src: src, Doc: doc}
 	if len(src) >= 3 && src[0] == 0xEF && src[1] == 0xBB && src[2] == 0xBF {
 		c.bom = 3
@@ -202,6 +211,7 @@ func (c *Ctx) Follow(n int32) int32 {
 // anchorOf finds the node that alias node a refers to: the nearest earlier node
 // of the same document with that anchor name.
 func (c *Ctx) anchorOf(a int32) int32 {
+	c.T.SettleTo(a)
 	nd := &c.T.Nodes[a]
 	name := c.Src[nd.Start+1 : nd.End]
 	lo := c.Root()
@@ -249,6 +259,7 @@ type AnchorIndex struct {
 }
 
 func (c *Ctx) buildAnchorIndex() *AnchorIndex {
+	c.T.Settle()
 	ix := &AnchorIndex{Doc: c.Doc, byName: make(map[string][]int32)}
 	for i := c.Root(); i < c.DocEnd(); i++ {
 		if p := c.T.Nodes[i].Prop; p != 0 && c.T.Props[p].HasAnchor() {
@@ -263,6 +274,7 @@ func (c *Ctx) buildAnchorIndex() *AnchorIndex {
 // keyIs reports whether the key node k has the scalar text tok. Collections and
 // aliases never match.
 func (c *Ctx) keyIs(k int32, tok string) bool {
+	c.T.SettleTo(k)
 	nd := &c.T.Nodes[k]
 	if nd.Kind != cst.Scalar {
 		return false

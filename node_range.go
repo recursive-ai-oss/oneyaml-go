@@ -184,7 +184,7 @@ func (s *docStream) refind(h uint64) (coll int32, ok bool) {
 		return 0, false
 	}
 	slot := int(h>>32) - 1
-	c := edit.NewCtx(&s.tree, s.src, int(e.doc))
+	c := edit.NewCtxLagging(&s.tree, s.src, int(e.doc)) // reads only keys, which settle themselves
 	s.attach(c)
 	c.MaxAliasHops = s.cfg.limits.MaxAliasNodes
 	loc, err := c.Resolve(s.pathAt(slot).toks, false)

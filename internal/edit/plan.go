@@ -371,6 +371,7 @@ func (c *Ctx) lastIndex(n int32) int32 {
 // stops counting at its next definition.
 func (c *Ctx) anchorsInUse(n int32, self bool) error {
 	hi := c.lastIndex(n)
+	c.T.SettleTo(hi)
 	lo := n
 	if !self {
 		lo = n + 1
@@ -390,6 +391,7 @@ func (c *Ctx) anchorsInUse(n int32, self bool) error {
 	if len(names) == 0 {
 		return nil
 	}
+	c.T.Settle() // the text after the node is read
 	docEnd := int32(len(c.T.Nodes))
 	if c.Doc+1 < len(c.T.Docs) {
 		docEnd = c.T.Docs[c.Doc+1].Root

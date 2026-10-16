@@ -138,6 +138,7 @@ func scalarKind(t *cst.Tree, src []byte, n int32, text []byte) Kind {
 
 // DecodeScalar appends the value of scalar node n to dst.
 func DecodeScalar(dst []byte, t *cst.Tree, src []byte, n int32) []byte {
+	t.SettleTo(n)
 	nd := &t.Nodes[n]
 	ev := parse.Event{Kind: parse.Scalar, Style: nd.Style, Start: int(nd.Start), End: int(nd.End), Indent: int(nd.Indent)}
 	out, err := parse.AppendScalar(dst, src, &ev)

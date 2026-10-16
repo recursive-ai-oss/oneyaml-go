@@ -66,6 +66,9 @@ type docStream struct {
 	// operation. A buffer a snapshot refers to is never owned, and Bytes is never
 	// reachable in the middle of a patch, so no text a caller holds is changed.
 	batch bool
+	// decoding is set while a Decode reads the tree: an Unmarshaler it calls may
+	// edit the Document, and then no offset may be left stale for the reader.
+	decoding bool
 	// owned reports that src is a buffer the stream allocated and nothing else
 	// refers to: Bytes has not handed it out and no snapshot holds it. Such a
 	// buffer is edited in place, so an edit costs the text it changes and not a
@@ -442,6 +445,9 @@ func (s *docStream) edit(doc int, op editKindOp, ptr string, v *edit.Value) erro
 
 func (s *docStream) editTree(doc int, op editKindOp, ptr string, v *edit.Value) error {
 	fail := func(kind error) error { return &EditError{Op: op.name(), Pointer: ptr, Kind: kind} }
+	if op != opSet || s.batch || s.decoding {
+		s.tree.Settle() // only a Set outside a patch works on stale offsets
+	}
 	if len(s.tree.Docs) == 0 && doc == 0 && ptr == "" && op != opRemove && op != opReplace {
 		return s.firstDocument(v, fail)
 	}
@@ -458,9 +464,31 @@ func (s *docStream) editTree(doc int, op editKindOp, ptr string, v *edit.Value) 
 	var limitErr error
 	genBefore := s.gen
 	for attempt := 0; attempt < 2; attempt++ {
-		c := s.ctx(doc)
-		c.Merge = s.cfg.mergeKeys
 		opt := edit.Options{Safe: attempt == 1}
+		// A run of Sets leaves the offsets far down the tree stale (see
+		// cst.ShiftAfterNode). The next Set is planned on such a tree, which is fine
+		// when its target is among the nodes that were true when planning began; if
+		// it is not, or the plan fails, it is planned again on a settled tree.
+		lazy := attempt == 0 && op == opSet && !s.batch && !s.decoding && s.tree.Lagging() && v.IsScalar() && v.Kind != edit.Alias
+		front := s.tree.Frontier()
+		var c *edit.Ctx
+		if lazy {
+			// Only the replacement of a scalar near the nodes that are true is
+			// planned on stale offsets: other plans (a new key, a collection) read
+			// the tree wherever they like. Resolving reads keys, which settle
+			// themselves.
+			c = s.ctxLagging(doc)
+			c.Merge = s.cfg.mergeKeys
+			loc, rerr := c.Resolve(toks, true)
+			if rerr != nil || loc.Node == 0 || loc.Merged || loc.Node+lagMargin > front || s.tree.Nodes[loc.Node].Kind != cst.Scalar {
+				lazy = false
+			}
+		}
+		if !lazy {
+			s.tree.Settle()
+			c = s.ctx(doc)
+			c.Merge = s.cfg.mergeKeys
+		}
 		pl, err := s.plan(c, op, toks, v, opt)
 		if err != nil {
 			return fail(editKind(err))
@@ -473,6 +501,20 @@ func (s *docStream) editTree(doc int, op editKindOp, ptr string, v *edit.Value) 
 			s.ed.cache.KeepKeys(genBefore, s.gen)     // a scalar value changed; every key is where it was
 			s.keepCursor(genBefore, 0, 0, 0, 0, 0, 0) // and every node
 			return nil
+		}
+		if lazy {
+			// Not a plain scalar replacement after all: take the general way on true
+			// offsets.
+			s.tree.Settle()
+			c = s.ctx(doc)
+			c.Merge = s.cfg.mergeKeys
+			if pl, err = s.plan(c, op, toks, v, opt); err != nil {
+				return fail(editKind(err))
+			}
+			repls, check = pl.repls, pl.check
+			if len(repls) == 0 {
+				return nil
+			}
 		}
 		var gone removedEntry
 		if op == opRemove && s.ed.cache.Keys != nil && s.ed.cache.Keys.Built() > 0 {
@@ -732,7 +774,7 @@ type planned struct {
 // region's tree and the tokens below its root.
 func checkCtx(nt *cst.Tree, out []byte, rg *regionInfo, doc int, toks []string) (*edit.Ctx, []string) {
 	if rg == nil {
-		return edit.NewCtx(nt, out, doc), toks
+		return edit.NewCtxLagging(nt, out, doc), toks
 	}
 	if rg.skip > len(toks) {
 		return nil, nil
@@ -747,7 +789,7 @@ func checkCtx(nt *cst.Tree, out []byte, rg *regionInfo, doc int, toks []string) 
 		}
 		rest = append([]string{strconv.Itoa(i - rg.before)}, rest[1:]...)
 	}
-	return edit.NewCtx(nt, out, 0), rest
+	return edit.NewCtxLagging(nt, out, 0), rest
 }
 
 // parentIn finds the container again in the edited tree.
@@ -887,6 +929,7 @@ func (s *docStream) snapshot() docSnapshot {
 }
 
 func (s *docStream) snapshotTree() docSnapshot {
+	s.tree.Settle()
 	s.owned = false
 	s.shared = true
 	t := s.tree
@@ -1001,6 +1044,7 @@ func (s *docStream) takeSpare() cst.Tree {
 
 // unshare gives the stream a tree of its own before an in-place change.
 func (s *docStream) unshare() {
+	s.tree.Settle()
 	s.tree = cst.Tree{
 		Nodes: append([]cst.Node(nil), s.tree.Nodes...),
 		Props: append([]cst.Prop(nil), s.tree.Props...),
@@ -1060,6 +1104,24 @@ func cleanText(text []byte) bool {
 		i += size
 	}
 	return true
+}
+
+// noLag makes Set shift every later offset at once, as a stream edited by a patch
+// does. Tests set it to compare the two ways.
+var noLag bool
+
+// lagMargin is how many nodes after its target a lazy plan of a Set may read: the
+// pair around the target and its neighbours. A target nearer the frontier than this
+// is planned again on a settled tree.
+const lagMargin = 16
+
+// ctxLagging is ctx for a plan that works on a tree with stale offsets.
+func (s *docStream) ctxLagging(doc int) *edit.Ctx {
+	c := edit.NewCtxLagging(&s.tree, s.src, doc)
+	c.MaxAliasHops = s.cfg.limits.MaxAliasNodes
+	c.YAML11 = s.cfg.yaml11
+	s.attach(c)
+	return c
 }
 
 // patchScalar handles the common edit without parsing again: one inline scalar of
@@ -1131,7 +1193,11 @@ func (s *docStream) patchScalar(n int32, repls []edit.Repl, v *edit.Value) bool 
 	if s.shared {
 		s.unshare()
 	}
-	s.tree.ShiftAfter(nd.End, delta)
+	if s.batch || s.decoding || noLag {
+		s.tree.ShiftAfter(nd.End, delta)
+	} else {
+		s.tree.ShiftAfterNode(n, nd.End, delta)
+	}
 	node := &s.tree.Nodes[n]
 	node.End = node.Start + int32(len(text))
 	node.Style, node.Indent = st, 0
