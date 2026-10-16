@@ -88,6 +88,7 @@
 //     yaml.v3 places them in the common layouts: line comments, comments
 //     directly above a key or item, foot comments, the comments of a document,
 //     and comments after a "---" marker, a lone dash, an anchor or tag on a
-//     collection, or an explicit key. Comment lines inside a flow collection
-//     are read, but a flow collection is written back without them.
+//     collection, or an explicit key. Comments inside a flow collection are
+//     read and written as yaml.v3 does, except a comment line just before the
+//     closing bracket, which is not read.
 package yaml

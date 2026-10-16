@@ -193,8 +193,6 @@ func TestCompatV3NodeWrite(t *testing.T) {
 			} else if commentWriteGaps[gapName(it.name)] {
 				wg.use(it.name)
 				tally.note("GAP: comment layout", it.name)
-			} else if commentInFlow(&yn, false) {
-				tally.note("GAP: comments inside flow collections are not written", it.name)
 			} else {
 				tally.unexplained = append(tally.unexplained, fmt.Sprintf("%s: v3 err=%v me err=%v\n%s%s", it.name, yerr, cerr, firstDiff(yb, cb), fullIf(yb, cb)))
 			}
@@ -202,20 +200,6 @@ func TestCompatV3NodeWrite(t *testing.T) {
 	}
 	tally.report(t)
 	wg.check(t)
-}
-
-// commentInFlow reports whether any node inside a flow collection has a comment.
-func commentInFlow(n *yv3.Node, inFlow bool) bool {
-	inFlow = inFlow || n.Style&yv3.FlowStyle != 0
-	if inFlow && (n.HeadComment != "" || n.LineComment != "" || n.FootComment != "") {
-		return true
-	}
-	for _, c := range n.Content {
-		if commentInFlow(c, inFlow) {
-			return true
-		}
-	}
-	return false
 }
 
 // Known gaps: inputs where the shim places a comment on a different node than

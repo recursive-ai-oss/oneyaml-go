@@ -391,6 +391,9 @@ func (w *nodeWriter) node(n *Node, p npos, tail string) {
 		w.end(p)
 	case ScalarNode:
 		w.scalar(n, p, tag, force)
+		if p.m == nRoot && n.FootComment != "" {
+			w.footComment(0, n.FootComment)
+		}
 	case SequenceNode, MappingNode:
 		w.collection(n, p, tag)
 	default:
@@ -658,11 +661,17 @@ func (w *nodeWriter) collection(n *Node, p npos, tag string) {
 		}
 		w.lineComment(n, p)
 		w.end(p)
+		if p.m == nRoot && n.FootComment != "" {
+			w.footComment(0, n.FootComment)
+		}
 		return
 	}
 	flow := n.Style&FlowStyle != 0 || p.m == nFlow
 	if flow {
 		w.flowCollection(n, p, tag, seq)
+		if p.m == nRoot && n.FootComment != "" {
+			w.footComment(0, n.FootComment)
+		}
 		return
 	}
 	// A block collection: after "key:" it starts on the next line, after "- " on
@@ -832,6 +841,10 @@ func (w *nodeWriter) blockMap(n *Node, col int, inline bool) {
 }
 
 func (w *nodeWriter) flowCollection(n *Node, p npos, tag string, seq bool) {
+	if p.m != nFlow && (hasInnerComment(n) || (!seq && n.FootComment != "")) {
+		w.flowCommented(n, p, tag)
+		return
+	}
 	w.begin(p)
 	w.props(n, tag)
 	open, closeCh := byte('{'), byte('}')
