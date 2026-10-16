@@ -74,7 +74,9 @@ func (e *SyntaxError) Error() string {
 // one and More holds the others, in input order, so errors.As finds a
 // *TypeError whether there was one problem or many. Syntax errors, limit errors
 // and errors from your own hooks still stop at once. At most 100 mismatches are
-// kept.
+// kept, and the paths of the ones after the first together take no more than
+// the larger of the input size and 1 MiB: when a deeply nested document would
+// pass that, the later mismatches are left out.
 type TypeError struct {
 	// Path is the RFC 6901 pointer to the value, empty for the root.
 	Path string

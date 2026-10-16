@@ -226,11 +226,17 @@ func quoteKey(k string) string {
 
 // typeErrors builds the TypeError for a binding failure. An aggregate becomes one
 // TypeError for the first mismatch with the rest in More.
+// pathBudgetMin is the least number of bytes of path text kept for the mismatches
+// of one read. The budget is the larger of this and the size of the input, so
+// the paths cannot cost more than the input did: a deep document with many bad
+// values reports as many of them as fit and always reports the first.
+const pathBudgetMin = 1 << 20
+
 func typeErrors(e *bind.Error, src []byte, lineBase int) *TypeError {
 	if e.Multi == nil {
 		return typeError(e, e.FullPath(), src, lineBase)
 	}
-	all := e.Flatten()
+	all := e.Flatten(max(len(src), pathBudgetMin))
 	out := typeError(all[0].Err, all[0].Path, src, lineBase)
 	for _, m := range all[1:] {
 		out.More = append(out.More, typeError(m.Err, m.Path, src, lineBase))

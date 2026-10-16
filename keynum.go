@@ -65,7 +65,7 @@ func canonNumber(s string) string {
 	exp := new(big.Int)
 	if i < len(t) {
 		et := strings.TrimPrefix(t[i+1:], "+")
-		if len(strings.TrimLeft(et, "-")) > maxExpDigits {
+		if len(strings.TrimLeft(et, "-0")) > maxExpDigits {
 			return "x:" + sign + string(digits) + "/" + strconv.Itoa(point) + "/" + et
 		}
 		if _, ok := exp.SetString(et, 10); !ok {

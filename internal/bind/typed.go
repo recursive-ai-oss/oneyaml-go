@@ -865,7 +865,11 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 			if err = withSeg(err, b.keyLabel(&ke)); !resumable(err) {
 				return err
 			}
-			// The entry is not added, but its key is remembered.
+			// The entry is not added, but its key is remembered. An earlier entry
+			// of the same key was added: then this is a repeat, not a mismatch.
+			if !st.track && !weak && v.MapIndex(st.kv).IsValid() {
+				return withSeg(b.dupKey(ke.Start), b.keyLabel(&ke))
+			}
 			if !weak {
 				if st.failed == nil {
 					st.failed = map[any]struct{}{}

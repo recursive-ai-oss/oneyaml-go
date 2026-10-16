@@ -209,26 +209,61 @@ type Located struct {
 	Path string
 }
 
-// Flatten returns the mismatches of e in input order, each with its complete
-// path. For an error that is not an aggregate it returns e alone. The work is the
-// sum of the path lengths: the segments shared by several mismatches are walked
-// once per mismatch, and there are at most maxCollected of those.
-func (e *Error) Flatten() []Located {
-	var out []Located
-	var walk func(n *Error, prefix []byte)
-	walk = func(n *Error, prefix []byte) {
-		for i := len(n.segs) - 1; i >= 0; i-- {
-			prefix = appendSeg(prefix, n.segs[i])
-		}
-		if n.Multi == nil {
-			out = append(out, Located{Err: n, Path: string(prefix) + n.Path})
-			return
-		}
-		for _, c := range n.Multi {
-			walk(c, prefix)
+// segsLen is the length of the escaped segments an error has gathered.
+func (e *Error) segsLen() int {
+	n := 0
+	for _, s := range e.segs {
+		n++
+		for i := 0; i < len(s); i++ {
+			n++
+			if s[i] == '~' || s[i] == '/' {
+				n++
+			}
 		}
 	}
-	walk(e, nil)
+	return n
+}
+
+// Flatten returns the mismatches of e in input order, each with its complete
+// path. For an error that is not an aggregate it returns e alone. The paths are
+// built only while their total length stays within budget: the first mismatch
+// is always returned whole, and the ones after it that would pass the budget are
+// left out. Their length is added up without building them, so a long path costs
+// nothing unless it is kept.
+func (e *Error) Flatten(budget int) []Located {
+	var out []Located
+	var chain []*Error
+	total := 0
+	stop := false
+	var walk func(n *Error, plen int)
+	walk = func(n *Error, plen int) {
+		plen += n.segsLen()
+		chain = append(chain, n)
+		defer func() { chain = chain[:len(chain)-1] }()
+		if n.Multi != nil {
+			for _, c := range n.Multi {
+				if walk(c, plen); stop {
+					return
+				}
+			}
+			return
+		}
+		plen += len(n.Path)
+		if len(out) > 0 && total+plen > budget {
+			stop = true
+			return
+		}
+		b := make([]byte, 0, plen)
+		for _, a := range chain {
+			for i := len(a.segs) - 1; i >= 0; i-- {
+				b = appendSeg(b, a.segs[i])
+			}
+		}
+		b = append(b, n.Path...)
+		total += plen
+		out = append(out, Located{Err: n, Path: string(b)})
+	}
+	walk(e, 0)
 	return out
 }
 

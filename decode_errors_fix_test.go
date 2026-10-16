@@ -46,12 +46,24 @@ func TestDeepAggregateIsLinear(t *testing.T) {
 		elapsed := time.Since(start)
 		runtime.ReadMemStats(&after)
 		var te *oneyaml.TypeError
-		if !errors.As(err, &te) || len(te.All()) != c.leaves {
-			t.Fatalf("depth %d: got %d errors from %v", c.depth, len(te.All()), err != nil)
+		if !errors.As(err, &te) {
+			t.Fatalf("depth %d: got %v", c.depth, err != nil)
+		}
+		// The paths of the errors after the first share a budget of the larger of
+		// the input size and 1 MiB; whatever fits is reported, with whole paths.
+		perPath := c.depth * 42
+		wantN := min(c.leaves, 1+max(len(in), 1<<20)/perPath)
+		if n := len(te.All()); n < wantN-1 || n > wantN+1 || n < 1 {
+			t.Fatalf("depth %d: got %d errors, want about %d", c.depth, n, wantN)
+		}
+		for _, e := range te.All() {
+			if len(e.Path) < c.depth*41 {
+				t.Fatalf("depth %d: path of %d bytes is not whole", c.depth, len(e.Path))
+			}
 		}
 		// Every error carries its full path (about 40 bytes a level), twice with its
 		// message; allow a generous constant over that.
-		paths := c.leaves * c.depth * 45
+		paths := len(te.All()) * c.depth * 45
 		if alloc := int(after.TotalAlloc - before.TotalAlloc); alloc > 12*paths+8*len(in)+(4<<20) {
 			t.Errorf("depth %d, %d errors: allocated %d MB for %d MB of paths", c.depth, c.leaves, alloc>>20, paths>>20)
 		}
@@ -220,5 +232,102 @@ func TestFloatKeyComparisonIsExact(t *testing.T) {
 	mAny := fmt.Sprint(oneyaml.Unmarshal([]byte("1e-400: a\n2e-400: b\n"), &a))
 	if msg("1e-400: a\n2e-400: b\n") != mAny {
 		t.Errorf("typed and generic messages differ:\n%s\n%s", msg("1e-400: a\n2e-400: b\n"), mAny)
+	}
+}
+
+// aliasKeyDoc nests depth flow mappings whose keys are one anchored key of keyLen
+// bytes used through an alias, with 100 bad values at the bottom. The input is
+// small and the path of every error is depth*keyLen bytes.
+func aliasKeyDoc(depth, keyLen int) []byte {
+	var sb strings.Builder
+	sb.WriteString("{&k " + strings.Repeat("/", keyLen) + ": ")
+	for i := 1; i < depth; i++ {
+		sb.WriteString("{*k : ")
+	}
+	sb.WriteString("{")
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&sb, "e%d: x, ", i)
+	}
+	sb.WriteString("}" + strings.Repeat("}", depth))
+	return []byte(sb.String())
+}
+
+// The paths of the errors of one read are bounded by the size of the input, but
+// the first error is always whole.
+func TestCollectedPathsStayWithinABudget(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		in         []byte
+		opts       []oneyaml.Option
+		maxAllocMB uint64
+	}{
+		{"alias key, untrusted", aliasKeyDoc(999, 8000), []oneyaml.Option{oneyaml.Untrusted()}, 120},
+		{"alias key, defaults", aliasKeyDoc(2000, 1600), nil, 120},
+	} {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		var v nest
+		err := oneyaml.Unmarshal(c.in, &v, c.opts...)
+		runtime.ReadMemStats(&after)
+		var te *oneyaml.TypeError
+		if !errors.As(err, &te) {
+			t.Fatalf("%s: got %v", c.name, err)
+		}
+		all := te.All()
+		if len(all) == 0 || !strings.HasSuffix(all[0].Path, "/e0") {
+			t.Fatalf("%s: the first error is not whole: %d errors", c.name, len(all))
+		}
+		total := 0
+		for _, e := range all[1:] {
+			total += len(e.Path)
+		}
+		if budget := max(len(c.in), 1<<20); total > budget {
+			t.Errorf("%s: later errors hold %d bytes of path, budget %d", c.name, total, budget)
+		}
+		if mb := (after.TotalAlloc - before.TotalAlloc) >> 20; mb > c.maxAllocMB {
+			t.Errorf("%s: allocated %d MB, want at most %d", c.name, mb, c.maxAllocMB)
+		}
+	}
+}
+
+func TestLongPathWithoutAliasesIsBounded(t *testing.T) {
+	key := strings.Repeat("k", 1_000_000)
+	var sb strings.Builder
+	sb.WriteString("{" + key + ": {")
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&sb, "e%d: x, ", i)
+	}
+	sb.WriteString("}}")
+	var v nest
+	err := oneyaml.Unmarshal([]byte(sb.String()), &v)
+	var te *oneyaml.TypeError
+	if !errors.As(err, &te) {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, e := range te.All() {
+		total += len(e.Path)
+	}
+	if total > sb.Len()+(1<<20) {
+		t.Errorf("%d bytes of path for %d bytes of input", total, sb.Len())
+	}
+}
+
+func TestRepeatOfAnEarlierGoodKeyIsADuplicate(t *testing.T) {
+	var m map[string]int
+	err := oneyaml.Unmarshal([]byte("a: 1\na: x\n"), &m)
+	var se *oneyaml.SyntaxError
+	if !errors.As(err, &se) || se.Category != oneyaml.CategoryDuplicateKey || se.Line != 2 {
+		t.Errorf("got %v", err)
+	}
+}
+
+func TestExponentLeadingZerosDoNotCount(t *testing.T) {
+	var v any
+	in := "1e5: a\n? 1e" + strings.Repeat("0", 5000) + "5\n: b\n"
+	err := oneyaml.Unmarshal([]byte(in), &v)
+	var se *oneyaml.SyntaxError
+	if !errors.As(err, &se) || se.Category != oneyaml.CategoryDuplicateKey {
+		t.Errorf("got %v", err)
 	}
 }
