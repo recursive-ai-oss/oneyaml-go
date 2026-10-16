@@ -2,7 +2,7 @@
 
 Limits stop input from using more time or memory than you intended. By default, nesting depth, alias expansion, the digits of a number and the work of a patch are bounded. Input size, documents per stream and scalar length are bounded only when you select `Untrusted()`; select it, and size it for your data, for any input you do not control. This page lists each limit, the presets, how options combine, and what the limits do not cover: your own hooks and the compat packages among them.
 
-Every call that reads input is limited: `Unmarshal`, `Decoder`, `Parse` and the `Document` methods that follow aliases or apply patches. Aliases are counted wherever they are followed, so reading from a `Document` is bounded in the same way as decoding. The options are:
+Every call that reads input is limited: `Unmarshal`, `Decoder`, `Parse` and the `Document` methods that follow aliases or apply patches. Aliases are counted wherever they are followed, so reading from a `Document` is bounded in the same way as decoding. `Get`, `Decode` and `Node.Decode` use the limits the `Document` was parsed with, and a limit option given to one of them changes the limits for that read only ([Reading values back](editing.md#reading-values-back)). The options are:
 
 | Option | Effect |
 |---|---|

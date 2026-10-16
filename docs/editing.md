@@ -6,7 +6,7 @@ How `Document` changes a YAML file and what it promises to leave alone. For the 
 
 You address a value with an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) pointer: `/replicas`, `/tags/0`, `/tags/-` for the end of a sequence. A pointer token matches a mapping key by its text, so `/1` finds the key `1`.
 
-In a pointer, `~` is written `~0` and `/` is written `~1`, so the key `app.kubernetes.io/name` is the token `app.kubernetes.io~1name`. Do not join keys from data with `"/" + key`: build the pointer with `oneyaml.Pointer`, which escapes each token. `Node.Pointer` returns the same form.
+In a pointer, `~` is written `~0` and `/` is written `~1`, so the key `app.kubernetes.io/name` is the token `app.kubernetes.io~1name`. When a key comes from data, build the pointer with `oneyaml.Pointer` rather than with `"/" + key`, so that each token is escaped. `Node.Pointer` returns the same form for a node you have read.
 
 <!-- example: ExamplePointer -->
 ```go
@@ -26,8 +26,6 @@ fmt.Print(doc)
 //   labels:
 //     app.kubernetes.io/name: api
 ```
-
-Options given to `Get`, `Decode` and `Node.Decode` apply to that read only, on top of the options the Document was parsed with, so one parsed file can be read strictly in one place and loosely in another: `doc.Get("/spec", &spec, oneyaml.KnownFields())`. `KnownFields`, `MergeKeys`, `Limits`, `Untrusted` and `NoLimits` take effect; an option that does not concern reading is ignored. The boolean options take an optional bool, and the last one wins: `oneyaml.KnownFields(false)` turns it off again.
 
 ## Two block-scalar cases
 
@@ -246,6 +244,7 @@ fmt.Println(errors.Is(err, oneyaml.ErrKeyExists))
 - the mapping already has the new key (`ErrKeyExists`);
 - the pointer is the root or an item of a sequence (`ErrNotAnEntry`);
 - the pointer leads through an alias (`ErrAliasWrite`). Renaming an entry whose value is an alias is allowed;
+- the key occurs twice in its mapping (`ErrAmbiguousKey`);
 - the key carries an anchor that an alias uses (`ErrAnchorInUse`), because the alias would read the new key too. This is the same rule as for `Remove`. An anchor on the value does not count;
 - the key is empty, a collection, an alias or a block scalar, or is the merge key `<<`; the new key is longer than 1000 bytes or is not valid UTF-8; or a tag on the key does not fit the new key (`ErrUnsupportedEdit`).
 
@@ -496,11 +495,13 @@ fmt.Println(errors.Is(err, oneyaml.ErrNotFound), errors.As(err, new(*oneyaml.Lim
 // false true
 ```
 
-Without `MergeKeys()`, `<<` is an ordinary key, and pointers address only the keys as written.
+Without `MergeKeys()`, `<<` is an ordinary key, and pointers address only the keys as written. The edits, patches, `Node.Find` and `Node.Lookup` follow the option given to `Parse`; `Get` and `Decode` can also take `MergeKeys()` or `MergeKeys(false)` for one read ([Reading values back](#reading-values-back)).
 
 ## Errors
 
 An edit that cannot be made leaves the document unchanged and returns an `*EditError`. It names the operation and the pointer, and `errors.Is` matches its kind against `ErrNotFound`, `ErrAliasWrite`, `ErrAmbiguousKey`, `ErrAnchorInUse`, `ErrUnsupportedEdit`, `ErrKeyExists`, `ErrNotAnEntry`, `ErrInvalidComment` and the other sentinel errors.
+
+When the document was parsed with a bound on input size (`MaxInputBytes`, which `Untrusted()` sets), `Set`, `Rename`, `SetHeadComment`, `SetLineComment` and patches refuse an edit that would make the text longer than the bound. `errors.As` finds the `*LimitError` inside the `*EditError` ([Limits](limits.md#each-limit)). An edit that makes the text shorter is always allowed.
 
 <!-- example: ExampleEditError -->
 ```go
@@ -517,9 +518,48 @@ if errors.As(err, &ee) {
 // set /a/b/c true
 ```
 
+## Reading values back
+
+`Get(ptr, &v)` reads the value at a pointer into any target `Unmarshal` accepts, `Decode(&v)` reads the whole document, and `Node.Decode` reads the part below a node. Options given to one of these reads apply to that call only, on top of the options the document was parsed with, so one file can be read strictly in one place and loosely in another. `KnownFields`, `MergeKeys`, `Limits`, `Untrusted` and `NoLimits` take effect. The size bounds that concern parsing (`MaxInputBytes`, `MaxDocuments`) do nothing to a document that is already parsed, and options that concern writing are ignored. `KnownFields`, `MergeKeys` and `YAML11Strings` take an optional bool, and the last option wins, so `KnownFields(false)` turns off an earlier `KnownFields()`:
+
+<!-- example: ExampleDocument_Get_options -->
+```go
+src := []byte("name: api\nspec:\n  replicas: 2\n  replica: 3\n")
+type Spec struct {
+	Replicas int `yaml:"replicas"`
+}
+
+// Parsed without options, read strictly in one place.
+doc, err := oneyaml.Parse(src)
+if err != nil {
+	log.Fatal(err)
+}
+var strict Spec
+err = doc.Get("/spec", &strict, oneyaml.KnownFields())
+fmt.Println(errors.Is(err, oneyaml.ErrUnknownField))
+
+// Parsed strictly, read loosely in one place.
+doc, err = oneyaml.Parse(src, oneyaml.KnownFields())
+if err != nil {
+	log.Fatal(err)
+}
+var loose Spec
+if err := doc.Get("/spec", &loose, oneyaml.KnownFields(false)); err != nil {
+	log.Fatal(err)
+}
+fmt.Println(loose.Replicas)
+// Output:
+// true
+// 2
+```
+
+A file whose mapping repeats a key still parses, so you can read and edit its other parts. Reading a part that holds the repeated key reports it, as `Unmarshal` does, and a pointer through the repeated key is refused with `ErrAmbiguousKey`, by `Get` and by every edit. `Node.Lookup` and `Node.Find` return the first of the entries.
+
 ## Reading while you edit
 
 A `Node` is a view of the document as it was when you read it. An edit makes every `Node` read before it stale: `Stale` reports `true`, `Decode` and `Pointer` return an error matching `ErrStaleNode`, and the other methods return zero values. A zero value looks like an answer (`Value` of a stale node is `""`, the same as an empty scalar), so `Node.Err` is the check: it is `nil` for a node you can read, matches `ErrStaleNode` for a stale one, and matches `ErrNotFound` for the zero `Node`, such as the one a failed `Lookup` returns. To look up a key, use `Node.Find(key)`: it returns the value and a `nil` error, or an error that says why there is no value. The error matches `ErrNotFound` when the key is absent, `ErrStaleNode` when the node was read before an edit, and `ErrAmbiguousKey` when a merge brings the key in from two places of one source, and it is a `*LimitError` when a merge search was refused ([Merge keys](#merge-keys)). `Node.Lookup` is the short form for when any miss means "no value": it returns `false` in all of these cases. Reading the node again after an edit is still the better habit.
+
+A `Node` can be compared with `==` and used as a map key. A node read before an edit never equals the node read at the same place after it, because the first one is stale; the [`Node` reference](https://pkg.go.dev/oneyaml.dev/go#Node) gives the rule.
 
 <!-- example: ExampleNode_Err -->
 ```go

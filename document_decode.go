@@ -76,7 +76,8 @@ func configFromBind(c bind.Config) config {
 // Decode reads the document into the value v points to, with the rules and
 // errors of Unmarshal: the same binder reads the stored tree that Unmarshal
 // reads from the parser, so the two always agree. Aliases are expanded within the
-// alias and depth limits the Document was parsed with. A Document with no
+// alias and depth limits the Document was parsed with, or those the options of
+// the call set. A Document with no
 // documents leaves v unchanged. If the view addresses a document that does not
 // exist, the error is an *EditError matching ErrNotFound.
 //

@@ -687,3 +687,36 @@ func Example_strictConfig() {
 	// line 3, column 11: cannot unmarshal !!str `two` into int
 	// unknown field: true
 }
+
+// Options given to Get apply to that read only, on top of the options the
+// Document was parsed with. KnownFields(false) turns off a KnownFields given
+// earlier.
+func ExampleDocument_Get_options() {
+	src := []byte("name: api\nspec:\n  replicas: 2\n  replica: 3\n")
+	type Spec struct {
+		Replicas int `yaml:"replicas"`
+	}
+
+	// Parsed without options, read strictly in one place.
+	doc, err := oneyaml.Parse(src)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var strict Spec
+	err = doc.Get("/spec", &strict, oneyaml.KnownFields())
+	fmt.Println(errors.Is(err, oneyaml.ErrUnknownField))
+
+	// Parsed strictly, read loosely in one place.
+	doc, err = oneyaml.Parse(src, oneyaml.KnownFields())
+	if err != nil {
+		log.Fatal(err)
+	}
+	var loose Spec
+	if err := doc.Get("/spec", &loose, oneyaml.KnownFields(false)); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(loose.Replicas)
+	// Output:
+	// true
+	// 2
+}

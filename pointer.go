@@ -15,6 +15,6 @@ import "oneyaml.dev/go/internal/pointer"
 // Remove, Rename and the patch operations take, and what Node.Pointer returns for
 // the same place.
 //
-// To go the other way and read the tokens out of a pointer, use Node.Pointer on
-// a node of a Document; there is no need to split the text by hand.
+// To get the pointer of a node you have read, call Node.Pointer instead of
+// building it again from its keys.
 func Pointer(tokens ...string) string { return pointer.Join(tokens) }

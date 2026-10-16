@@ -45,7 +45,8 @@
 // # Edit
 //
 // [Parse] returns a [Document] that keeps every byte of its input.
-// [Document.Set] assigns a value at an RFC 6901 pointer: it replaces an existing
+// [Document.Set] assigns a value at an RFC 6901 pointer, which [Pointer] builds
+// from keys and indices with "/" and "~" escaped: it replaces an existing
 // value, keeping its style when the style can hold the new value and moving to
 // the nearest style that can when it cannot, and it adds a missing key at the
 // end of its mapping in the style of its siblings. Reading the value back always
@@ -65,7 +66,9 @@
 //
 // [Document.Get] and [Document.Decode] read values back through the same binder
 // that [Unmarshal] uses, and [Document.Root] gives a read-only [Node] view with
-// kinds, styles, tags, anchors, comments and positions.
+// kinds, styles, tags, anchors, comments and positions. A read may take options
+// of its own, such as [KnownFields], which apply to that call on top of the
+// options the Document was parsed with.
 //
 // # Patch
 //
@@ -102,7 +105,9 @@
 // control. Options apply in order: [Limits] changes only the fields it sets,
 // on top of the options before it, and [NoBound] lifts one bound. So
 // Untrusted(), Limits(LimitSet{MaxDepth: 50}) keeps every untrusted bound and
-// tightens depth. A limit that is hit is a [*LimitError]. The Document and
+// tightens depth. The bound on input size also holds for edits: [Document.Set],
+// [Document.Rename], the comment setters and patches refuse to make the text
+// longer than it. A limit that is hit is a [*LimitError]. The Document and
 // decoder paths follow aliases under the same budget. Code in your own hooks
 // runs outside these limits, and the compat packages always use the defaults.
 //
@@ -142,11 +147,19 @@
 //
 // # Options
 //
-// One [Option] type serves every entry point, and an option that does not apply
-// to a call is ignored: [KnownFields] makes an unknown struct key an error,
-// [MergeKeys] reads the "<<" merge key, [Indent] sets the output indentation,
-// and [Limits], [Untrusted] and [NoLimits] set the limits, in the order given.
-// Duplicate keys are always an error.
+// One [Option] type serves every entry point, the reads of a Document included,
+// and an option that does not apply to a call is ignored: [KnownFields] makes an
+// unknown struct key an error, [MergeKeys] reads the "<<" merge key,
+// [YAML11Strings] makes edits quote strings that YAML 1.1 reads as another type,
+// [Indent] sets the output indentation, and [Limits], [Untrusted] and
+// [NoLimits] set the limits. Options apply in the order given, and the last one
+// that sets a thing wins. KnownFields, MergeKeys and YAML11Strings take an
+// optional bool, so KnownFields(false) turns off an earlier KnownFields().
+//
+// No option allows a repeated mapping key. [Unmarshal] and [Decoder.Decode]
+// report one, and so do [Document.Get], [Document.Decode] and [Node.Decode] when
+// the part they read holds it. [Parse] itself keeps a document that has one, so
+// that its other parts can still be read and edited; see Parse.
 //
 // # Compatibility
 //

@@ -158,6 +158,11 @@ type editWork struct {
 // A \u or \U escape that is not a Unicode scalar value, such as a lone
 // surrogate, is a *SyntaxError, as it is for [Unmarshal]; an escaped surrogate
 // pair, as JSON writes, is one character.
+//
+// A mapping key that occurs twice does not stop Parse, so a file with one can
+// be loaded and its other parts read and edited. Reading a part that holds the
+// repeated key reports it, by the rules of [Unmarshal], and a pointer that goes
+// through it is refused with [ErrAmbiguousKey].
 func Parse(data []byte, opts ...Option) (*Document, error) {
 	cfg := newConfig(opts)
 	if m := cfg.limits.MaxInputBytes; m > 0 && len(data) > m {

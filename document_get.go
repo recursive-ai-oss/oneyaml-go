@@ -23,6 +23,10 @@ import (
 // If v is a *Node it receives the node itself, and the alias at the end of the
 // pointer, if there is one, is not followed.
 //
+// A pointer through a key that occurs twice in its mapping is refused with an
+// *EditError matching ErrAmbiguousKey. A repeated key inside the value read is
+// reported as Unmarshal reports it. Build a pointer from keys with Pointer.
+//
 // Options apply to this read only, on top of those the Document was parsed with,
 // as for Decode: Get("/spec", &spec, KnownFields()) reads one part strictly.
 func (d *Document) Get(ptr string, v any, opts ...Option) error {

@@ -129,7 +129,8 @@ Swapping your import does not change the code of your dependencies. A type from 
 
 They read YAML 1.1 forms the way their targets do, but they are not identical. Known gaps and differences:
 
-- **yaml.v3 comments:** comments land on the same nodes as in yaml.v3 in the common layouts, and are written back where yaml.v3 writes them, inside flow collections too. A comment line just before the closing bracket of a flow collection is not read, so it is lost. Where yaml.v3 writes text that does not read back, the adapter writes text that does.
+- **yaml.v3 comments:** comments land on the same nodes as in yaml.v3 in the common layouts, and are written back where yaml.v3 writes them, inside flow collections too. One flow-mapping layout puts a comment on a different node, and where yaml.v3 writes text that does not read back, the adapter writes text that does.
+- **yaml.v3 hooks:** an `UnmarshalYAML` or `MarshalYAML` method of a form the adapter cannot call is an error, where yaml.v3 skips it. A `MarshalYAML` that returns gopkg.in/yaml.v3's own `*yaml.Node` is written as a struct of the node's fields.
 - **sigs.k8s.io/yaml:** `JSONObjectToYAMLObject` and the subpackages of sigs.k8s.io/yaml are not provided.
 - **Numbers:** in `compat/yamlv3`, a plain `3.5` read into an integer field is a type error instead of being truncated. In `compat/k8syaml`, a float read into a string field keeps its full precision, where sigs.k8s.io/yaml rounds it to 32 bits.
 - **Valid and invalid input:** both read valid YAML that their targets refuse, `compat/yamlv3` refuses invalid YAML that yaml.v3 accepts, and both return errors where their targets panic.

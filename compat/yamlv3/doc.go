@@ -93,6 +93,10 @@
 // yaml.v3 is wrong:
 //   - a repeated key is sometimes reported without the line of its first
 //     occurrence, as when the repeated key is written as an alias;
+//   - a MarshalYAML method that returns the *Node of gopkg.in/yaml.v3, as a type
+//     from a module that still imports it may, is called, but the Node it
+//     returns is written as an ordinary struct, field by field; yaml.v3 writes
+//     the node;
 //   - comments are recovered from the text and placed on the nodes where
 //     yaml.v3 places them in the common layouts: line comments, comments
 //     directly above a key or item, foot comments, the comments of a document,
