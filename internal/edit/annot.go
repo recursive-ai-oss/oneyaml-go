@@ -112,8 +112,8 @@ func (c *Ctx) insideScalar(at int, skip int32) bool {
 
 // CheckPatchTree reports what text of a patch written in YAML may not contain,
 // though the YAML reader would accept it: a scalar the decoder refuses to read
-// (a quoted escape that is not a Unicode scalar value, for one), and a local tag,
-// which JSON has no counterpart for and which a patch would drop. The error names
+// (a quoted escape that is not a Unicode scalar value, for one), and a tag outside
+// the core schema, which JSON has no counterpart for and which a patch would drop. The error names
 // the position when it has one.
 func CheckPatchTree(t *cst.Tree, src []byte) error {
 	var buf []byte
@@ -126,9 +126,12 @@ func CheckPatchTree(t *cst.Tree, src []byte) error {
 				return err
 			}
 		}
-		if p := t.PropOf(int32(i)); p != nil && p.HasTag() && !strings.HasPrefix(CanonTag(t, src, int32(i)), "!!") {
-			e := scan.NewError(src, int(p.TagStart), scan.Syntax, "a patch may not use the local tag "+string(src[p.TagStart:p.TagEnd]))
-			return e
+		if p := t.PropOf(int32(i)); p != nil && p.HasTag() {
+			// The non-specific tag "!" only makes a plain scalar a string, so it is
+			// not a tag outside the core schema.
+			if c := CanonTag(t, src, int32(i)); c != "!" && !strings.HasPrefix(c, "!!") {
+				return scan.NewError(src, int(p.TagStart), scan.Syntax, "a patch may not use a tag outside the core schema: "+string(src[p.TagStart:p.TagEnd]))
+			}
 		}
 	}
 	return nil

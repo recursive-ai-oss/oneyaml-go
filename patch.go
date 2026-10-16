@@ -80,7 +80,7 @@ func PatchTest(path string, v any) PatchOp { return PatchOp{Op: "test", Path: pa
 // Text that does not start with "[" or "{" and is not JSON is read as YAML: a block
 // list of operations, as a patch kept in a YAML file is written, gives the same
 // result as the JSON form. Text that starts like JSON is judged as JSON only. A
-// YAML patch may not use aliases, local tags, a key named twice or more than one
+// YAML patch may not use aliases, tags outside the core schema, a key named twice or more than one
 // document, and a scalar the decoder cannot read (a bad escape) refuses the whole
 // patch with ErrInvalidPatch.
 //
@@ -144,10 +144,12 @@ func looksLikeJSON(text []byte) bool {
 func (s *docStream) yamlPatchOps(text []byte) (ops []patch.Op, bad int, err error, ok bool) {
 	var t cst.Tree
 	if berr := cst.Build(&t, text, s.depth()); berr != nil {
-		if le, isLimit := docSyntaxError(berr, s.cfg.limits).(*LimitError); isLimit {
+		derr := docSyntaxError(berr, s.cfg.limits)
+		if le, isLimit := derr.(*LimitError); isLimit {
 			return nil, -1, le, true
 		}
-		return nil, 0, nil, false
+		// The text is not JSON and not YAML either; the YAML error says where.
+		return nil, -1, fmt.Errorf("%w: %s", patch.ErrSyntax, derr), true
 	}
 	if len(t.Docs) != 1 {
 		return nil, 0, nil, false
@@ -165,6 +167,16 @@ func (s *docStream) yamlPatchOps(text []byte) (ops []patch.Op, bad int, err erro
 	}
 	if msg := yamlPatchProblem(&v); msg != "" {
 		return nil, -1, fmt.Errorf("%w: %s", patch.ErrSyntax, msg), true
+	}
+	// The decoder's own rules decide which keys repeat (1 and 0x1, null and ~),
+	// so a patch value never writes a mapping the document could not be read from.
+	var probe any
+	if derr := Unmarshal(text, &probe, Limits(s.cfg.limits)); derr != nil {
+		var le *LimitError
+		if errors.As(derr, &le) {
+			return nil, -1, le, true
+		}
+		return nil, -1, fmt.Errorf("%w: %s", patch.ErrSyntax, derr), true
 	}
 	ops, bad, err = patch.OpsFromValue(v)
 	return ops, bad, err, true

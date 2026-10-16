@@ -1082,6 +1082,7 @@ func TestJSONLookingPatchesKeepJSONErrors(t *testing.T) {
 		`[{"op":"add","path":"/z","value":"\x41"}]`,
 		"[{\"op\":\"add\",\"path\":\"/z\",\"value\":\"a\tb\"}]",
 		"\ufeff[{\"op\":\"add\",\"path\":\"/z\",\"value\":1}]",
+		"\ufeff \n[{op: add, path: /z, value: 1}]",
 		"  \n\t[{op: add, path: /z, value: 1}]",
 		`{"op":"add","path":"/z","value":1}`,
 		`[`,
@@ -1130,5 +1131,77 @@ func TestRenameAnchoredKey(t *testing.T) {
 	v, _ := Parse([]byte("a: &v 1\nb: *v\n"))
 	if err := v.Rename("/a", "x"); err != nil || v.String() != "x: &v 1\nb: *v\n" {
 		t.Errorf("value anchor: %v %q", err, v.String())
+	}
+}
+
+// The non-specific tag "!" makes a plain scalar a string; it is not a tag outside
+// the core schema.
+func TestYAMLPatchNonSpecificTag(t *testing.T) {
+	for _, c := range []struct{ patch, want string }{
+		{"- op: add\n  path: /z\n  value: ! 12\n", "a: 1\nz: '12'\n"},
+		{"- op: add\n  path: /z\n  value: ! [1]\n", "a: 1\nz: [1]\n"},
+	} {
+		d, _ := Parse([]byte("a: 1\n"))
+		if err := d.ApplyPatch([]byte(c.patch)); err != nil {
+			t.Errorf("%q: %v", c.patch, err)
+			continue
+		}
+		var got, want any
+		if err := Unmarshal(d.Bytes(), &got); err != nil {
+			t.Errorf("%q: result %q unreadable: %v", c.patch, d.Bytes(), err)
+			continue
+		}
+		_ = Unmarshal([]byte(c.want), &want)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%q: got %q, want data of %q", c.patch, d.Bytes(), c.want)
+		}
+	}
+	// Tags outside the core schema stay refused, local or global.
+	for _, tag := range []string{"!x", "!<tag:example.com,2000:x>"} {
+		d, _ := Parse([]byte("a: 1\n"))
+		err := d.ApplyPatch([]byte("- op: add\n  path: /z\n  value: " + tag + " 1\n"))
+		if !errors.Is(err, ErrInvalidPatch) || !strings.Contains(err.Error(), "outside the core schema") || d.String() != "a: 1\n" {
+			t.Errorf("%s: err %v, doc %q", tag, err, d.String())
+		}
+	}
+}
+
+// A mapping in a YAML patch value whose keys the decoder reads as one key is
+// refused, so the document never receives text it cannot be read from.
+func TestYAMLPatchCoreEqualDuplicateKeys(t *testing.T) {
+	doc := "a: 1\nb: [x, y]\n"
+	for _, v := range []string{"{1: a, 0x1: b}", "{null: 1, ~: 2}", "{true: 1, True: 2}", "{a: 1, a: 2}"} {
+		d, _ := Parse([]byte(doc))
+		err := d.ApplyPatch([]byte("- op: add\n  path: /z\n  value: " + v + "\n"))
+		if !errors.Is(err, ErrInvalidPatch) {
+			t.Errorf("%s: err %v, want ErrInvalidPatch", v, err)
+		}
+		if d.String() != doc {
+			t.Errorf("%s: document changed to %q", v, d.String())
+		}
+	}
+	// JSON objects spell every key as a string, so 1 and 0x1 cannot meet there; the
+	// JSON reader refuses a repeated spelling already.
+	d, _ := Parse([]byte(doc))
+	if err := d.ApplyPatch([]byte(`[{"op":"add","path":"/z","value":{"1":"a","0x1":"b"}}]`)); err != nil {
+		t.Errorf("JSON string keys 1 and 0x1: %v", err)
+	}
+	var v any
+	if err := Unmarshal(d.Bytes(), &v); err != nil {
+		t.Errorf("result unreadable: %v\n%s", err, d.Bytes())
+	}
+}
+
+// Text that is neither JSON-looking nor YAML reports the YAML error and where it is.
+func TestYAMLPatchSyntaxErrorHasPosition(t *testing.T) {
+	d, _ := Parse([]byte("a: 1\n"))
+	err := d.ApplyPatch([]byte("- op: add\n  path: /z\n  value: \"\\x\"\n"))
+	if !errors.Is(err, ErrInvalidPatch) || !strings.Contains(err.Error(), "line 3") || strings.Contains(err.Error(), "JSON") {
+		t.Errorf("err %v, want the YAML error with line 3", err)
+	}
+	d2, _ := Parse([]byte("a: 1\n"))
+	err = d2.ApplyPatch([]byte("- op: add\n  path: /z\n  value: [1\n"))
+	if !errors.Is(err, ErrInvalidPatch) || strings.Contains(err.Error(), "JSON") {
+		t.Errorf("err %v, want a YAML error", err)
 	}
 }
