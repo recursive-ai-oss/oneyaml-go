@@ -99,3 +99,30 @@ features: [a, b]
 	// features: [c]
 	// debug: true
 }
+
+// A merge patch kept as a YAML file is read like its JSON form. Text that starts
+// with { or [ is read as JSON.
+func ExampleDocument_ApplyMergePatch_yaml() {
+	doc, err := oneyaml.Parse([]byte(`name: api
+limits:
+  cpu: 1   # cores
+  mem: 2
+`))
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = doc.ApplyMergePatch([]byte(`limits:
+  cpu: 4
+  mem: null
+tier: gold
+`))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Print(string(doc.Bytes()))
+	// Output:
+	// name: api
+	// limits:
+	//   cpu: 4   # cores
+	// tier: gold
+}

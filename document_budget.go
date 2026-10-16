@@ -137,10 +137,25 @@ func (w *patchWork) cost() int {
 	return addSat(c, (cur.moved-w.start.moved)/8)
 }
 
-// checkPatchSize refuses a patch text larger than the input limit.
+// patchTextShare is the part of MaxInputBytes that the text of one patch may use.
+// A patch is read into a list of operations, and in practice that costs some 30
+// times its text, where a document costs at most 8 times; an eighth keeps a patch
+// no heavier than a document of the largest size the limit allows.
+const patchTextShare = 8
+
+// patchTextFloor is the patch text that is always allowed, up to the limit
+// itself, so that a small MaxInputBytes does not leave room for no patch at all.
+const patchTextFloor = 64 << 10
+
+// patchTextMax returns the longest patch text that an input limit of m allows.
+func patchTextMax(m int) int {
+	return min(m, max(m/patchTextShare, patchTextFloor))
+}
+
+// checkPatchSize refuses a patch text longer than its share of the input limit.
 func (s *docStream) checkPatchSize(n int) error {
-	if m := s.cfg.limits.MaxInputBytes; m > 0 && n > m {
-		return &LimitError{Limit: "patch size", Max: m, Option: "Limits (MaxInputBytes)"}
+	if m := s.cfg.limits.MaxInputBytes; m > 0 && n > patchTextMax(m) {
+		return &LimitError{Limit: "patch size", Max: patchTextMax(m), Option: "Limits (MaxInputBytes)"}
 	}
 	return nil
 }

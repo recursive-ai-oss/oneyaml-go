@@ -40,7 +40,12 @@ func (b *Binder) jsonHook(v reflect.Value, ev *parse.Event, dp *dplan) (bool, er
 		b.jsonBuf = buf[:0]
 	} else {
 		var x any
-		if x, err = b.generic(ev); err != nil {
+		// Numbers nested in the value keep their digits too: the generic form
+		// would turn 3.14159265358979323846 into a float64 and drop the rest.
+		b.jsonNums = true
+		x, err = b.generic(ev)
+		b.jsonNums = false
+		if err != nil {
 			return true, err
 		}
 		buf, err = appendJSON(b.jsonBuf[:0], x)
@@ -123,6 +128,11 @@ func isJSONNumber(s []byte) bool {
 	return i == len(s)
 }
 
+// jsonNum is a number of the generic form that keeps the text it was written
+// with, a JSON number already. Only values on their way to a json.Unmarshaler
+// hold one.
+type jsonNum string
+
 type jsonFrame struct {
 	arr  []any
 	keys []string
@@ -151,6 +161,8 @@ func appendJSON(dst []byte, x any) ([]byte, error) {
 			dst = strconv.AppendBool(dst, v)
 		case string:
 			dst = appendJSONString(dst, v)
+		case jsonNum:
+			dst = append(dst, v...)
 		case int:
 			dst = strconv.AppendInt(dst, int64(v), 10)
 		case int64:

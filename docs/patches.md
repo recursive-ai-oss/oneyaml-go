@@ -8,7 +8,7 @@ There are three entry points on `Document`:
 |---|---|
 | `ApplyPatch(rfc6902 []byte)` | an RFC 6902 patch as JSON text, or as a YAML sequence of operations ([details](#patches-written-in-yaml)) |
 | `Apply(ops ...PatchOp)` | the same operations as Go values: `PatchAdd`, `PatchRemove`, `PatchReplace`, `PatchMove`, `PatchCopy`, `PatchTest` |
-| `ApplyMergePatch(rfc7396 []byte)` | an RFC 7396 merge patch as JSON text only |
+| `ApplyMergePatch(rfc7396 []byte)` | an RFC 7396 merge patch as JSON text, or as YAML ([details](#patches-written-in-yaml)) |
 
 ## A patch is atomic
 
@@ -149,7 +149,9 @@ A YAML patch fails with `ErrInvalidPatch` when it:
 - has a scalar that cannot be read, such as a double-quoted escape that is not a Unicode character;
 - is not valid YAML. The error gives the line and column.
 
-A YAML patch nested deeper than the depth limit fails with a `*LimitError`. `ApplyMergePatch` reads JSON only.
+A YAML patch nested deeper than the depth limit fails with a `*LimitError`.
+
+`ApplyMergePatch` reads YAML the same way: text that starts with `{` or `[`, or is valid JSON, is JSON, and any other text is one YAML document of any kind (a mapping, usually) with the same refusals as a YAML list of operations.
 
 ## Aliases
 
@@ -239,4 +241,4 @@ A patch can ask for a lot of work: `copy` can double a document at every step, a
 - the bytes that copies and written-out aliases may produce are charged to the alias-bytes limit;
 - the text that a patch's edits have to read again is bounded by `LimitSet.MaxPatchWorkRatio`.
 
-With `Untrusted()`, the patch text itself is bounded too, and the result may not exceed the input-size limit. A patch that goes past a bound fails with a `*LimitError` and changes nothing. See [Limits](limits.md).
+With a `MaxInputBytes` limit (as `Untrusted()` sets), the patch text itself may be at most an eighth of it (at least 64 KiB, and never more than the limit), because a patch is read into a list of operations that takes far more memory than the same amount of document, and the result may not exceed the input-size limit. The default limits set no input bound. A patch that goes past a bound fails with a `*LimitError` and changes nothing. See [Limits](limits.md).

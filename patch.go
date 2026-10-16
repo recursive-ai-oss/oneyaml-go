@@ -74,7 +74,7 @@ func PatchTest(path string, v any) PatchOp { return PatchOp{Op: "test", Path: pa
 //     patch past either bound fails with a *LimitError and changes nothing.
 //     The text its edits have to parse again is bounded too (MaxPatchWorkRatio),
 //     and with a MaxInputBytes limit the patch text itself may not be longer than
-//     it. NoLimits removes the bounds.
+//     an eighth of it (but up to 64 KiB, and never more than the limit). NoLimits removes the bounds.
 //   - New members go at the end of their mapping, in the style of their
 //     siblings; comments outside the edited values stay.
 //
@@ -149,31 +149,44 @@ func looksLikeJSON(text []byte) bool {
 // error. A YAML patch may not use aliases or hold the same key twice in a mapping,
 // which JSON cannot either, and must be a single document.
 func (s *docStream) yamlPatchOps(text []byte) (ops []patch.Op, bad int, err error, ok bool) {
+	v, err, ok := s.yamlPatchValue(text, true)
+	if err != nil || !ok {
+		return nil, -1, err, ok
+	}
+	ops, bad, err = patch.OpsFromValue(v)
+	return ops, bad, err, true
+}
+
+// yamlPatchValue reads text that is not JSON as one patch value written in YAML.
+// With seqOnly the root must be a sequence (a 6902 patch); a merge patch may be
+// anything. ok is false when the text has no such value, and the caller then
+// reports the JSON error; otherwise err says why the value is refused, if it is.
+func (s *docStream) yamlPatchValue(text []byte, seqOnly bool) (v edit.Value, err error, ok bool) {
 	var t cst.Tree
 	if berr := cst.Build(&t, text, s.depth()); berr != nil {
 		derr := docSyntaxError(berr, s.cfg.limits)
 		if le, isLimit := derr.(*LimitError); isLimit {
-			return nil, -1, le, true
+			return v, le, true
 		}
 		// The text is not JSON and not YAML either; the YAML error says where.
-		return nil, -1, fmt.Errorf("%w: %s", patch.ErrSyntax, derr), true
+		return v, fmt.Errorf("%w: %s", patch.ErrSyntax, derr), true
 	}
 	if len(t.Docs) != 1 {
-		return nil, 0, nil, false
+		return v, nil, false
 	}
 	root := t.Docs[0].Root
-	if root == 0 || t.Nodes[root].Kind != cst.Sequence {
-		return nil, 0, nil, false
+	if root == 0 || (seqOnly && t.Nodes[root].Kind != cst.Sequence) {
+		return v, nil, false
 	}
 	if perr := edit.CheckPatchTree(&t, text); perr != nil {
-		return nil, -1, fmt.Errorf("%w: %s", patch.ErrSyntax, perr), true
+		return v, fmt.Errorf("%w: %s", patch.ErrSyntax, perr), true
 	}
 	v, verr := edit.FromTree(&t, text, root)
 	if verr != nil {
-		return nil, -1, &LimitError{Limit: "depth", Max: edit.MaxValueDepth, Option: "Limits or NoLimits"}, true
+		return v, &LimitError{Limit: "depth", Max: edit.MaxValueDepth, Option: "Limits or NoLimits"}, true
 	}
 	if msg := yamlPatchProblem(&v); msg != "" {
-		return nil, -1, fmt.Errorf("%w: %s", patch.ErrSyntax, msg), true
+		return v, fmt.Errorf("%w: %s", patch.ErrSyntax, msg), true
 	}
 	// The decoder's own rules decide which keys repeat (1 and 0x1, null and ~),
 	// so a patch value never writes a mapping the document could not be read from.
@@ -181,12 +194,11 @@ func (s *docStream) yamlPatchOps(text []byte) (ops []patch.Op, bad int, err erro
 	if derr := Unmarshal(text, &probe, Limits(s.cfg.limits)); derr != nil {
 		var le *LimitError
 		if errors.As(derr, &le) {
-			return nil, -1, le, true
+			return v, le, true
 		}
-		return nil, -1, fmt.Errorf("%w: %s", patch.ErrSyntax, derr), true
+		return v, fmt.Errorf("%w: %s", patch.ErrSyntax, derr), true
 	}
-	ops, bad, err = patch.OpsFromValue(v)
-	return ops, bad, err, true
+	return v, nil, true
 }
 
 // yamlPatchProblem names what in a patch value written in YAML has no JSON

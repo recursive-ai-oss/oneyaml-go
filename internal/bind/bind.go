@@ -391,6 +391,9 @@ type Binder struct {
 	hookCache any
 	// jsonBuf is scratch for the JSON text handed to a json.Unmarshaler.
 	jsonBuf []byte
+	// jsonNums makes the generic form keep the text of plain JSON numbers (see
+	// jsonNum) while a value is read for a json.Unmarshaler.
+	jsonNums bool
 	// hooks counts the nodes handed to hooks over the life of the Binder.
 	hooks int
 

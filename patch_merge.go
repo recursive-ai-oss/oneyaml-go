@@ -10,8 +10,8 @@ import (
 	"oneyaml.dev/go/internal/pointer"
 )
 
-// ApplyMergePatch applies an RFC 7396 JSON Merge Patch, given as JSON text, to
-// the document. Unlike ApplyPatch it does not read YAML. A member of the patch that is null deletes the member of the same
+// ApplyMergePatch applies an RFC 7396 JSON Merge Patch, given as JSON text or
+// as YAML, to the document. A member of the patch that is null deletes the member of the same
 // name; an object member is merged into the mapping it meets; any other value
 // replaces what is there, and a sequence replaces the whole sequence. A patch
 // that is not an object replaces the whole document.
@@ -23,8 +23,17 @@ import (
 // mapping that is an alias is refused (ErrAliasWrite) because it would change
 // every other use of the anchor; an alias to something else is replaced.
 //
-// The result may not be longer than a MaxInputBytes limit, the patch text may not
-// either, and the text its edits have to parse again is bounded (MaxPatchWorkRatio);
+// Text whose first significant byte is "{" or "[" is read as JSON only, with JSON
+// errors, and so is any text that is valid JSON. Other text is read as one YAML
+// document, which may be any value, as a merge patch kept in a YAML file is
+// written, and gives the same result as the JSON form. The refusals are those of
+// ApplyPatch for a YAML patch: aliases, tags outside the core schema, a
+// collection as a key, keys that repeat by value, a scalar with a bad escape and
+// more than one document are all ErrInvalidPatch, a YAML syntax error is
+// reported with its position, and nesting past the depth limit is a *LimitError.
+//
+// The result may not be longer than a MaxInputBytes limit, the patch text may
+// not be longer than an eighth of it (see LimitSet), and the text its edits have to parse again is bounded (MaxPatchWorkRatio);
 // past a bound the call fails with a *LimitError and changes nothing.
 //
 // The patch applies to the first document, or to the document a view from Doc
@@ -37,6 +46,13 @@ func (d *Document) ApplyMergePatch(rfc7396 []byte) error {
 		return &EditError{Op: "merge-patch", Kind: err}
 	}
 	v, err := patch.ParseValue(rfc7396, d.s.cfg.limits.MaxDepth)
+	if err != nil && errors.Is(err, patch.ErrSyntax) && !looksLikeJSON(rfc7396) {
+		// Not JSON: a merge patch kept as a YAML file reads the same way. Text that
+		// starts like JSON never gets here and keeps its JSON errors.
+		if yv, yerr, ok := d.s.yamlPatchValue(rfc7396, false); ok {
+			v, err = yv, yerr
+		}
+	}
 	if err != nil {
 		return &EditError{Op: "merge-patch", Kind: kindOf(err, d.s.cfg.limits.MaxDepth)}
 	}

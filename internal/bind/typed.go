@@ -799,6 +799,22 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 					}
 					continue
 				}
+				if be, ok := err.(*Error); ok && b.cfg.Dialect != DialectV3 && be.Kind == KindType && be.Err == nil && be.Category == "" {
+					// The key does not fit the key type, like a value that does not fit:
+					// the entry is skipped and the mismatch collected.
+					ve, serr := b.next()
+					if serr == nil {
+						serr = b.skip(&ve)
+					}
+					if serr != nil {
+						return serr
+					}
+					be.Resume = true
+					if pend.add(withSeg(be, b.keyLabel(&ke))) {
+						return pend.result()
+					}
+					continue
+				}
 				return err
 			}
 			if st.track || st.failed != nil {

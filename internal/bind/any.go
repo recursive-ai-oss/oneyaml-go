@@ -435,6 +435,9 @@ func (b *Binder) scalarAny(ev *parse.Event) (any, error) {
 	if err := b.numLimit(&r, text, ev.Start); err != nil {
 		return nil, err
 	}
+	if b.jsonNums && tag == tagNone && ev.Style == scan.Plain && (r.Kind == resolve.Int || r.Kind == resolve.Float) && isJSONNumber(text) {
+		return jsonNum(text), nil
+	}
 	return anyOf(text, &r, tag), nil
 }
 

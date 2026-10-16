@@ -31,7 +31,7 @@ fmt.Printf("%+v\n", oneyaml.UntrustedLimits())
 | `MaxDepth` | nesting of collections, in input and when writing | `*LimitError`, `Limit` is `depth` |
 | `MaxAliasNodes` | nodes produced by expanding aliases | `*LimitError` |
 | `MaxAliasBytes` | scalar bytes produced by expanding aliases; also the bytes a patch copies | `*LimitError` |
-| `MaxInputBytes` | the size of the input | `*LimitError` |
+| `MaxInputBytes` | the size of the input; the text of one patch may use an eighth of it (at least 64 KiB) | `*LimitError` |
 | `MaxScalarBytes` | the length of one scalar | `*LimitError` |
 | `MaxDocuments` | documents in one stream | `*LimitError` |
 | `MaxNumberDigits` | digits of an integer or float scalar when it is converted to a number; text kept as text is never limited | `*LimitError` |

@@ -4,6 +4,16 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added
+
+- `ApplyMergePatch` also reads a merge patch written in YAML, with the same rules and refusals as a YAML `ApplyPatch`. Text that starts with `{` or `[`, or is valid JSON, is still read as JSON.
+
+### Changed
+
+- Under a `MaxInputBytes` limit (`Untrusted()` sets one), the text of a patch or merge patch may be at most an eighth of it, though never less than 64 KiB. A 40 MiB patch into a small document used to be read, at about 35 times its size in memory.
+- A map key that does not fit the key type is collected like a value that does not fit: its entry is skipped and the read goes on, instead of stopping at the first such key.
+- A `json.Unmarshaler` receives the numbers inside a collection as written, as it already did for a number at the top, so `3.14159265358979323846` is not rounded to a `float64` on the way.
+
 ## [0.2.0] - 2026-10-16
 
 ### Added

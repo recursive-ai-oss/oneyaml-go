@@ -35,7 +35,10 @@ type LimitSet struct {
 	// produce. When left at zero it is raised with the input size in the same way
 	// as MaxAliasNodes.
 	MaxAliasBytes int
-	// MaxInputBytes is the largest input accepted.
+	// MaxInputBytes is the largest input accepted. The text of one patch may be
+	// at most an eighth of it (never less than 64 KiB, never more than the limit
+	// itself): a patch is read into a list of operations that takes far more
+	// memory than the same amount of document.
 	MaxInputBytes int
 	// MaxScalarBytes is the longest single scalar accepted.
 	MaxScalarBytes int
