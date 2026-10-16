@@ -2,6 +2,7 @@ package oneyaml
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -311,5 +312,39 @@ func TestFrontRunOfNineRemovalsParsesNoWholeText(t *testing.T) {
 	var m map[string]int
 	if err := d.Decode(&m); err != nil || len(m) != 19991 {
 		t.Errorf("%d keys, %v", len(m), err)
+	}
+}
+
+// A run of removes below an alias is a write through it: the pass must not follow
+// the alias and cut the entries out of the anchored source.
+func TestBatchedRemovalsRefuseAliasParent(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("base: &a\n  sub:\n")
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&b, "    k%d: %d\n", i, i)
+	}
+	b.WriteString("ref: *a\n")
+	src := b.String()
+	oldMin := batchMin
+	defer func() { batchMin = oldMin }()
+	for _, min := range []int{oldMin, 1} {
+		batchMin = min
+		for _, n := range []int{8, 40} {
+			d, err := Parse([]byte(src))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ops []string
+			for i := 0; i < n; i++ {
+				ops = append(ops, fmt.Sprintf(`{"op":"remove","path":"/ref/sub/k%d"}`, i))
+			}
+			err = d.ApplyPatch([]byte("[" + strings.Join(ops, ",") + "]"))
+			if !errors.Is(err, ErrAliasWrite) {
+				t.Errorf("min %d, %d ops: err = %v, want a refusal of the write through the alias", min, n, err)
+			}
+			if string(d.Bytes()) != src {
+				t.Errorf("min %d, %d ops: the document changed", min, n)
+			}
+		}
 	}
 }

@@ -50,7 +50,10 @@ func (s *docStream) removeKeys(doc int, parentToks, keys []string, mustExist boo
 	}
 	s.es().work.batchTries++
 	c := s.ctx(doc)
-	pl, err := c.Resolve(parentToks, false)
+	// Resolve as a write does: a path through an alias is an error, and the
+	// one-by-one path then gives the refusal. Following the alias here would remove
+	// the entries from the anchored source.
+	pl, err := c.Resolve(parentToks, true)
 	if err != nil || pl.Node == 0 {
 		return false
 	}
@@ -62,15 +65,15 @@ func (s *docStream) removeKeys(doc int, parentToks, keys []string, mustExist boo
 	if pn.Kind != cst.Mapping || pn.Flow || pn.Pair || t.First(par) == 0 || 2*len(keys) >= t.Count(par) {
 		return false
 	}
-	seen := make(map[string]struct{}, len(keys))
-	for _, k := range keys {
+	seen := make(map[string]int, len(keys)) // key to its place in keys
+	for i, k := range keys {
 		if _, dup := seen[k]; dup {
 			return false
 		}
-		seen[k] = struct{}{}
+		seen[k] = i
 	}
 	toks := append(slices.Clone(parentToks), "")
-	var entry map[string]int32 // key text to its key node, when the look-up below made it
+	var entry []int32 // by place in keys: the key node, when the look-up below found it; nil if it did not run
 	if batchMin > 1 {
 		// See whether the pass would pay before any removal is planned: when it
 		// would not, this look-up is all that is spent.
@@ -92,18 +95,18 @@ func (s *docStream) removeKeys(doc int, parentToks, keys []string, mustExist boo
 			// that is not a plain scalar is not counted; planning finds it. The entries
 			// of the keys are kept, so that planning does not build a key index of the
 			// whole mapping to find them again.
-			entry = make(map[string]int32, len(keys))
+			entry = make([]int32, len(keys))
 			for k := t.First(par); k != 0; {
 				v := t.Nodes[k].Next
 				if v == 0 {
 					break
 				}
 				if text, ok := c.KeyBytes(k); ok {
-					if _, want := seen[string(text)]; want {
-						if _, twice := entry[string(text)]; twice {
+					if i, want := seen[string(text)]; want { // no copy of the text
+						if entry[i] != 0 {
 							return false // ambiguous: the one-by-one path reports it
 						}
-						entry[string(text)] = k
+						entry[i] = k
 						after = addSat(after, len(s.src)-int(t.Nodes[k].Start))
 					}
 				}
@@ -116,10 +119,14 @@ func (s *docStream) removeKeys(doc int, parentToks, keys []string, mustExist boo
 	}
 	removed := make(map[int32]struct{}, len(keys))
 	var repls []edit.Repl
-	for _, k := range keys {
+	for i, k := range keys {
 		toks[len(toks)-1] = k
 		var loc edit.Loc
-		if kn, found := entry[k]; found {
+		var kn int32
+		if entry != nil {
+			kn = entry[i]
+		}
+		if kn != 0 {
 			loc = edit.Loc{Node: t.Nodes[kn].Next, Parent: par, Key: kn, Tok: k}
 		} else if entry == nil || c.Merge {
 			// A key the look-up did not find is missing, unless a merge brings it in.

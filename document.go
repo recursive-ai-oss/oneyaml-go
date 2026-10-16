@@ -512,10 +512,12 @@ func (s *docStream) editTree(doc int, op editKindOp, ptr string, v *edit.Value) 
 			return fail(editKind(err))
 		}
 		repls, check := pl.repls, pl.check
-		if len(repls) == 0 {
+		if len(repls) == 0 && !lazy {
 			return nil
 		}
-		if attempt == 0 && s.patchScalar(pl.target, repls, v) {
+		// A plan on stale offsets that finds nothing to do is planned again on a
+		// settled tree below, like one that errs.
+		if attempt == 0 && len(repls) > 0 && s.patchScalar(pl.target, repls, v) {
 			s.ed.cache.KeepKeys(genBefore, s.gen)     // a scalar value changed; every key is where it was
 			s.keepCursor(genBefore, 0, 0, 0, 0, 0, 0) // and every node
 			return nil

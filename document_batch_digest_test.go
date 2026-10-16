@@ -276,3 +276,37 @@ func TestRemovalMapShift(t *testing.T) {
 		}
 	}
 }
+
+// Two trees with the same kinds in the same order and the same leaf spans, whose
+// collections hold different numbers of children, are different trees; the digest
+// must see the counts. Here a cut of two spaces turns a sequence of one item that
+// holds a sequence of two into a sequence of two whose first holds one.
+func TestBatchDigestNoticesChildCounts(t *testing.T) {
+	oldMin, oldExact := batchMin, batchExactBelow
+	defer func() { batchMin, batchExactBelow = oldMin, oldExact }()
+	batchMin, batchExactBelow = 1, 0
+	const src = "gone: 1\nk:\n- - a\n  - b\n"
+	d := mustParse(t, src)
+	s := d.s
+	s.es()
+	removed := map[int32]struct{}{}
+	for k := range d.Root().Entries() {
+		if k.Value() == "gone" {
+			removed[k.i] = struct{}{}
+		}
+	}
+	repls := cutRepls(src, "gone: 1\n", "  ")
+	out := []byte("k:\n- - a\n- b\n")
+	if !outIsSrcWithout([]byte(src), out, repls) {
+		t.Fatal("fixture")
+	}
+	if s.commitRemoval(1, removed, repls, out) {
+		t.Error("a tree with other child counts was accepted")
+	}
+	if string(s.src) != src {
+		t.Error("the text changed after a refusal")
+	}
+	if err := sameAsFreshParse(d); err != nil {
+		t.Error(err)
+	}
+}
