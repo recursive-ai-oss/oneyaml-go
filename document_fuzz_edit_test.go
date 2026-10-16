@@ -168,15 +168,30 @@ func batchAgrees(data []byte, r *rand.Rand) error {
 	return nil
 }
 
-// dropBlankLines removes the lines that hold blanks and nothing else.
+// dropBlankLines removes the lines that hold blanks and nothing else. A bare CR
+// ends a line as LF does, so "\r  \n" is a line break, a blank line and a line break.
 func dropBlankLines(b []byte) []byte {
-	lines := bytes.SplitAfter(b, []byte("\n"))
 	var out []byte
-	for _, l := range lines {
-		if t := bytes.TrimRight(l, "\r\n"); len(t) > 0 && len(bytes.Trim(t, " \t")) == 0 {
+	start := 0
+	for start < len(b) {
+		end := start
+		for end < len(b) && b[end] != '\n' && b[end] != '\r' {
+			end++
+		}
+		brk := end
+		if brk < len(b) {
+			brk++
+			if b[brk-1] == '\r' && brk < len(b) && b[brk] == '\n' {
+				brk++
+			}
+		}
+		if t := b[start:end]; len(t) > 0 && len(bytes.Trim(t, " \t")) == 0 {
+			// Blank line: keep its break out too, so the lines around it join as before.
+			start = brk
 			continue
 		}
-		out = append(out, l...)
+		out = append(out, b[start:brk]...)
+		start = brk
 	}
 	return out
 }

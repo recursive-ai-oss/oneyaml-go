@@ -649,9 +649,32 @@ func (c *Ctx) blockTextEnd(n int32) int {
 	if first >= end {
 		return first
 	}
+	// The content indent is the leading spaces of the first line with anything
+	// but spaces on it. Inside a block scalar a tab is content, and so are spaces
+	// past that indent, so such a line is not blank and still needs its own break.
+	indent := end - first // no such line: every line is blank
+	for ls := first; ls < end; {
+		i := ls
+		for i < end && c.Src[i] == ' ' {
+			i++
+		}
+		if i < end && !isBreak(c.Src[i]) {
+			indent = i - ls
+			break
+		}
+		next := c.afterBreak(ls)
+		if next <= ls {
+			break
+		}
+		ls = next
+	}
 	last := first
 	for ls := first; ls < end; {
-		if !c.blankLine(ls) {
+		i := ls
+		for i < end && c.Src[i] == ' ' {
+			i++
+		}
+		if blank := (i >= end || isBreak(c.Src[i])) && i-ls <= indent; !blank {
 			last = c.afterBreak(ls)
 		}
 		next := c.afterBreak(ls)
