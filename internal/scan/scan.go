@@ -965,6 +965,12 @@ func (s *Scanner) fetchKey(col int) error {
 // colon can still be valid (it may continue as a plain scalar), so the first
 // character that cannot belong is the one that follows.
 func (s *Scanner) fetchValue(col int) error {
+	// After a plain key (or an alias), a flow collection may not touch the
+	// colon: the entry has an empty value and the collection cannot follow it
+	// without a separator [productions 147, 149]. An empty key is left alone.
+	if c := s.at(s.pos + 1); s.flow > 0 && !s.jsonLike && (c == '[' || c == '{') && (s.lastKind == Scalar || s.lastKind == Alias) {
+		return s.errAt(s.pos+1, Syntax, "a flow collection after ':' needs white space before it", true)
+	}
 	k := &s.keys[len(s.keys)-1]
 	// A key found for this ':' may be at a lower flow level only if the flow
 	// collection that was the key has just closed; the slot of this level then
@@ -1074,6 +1080,10 @@ func (s *Scanner) fetchTag(col int) error {
 		}
 		if s.pos == n || s.pos >= len(b) || b[s.pos] != '>' {
 			return s.errAt(s.pos, Syntax, "malformed verbatim tag")
+		}
+		if s.pos == n+1 && b[n] == '!' {
+			// A verbatim tag is a local tag ("!" and a name) or a URI; a bare "!" is neither.
+			return s.errAt(s.pos, Syntax, "a verbatim tag must be a local tag or a URI")
 		}
 		s.pos++
 	} else {

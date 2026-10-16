@@ -361,6 +361,15 @@ type openAnchor struct {
 	name  string
 	start int
 	depth int
+	seq   int // order in which the anchor was written
+}
+
+// anchorDef is a finished anchored node. seq orders definitions by where the
+// anchor is written: an alias names the latest one written before it, and a
+// node that contains a redefinition finishes after it.
+type anchorDef struct {
+	logRange
+	seq int
 }
 
 type replay struct{ pos, end int }
@@ -376,8 +385,9 @@ type Binder struct {
 
 	// Anchor recording; see track.
 	log     []parse.Event
-	anchors map[string]logRange
+	anchors map[string]anchorDef
 	open    []openAnchor
+	seq     int // anchors written in this document
 	depth   int
 	replays []replay
 	own     int // nodes read from the input in this document
@@ -481,6 +491,7 @@ func (b *Binder) resetDoc() {
 	clear(b.anchors)
 	b.open = b.open[:0]
 	b.depth = 0
+	b.seq = 0
 	b.replays = b.replays[:0]
 	b.own = 0
 	b.hookCache = nil
@@ -704,14 +715,16 @@ func (b *Binder) track(ev *parse.Event) error {
 		if ev.AnchorEnd > ev.AnchorStart {
 			start := len(b.log)
 			b.log = append(b.log, *ev)
-			b.setAnchor(string(b.src[ev.AnchorStart:ev.AnchorEnd]), start, start+1)
+			b.seq++
+			b.setAnchor(string(b.src[ev.AnchorStart:ev.AnchorEnd]), start, start+1, b.seq)
 		} else if len(b.open) > 0 {
 			b.log = append(b.log, *ev)
 		}
 	case parse.SequenceStart, parse.MappingStart:
 		b.own++
 		if ev.AnchorEnd > ev.AnchorStart {
-			b.open = append(b.open, openAnchor{string(b.src[ev.AnchorStart:ev.AnchorEnd]), len(b.log), b.depth})
+			b.open = append(b.open, openAnchor{string(b.src[ev.AnchorStart:ev.AnchorEnd]), len(b.log), b.depth, b.seq + 1})
+			b.seq++
 		}
 		if len(b.open) > 0 {
 			b.log = append(b.log, *ev)
@@ -722,19 +735,25 @@ func (b *Binder) track(ev *parse.Event) error {
 		if n := len(b.open); n > 0 {
 			b.log = append(b.log, *ev)
 			if top := b.open[n-1]; top.depth == b.depth {
-				b.setAnchor(top.name, top.start, len(b.log))
+				b.setAnchor(top.name, top.start, len(b.log), top.seq)
 				b.open = b.open[:n-1]
 			}
 		}
 	case parse.Alias:
 		b.own++
 		name := b.src[ev.Start+1 : ev.End]
-		for i := range b.open {
+		r, ok := b.anchors[string(name)]
+		// The alias names the latest definition written before it. That is a node
+		// that contains the alias when an open anchor of the name is newer than
+		// every finished one.
+		for i := len(b.open) - 1; i >= 0; i-- {
 			if b.open[i].name == string(name) {
-				return b.syntax(ev.Start, "syntax", "alias *"+string(name)+" refers to a node that contains it")
+				if !ok || b.open[i].seq > r.seq {
+					return b.syntax(ev.Start, "syntax", "alias *"+string(name)+" refers to a node that contains it")
+				}
+				break
 			}
 		}
-		r, ok := b.anchors[string(name)]
 		if !ok {
 			return b.syntax(ev.Start, "syntax", "undefined alias *"+string(name))
 		}
@@ -746,11 +765,14 @@ func (b *Binder) track(ev *parse.Event) error {
 	return nil
 }
 
-func (b *Binder) setAnchor(name string, start, end int) {
+func (b *Binder) setAnchor(name string, start, end, seq int) {
 	if b.anchors == nil {
-		b.anchors = map[string]logRange{}
+		b.anchors = map[string]anchorDef{}
 	}
-	b.anchors[name] = logRange{start, end}
+	if old, ok := b.anchors[name]; ok && old.seq > seq {
+		return // an anchor written inside this node redefined the name
+	}
+	b.anchors[name] = anchorDef{logRange{start, end}, seq}
 }
 
 // expand starts replaying the target of the alias event ev. The next event is

@@ -593,7 +593,15 @@ func (c *Ctx) hasColon(n int32) bool {
 		return false
 	}
 	i := cst.SkipTrivia(c.Src, int(c.T.Nodes[k].End))
-	return i < len(c.Src) && c.Src[i] == ':'
+	if i >= len(c.Src) || c.Src[i] != ':' {
+		return false
+	}
+	// A colon in a column that is not the entry's belongs to an outer mapping
+	// (a block key followed by a shallower ": value").
+	if kn := &c.T.Nodes[k]; kn.Start != kn.End && c.T.Nodes[kn.Parent].Kind == cst.Mapping {
+		return c.T.ColonIsValueOf(c.Src, k, i)
+	}
+	return true
 }
 
 // noColon reports whether n is the empty value of a block mapping entry written

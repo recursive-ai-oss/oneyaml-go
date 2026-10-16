@@ -525,6 +525,13 @@ func (t *Tree) colonIsValueOf(src []byte, par *Node, k int32, i int) bool {
 	return true
 }
 
+// ColonIsValueOf reports whether the colon at offset i, found after key node k,
+// introduces k's value rather than an entry of an outer mapping.
+func (t *Tree) ColonIsValueOf(src []byte, k int32, i int) bool {
+	par := &t.Nodes[t.Nodes[k].Parent]
+	return par.Flow || t.colonIsValueOf(src, par, k, i)
+}
+
 // blankAfter reports whether the byte after offset i ends a line or is white
 // space. In block context a colon only introduces a value then; in "::" the
 // first colon starts a plain scalar.

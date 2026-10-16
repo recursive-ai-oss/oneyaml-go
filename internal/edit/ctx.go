@@ -326,14 +326,19 @@ func (c *Ctx) KeyText(k int32) string {
 
 func isBreak(b byte) bool { return b == '\n' || b == '\r' }
 
-// lineStart returns the offset where the line containing i begins. On the first
-// line a byte order mark is not part of the line.
+// lineStart returns the offset where the line containing i begins. A byte order
+// mark at the start of a line (the first line, or a document that follows an
+// end marker) is not part of the line.
 func (c *Ctx) lineStart(i int) int {
 	if i > len(c.Src) {
 		i = len(c.Src)
 	}
+	at := i
 	for i > 0 && !isBreak(c.Src[i-1]) {
 		i--
+	}
+	if at >= i+3 && c.Src[i] == 0xEF && c.Src[i+1] == 0xBB && c.Src[i+2] == 0xBF {
+		i += 3
 	}
 	if i < int(c.bom) {
 		return int(c.bom)

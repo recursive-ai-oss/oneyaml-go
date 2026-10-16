@@ -638,8 +638,17 @@ var lineRe = regexp.MustCompile(`[^\r\n]*(\r\n|\r|\n)|[^\r\n]+`)
 // changedLines returns the lines of a and b between their common first and last
 // lines.
 func changedLines(a, b string) (ra, rb []string) {
-	a, b = strings.TrimPrefix(a, "\ufeff"), strings.TrimPrefix(b, "\ufeff")
-	la, lb := lineRe.FindAllString(a, -1), lineRe.FindAllString(b, -1)
+	// A byte order mark that starts a line (the stream, or a document after an
+	// end marker) is not line content: an edit that adds comment lines in front
+	// of the document's first line leaves the mark where it is.
+	bomless := func(s string) []string {
+		ls := lineRe.FindAllString(strings.TrimPrefix(s, "\ufeff"), -1)
+		for i, l := range ls {
+			ls[i] = strings.TrimPrefix(l, "\ufeff")
+		}
+		return ls
+	}
+	la, lb := bomless(a), bomless(b)
 	i := 0
 	for i < len(la) && i < len(lb) && la[i] == lb[i] {
 		i++
