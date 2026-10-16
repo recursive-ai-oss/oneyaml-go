@@ -1,6 +1,6 @@
 # Patches
 
-How to apply [RFC 6902](https://www.rfc-editor.org/rfc/rfc6902) JSON Patch and [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396) JSON Merge Patch to a YAML file. One rule differs from the RFC on purpose: `test` compares values by the YAML data model, not as JSON values, so `1` and `1.0` are different ([the test operation](#the-test-operation)). The edits follow the rules in [Editing](editing.md): only the values a patch touches change, in their own style, and comments elsewhere are kept.
+How to apply JSON Patch operations ([RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)) with YAML equality for `test`, and [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396) JSON Merge Patch, to a YAML file. One rule differs from the RFC on purpose: `test` compares values by the YAML data model, not as JSON values, so `1` and `1.0` are different ([the test operation](#the-test-operation)). The edits follow the rules in [Editing](editing.md): only the values a patch touches change, in their own style, and comments elsewhere are kept.
 
 There are three entry points on `Document`:
 

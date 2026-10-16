@@ -25,8 +25,9 @@
 // used. A document read into
 // any gives map[string]any, []any, string, bool, int, int64, uint64,
 // [math/big.Int] and float64. Integers are never rounded. Plain scalars follow
-// the YAML 1.2 Core schema: yes, no, on and off are strings, and 0755 is the
-// integer 755. [NewDecoder] reads a stream of documents and returns [io.EOF] at
+// the YAML 1.2 Core schema: plain yes, no, on and off are strings, plain 0755 is
+// the integer 755, and a quoted scalar such as "0755" is always a string.
+// [NewDecoder] reads a stream of documents and returns [io.EOF] at
 // the end.
 //
 // A type can read its own YAML. The hooks are tried in this order:
@@ -67,11 +68,12 @@
 //
 // # Patch
 //
-// [Document.ApplyPatch] applies an RFC 6902 JSON Patch, written as JSON or as a
-// YAML block list of operations, whose test operation compares values by the
-// YAML data model, so 1 and 1.0 differ (see the Document.ApplyPatch
-// documentation). [Document.Apply] takes the same operations as Go values
-// ([PatchAdd], [PatchReplace] and the rest), and [Document.ApplyMergePatch] applies an RFC 7396 merge patch. A patch is
+// [Document.ApplyPatch] applies JSON Patch operations (RFC 6902) with YAML
+// equality for test, written as JSON or as a YAML block list: test compares
+// values by the YAML data model, so 1 and 1.0 differ (see the
+// Document.ApplyPatch documentation). [Document.Apply] takes the same
+// operations as Go values ([PatchAdd], [PatchReplace] and the rest), and
+// [Document.ApplyMergePatch] applies an RFC 7396 merge patch. A patch is
 // atomic: if any operation fails, the document is unchanged. The edits it makes
 // follow the same rules as [Document.Set].
 //

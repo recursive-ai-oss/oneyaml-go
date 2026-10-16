@@ -56,7 +56,7 @@ Compare libraries on the job they share.
 
 **All four**
 
-- They are older and have more field experience than a new library. oneyaml-go has no release history yet.
+- They are older and have more field experience. oneyaml-go is new: its releases are listed in the [changelog](../CHANGELOG.md), and it has little use in the field so far.
 
 ## Choosing
 

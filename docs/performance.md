@@ -4,7 +4,7 @@ How oneyaml-go compares with the other Go YAML libraries on speed and memory. Ev
 
 A run that is marked as not publishable is a smoke result: it shows the layout and the rough picture, and it is not a claim. The numbers to quote are the ones from a full run on a quiet host.
 
-Unchanged emit is near-instant because an unedited `Document` returns the text it holds rather than serialising a tree again. The kit times it through the library's real write API, and its [method notes](https://github.com/recursive-ai-oss/oneyaml-kit/blob/main/docs/benchmarks.md#tasks) describe why that is the work the task measures.
+In the unchanged-emit task, an unedited `Document` writes back the text it holds instead of serialising a tree again, so that copy is the work the task measures. The kit times it through the library's real write API; its [method notes](https://github.com/recursive-ai-oss/oneyaml-kit/blob/v0.1.0/docs/benchmarks.md#tasks) explain the task.
 
 ## Results
 

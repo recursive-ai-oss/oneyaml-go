@@ -132,6 +132,51 @@ if errors.As(err, &le) {
 // depth 1000 Limits
 ```
 
+## Loading a configuration file strictly
+
+To load a configuration file and stop on anything unexpected, combine three things:
+
+- `KnownFields()`, so that a misspelt key is an error instead of being skipped;
+- `Untrusted()` with a `MaxInputBytes` sized for your files;
+- the positions in the errors, which `TypeError.All` lists one per problem.
+
+<!-- example: Example_strictConfig -->
+```go
+type Config struct {
+	Name     string `yaml:"name"`
+	Replicas int    `yaml:"replicas"`
+}
+src := []byte("name: api\nreplica: 3\nreplicas: two\n")
+
+// Decode into a fresh value and use it only when there is no error: a read
+// that reports mismatches has still filled the fields it could.
+var cfg Config
+err := oneyaml.Unmarshal(src, &cfg,
+	oneyaml.KnownFields(), // a misspelt key is an error, not skipped
+	oneyaml.Untrusted(),   // bounds on size, depth, aliases and numbers
+	oneyaml.Limits(oneyaml.LimitSet{MaxInputBytes: 1 << 20}), // sized for a config file
+)
+var te *oneyaml.TypeError
+switch {
+case errors.As(err, &te):
+	for _, e := range te.All() {
+		fmt.Printf("line %d, column %d: %s\n", e.Line, e.Column, e.Msg)
+	}
+	fmt.Println("unknown field:", errors.Is(err, oneyaml.ErrUnknownField))
+case err != nil:
+	// A *SyntaxError has a position too, and a *LimitError names the bound.
+	log.Fatal(err)
+default:
+	fmt.Println(cfg.Name, cfg.Replicas)
+}
+// Output:
+// line 2, column 1: field "replica" not found in type oneyaml_test.Config
+// line 3, column 11: cannot unmarshal !!str `two` into int
+// unknown field: true
+```
+
+`Unmarshal` reads the first document and ignores the rest, and an empty input leaves the value unchanged with a nil error. To require exactly one document, read with `NewDecoder` and check that a second `Decode` returns `io.EOF`. To refuse an empty file, check the value or the input before you use it.
+
 ## Trusted input
 
 `NoLimits()` removes every bound. Nesting that the default depth limit refuses is read once it is off:

@@ -73,8 +73,9 @@ c: 13
 }
 
 // When the existing style cannot hold the new value, only that value moves to
-// the nearest style that can. A plain scalar stays plain when the Core schema
-// reads it back as the same string, and becomes quoted when it would not.
+// the nearest style that can. A plain scalar stays plain when every reader,
+// under the Core schema and under YAML 1.1, reads it back as the same string,
+// and becomes quoted when one would not.
 func ExampleDocument_Set_styleFallback() {
 	doc, err := oneyaml.Parse([]byte("a: plain\nb: plain\nc: plain\nd: \"quoted\"\n"))
 	if err != nil {
@@ -84,8 +85,8 @@ func ExampleDocument_Set_styleFallback() {
 		ptr string
 		v   any
 	}{
-		{"/a", "yes"},         // Core reads this as a string: it stays plain
-		{"/b", "true"},        // Core reads this as a boolean: it is quoted
+		{"/a", "nginx:1.25"},  // every reader reads this as a string: it stays plain
+		{"/b", "true"},        // a reader would take this for a boolean: it is quoted
 		{"/c", "two\nlines"},  // a line break needs an escape: double quotes
 		{"/d", "now: plain?"}, // a double-quoted scalar stays double-quoted
 	} {
@@ -95,7 +96,7 @@ func ExampleDocument_Set_styleFallback() {
 	}
 	fmt.Print(string(doc.Bytes()))
 	// Output:
-	// a: yes
+	// a: nginx:1.25
 	// b: 'true'
 	// c: "two\nlines"
 	// d: "now: plain?"
@@ -582,11 +583,108 @@ func ExampleMarshal_omitempty() {
 // A file that Kubernetes tooling also reads is written so that programs using
 // the YAML 1.1 rules read the same strings.
 func ExampleYAML11Strings() {
-	doc, _ := oneyaml.Parse([]byte("debug: false\nname: x\n"), oneyaml.YAML11Strings())
-	_ = doc.Set("/debug", "yes")
-	_ = doc.Set("/name", "hello")
-	fmt.Print(doc.String())
+	src := []byte("debug: false\nname: x\n")
+
+	// By default the Core schema decides: "yes" is a string there, so it stays plain.
+	doc, err := oneyaml.Parse(src)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := doc.Set("/debug", "yes"); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Print(doc)
+
+	// With YAML11Strings, a string that YAML 1.1 reads as a boolean is quoted.
+	doc, err = oneyaml.Parse(src, oneyaml.YAML11Strings())
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := doc.Set("/debug", "yes"); err != nil {
+		log.Fatal(err)
+	}
+	if err := doc.Set("/name", "hello"); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Print(doc)
 	// Output:
+	// debug: yes
+	// name: x
 	// debug: 'yes'
 	// name: hello
+}
+
+// Pointers collected before an edit are addresses: removing an item moves the
+// ones after it. Removing from the end keeps the earlier pointers valid.
+func ExampleDocument_Remove_collected() {
+	doc, err := oneyaml.Parse([]byte("tags:\n  - web\n  - old\n  - api\n  - old\n"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	tags, ok := doc.Root().Lookup("tags")
+	if !ok {
+		log.Fatal("no tags")
+	}
+	var ptrs []string
+	for t := range tags.Items() {
+		if t.Value() != "old" {
+			continue
+		}
+		p, err := t.Pointer()
+		if err != nil {
+			log.Fatal(err)
+		}
+		ptrs = append(ptrs, p)
+	}
+	fmt.Println(ptrs)
+
+	// Remove from the end: /tags/3, then /tags/1. In the other order,
+	// removing /tags/1 would move "old" from /tags/3 to /tags/2.
+	for i := len(ptrs) - 1; i >= 0; i-- {
+		if err := doc.Remove(ptrs[i]); err != nil {
+			log.Fatal(err)
+		}
+	}
+	fmt.Print(doc)
+	// Output:
+	// [/tags/1 /tags/3]
+	// tags:
+	//   - web
+	//   - api
+}
+
+// A configuration file read strictly: unknown keys are errors, the input is
+// bounded, and every problem is reported with its position.
+func Example_strictConfig() {
+	type Config struct {
+		Name     string `yaml:"name"`
+		Replicas int    `yaml:"replicas"`
+	}
+	src := []byte("name: api\nreplica: 3\nreplicas: two\n")
+
+	// Decode into a fresh value and use it only when there is no error: a read
+	// that reports mismatches has still filled the fields it could.
+	var cfg Config
+	err := oneyaml.Unmarshal(src, &cfg,
+		oneyaml.KnownFields(), // a misspelt key is an error, not skipped
+		oneyaml.Untrusted(),   // bounds on size, depth, aliases and numbers
+		oneyaml.Limits(oneyaml.LimitSet{MaxInputBytes: 1 << 20}), // sized for a config file
+	)
+	var te *oneyaml.TypeError
+	switch {
+	case errors.As(err, &te):
+		for _, e := range te.All() {
+			fmt.Printf("line %d, column %d: %s\n", e.Line, e.Column, e.Msg)
+		}
+		fmt.Println("unknown field:", errors.Is(err, oneyaml.ErrUnknownField))
+	case err != nil:
+		// A *SyntaxError has a position too, and a *LimitError names the bound.
+		log.Fatal(err)
+	default:
+		fmt.Println(cfg.Name, cfg.Replicas)
+	}
+	// Output:
+	// line 2, column 1: field "replica" not found in type oneyaml_test.Config
+	// line 3, column 11: cannot unmarshal !!str `two` into int
+	// unknown field: true
 }

@@ -58,8 +58,9 @@ func (s *session) release() {
 // v must be a non-nil pointer. Structs are filled by key (see the tag rules on
 // Marshal); maps, slices, arrays, pointers, interfaces and the scalar kinds are
 // filled by shape. A plain scalar is read with the YAML 1.2 Core schema, so
-// "yes" and "0755" are strings. A quoted scalar is always a string, and an
-// explicit tag such as !!int or !!str overrides the resolution. A null value
+// plain yes is a string and plain 0755 is the integer 755. A quoted scalar, such
+// as "0755", is always a string, and an explicit tag such as !!int or !!str
+// overrides the resolution. A null value
 // leaves a struct field, number or string as it was and clears a pointer, map,
 // slice or interface.
 //

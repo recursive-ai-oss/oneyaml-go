@@ -112,7 +112,10 @@ func (n Node) errInvalid(op string) error {
 // Pointer returns the RFC 6901 pointer of the node within its own document,
 // ready for Document.Set, Get or Remove. It is how to edit while walking: collect
 // the pointers of the nodes you want, finish the loop, then edit (an edit makes
-// every Node read earlier stale).
+// every Node read earlier stale). A pointer is an address: removing or inserting
+// a sequence item changes what the later indices address, and a rename or a
+// removal changes what the pointers below it address. To remove several items
+// by collected pointers, remove them from the end of the sequence first.
 //
 // Pointer returns an error matching ErrStaleNode when the Document has been
 // edited since the node was read, and one matching ErrNotFound for the zero Node.

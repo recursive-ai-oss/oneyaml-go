@@ -47,11 +47,11 @@ func PatchCopy(from, path string) PatchOp { return PatchOp{Op: "copy", Path: pat
 // PatchTest returns a "test" operation.
 func PatchTest(path string, v any) PatchOp { return PatchOp{Op: "test", Path: path, Value: v} }
 
-// ApplyPatch applies an RFC 6902 JSON Patch, given as JSON text or as a YAML
-// block list of operations, to the document. The patch is atomic: if any
-// operation fails, including a "test" that does not match, the document is left
-// exactly as it was, byte for byte, and the error is an *EditError that names
-// the operation.
+// ApplyPatch applies JSON Patch operations (RFC 6902) with YAML equality for
+// "test", given as JSON text or as a YAML block list of operations, to the
+// document. The patch is atomic: if any operation fails, including a "test"
+// that does not match, the document is left exactly as it was, byte for byte,
+// and the error is an *EditError that names the operation.
 //
 // The operations follow the RFC, with these points where YAML needs a decision:
 //   - Pointers address mapping keys by their scalar text, and a key that occurs

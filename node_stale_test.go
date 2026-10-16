@@ -125,8 +125,8 @@ func ExampleNode_Pointer() {
 		log.Fatal("no images")
 	}
 
-	// First collect where each value is, then edit. This works whatever the
-	// edits do, including adding or removing entries.
+	// First collect where each value is, then edit. Replacing values moves
+	// nothing, so every pointer still names the same value.
 	var ptrs, vals []string
 	for _, v := range imgs.Entries() {
 		p, err := v.Pointer()

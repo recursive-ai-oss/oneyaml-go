@@ -12,6 +12,8 @@ go get oneyaml.dev/go@latest
 
 The package is named `yaml`, so call sites compile unchanged. It is a compatibility adapter, not a copy of yaml.v3. It reproduces what yaml.v3 documents: plain scalars resolve the yaml.v3 way, so `0755` is an octal number and `yes` is accepted by a bool field, merge keys are on, and a type error does not stop decoding.
 
+The swap changes your imports only. A type from another module that reads itself with yaml.v3's `UnmarshalYAML(*yaml.Node) error` still takes the original `*yaml.Node`, and neither the adapter nor the `oneyaml` package calls that method. See [hooks you do not own](#check-after-the-swap) before you rely on the swap.
+
 <!-- example: compat/yamlv3 Example -->
 ```go
 type Service struct {
@@ -69,6 +71,7 @@ The package differs from yaml.v3 where yaml.v3 is wrong: it reads valid YAML tha
 Run your tests, and look at these places in particular:
 
 - **Hooks.** `UnmarshalYAML(*yaml.Node) error`, the older `UnmarshalYAML(func(interface{}) error) error` and `MarshalYAML` work as in yaml.v3, with the adapter's own `yaml.Node`. A method that takes the original package's `*yaml.Node`, for example in a package of yours that still imports `gopkg.in/yaml.v3`, does not match and is not called, as yaml.v3 itself skips a method of the wrong type; change that import too.
+- **Hooks you do not own.** A type from a module you do not control, whose `UnmarshalYAML` takes `gopkg.in/yaml.v3`'s `*yaml.Node`, keeps that signature after you swap your own import. The adapter does not call the method, so the type is filled field by field and skips whatever the method checked or converted. The `oneyaml` package reports it as a `*TypeError`. Swapping the import does not fix this. Read such a type through a wrapper type of your own: give the wrapper a hook the adapter or the `oneyaml` package calls, and build the dependency's value inside it. Or keep reading that type with yaml.v3 until its module moves. List the third-party types your configuration reads and check each one.
 - **Node and comment round trips.** Decoding into a `yaml.Node`, changing it and encoding it again keeps line comments, comments directly above a key or item, foot comments and document comments. Other layouts, such as comment lines inside a flow collection, are not placed on the same node or are not written back. If you diff files written this way, check one.
 - **Repeated keys.** A key that occurs twice in a mapping the target ignores (a struct with no such field) is not reported, where yaml.v3 reports it.
 - **Invalid and unusual input.** Valid YAML that yaml.v3 refuses is read, invalid YAML that yaml.v3 accepts is refused, and inputs that make yaml.v3 panic return an error. Tests that pin yaml.v3's behaviour on such input will change.
@@ -184,7 +187,7 @@ When it reads a value, the `oneyaml` package tries a type's methods in this orde
 | `UnmarshalText` and `MarshalText` | used for scalars, as in yaml.v3 |
 | `UnmarshalJSON` and `MarshalJSON`, and no YAML or text method | used, with the value passed as JSON text; yaml.v3 ignores them. A plain number arrives with its digits as written; inside a mapping or sequence, a float is rounded to `float64` |
 
-A method with a signature the package does not call is reported, not skipped, so a type is never quietly filled field by field when you meant it to read itself. The compat package keeps yaml.v3's own form: with the import swapped, `UnmarshalYAML(*yaml.Node) error` works unchanged.
+A method with a signature the package does not call is reported, not skipped, so a type is never quietly filled field by field when you meant it to read itself. The compat package keeps yaml.v3's own form: with the import swapped, `UnmarshalYAML(*yaml.Node) error` works unchanged in your own code. Hooks in other modules need the steps under [hooks you do not own](#check-after-the-swap).
 
 In the example, `legacySize` has yaml.v3's `UnmarshalYAML(n *yaml.Node) error` and `Size` is the same type moved over, with `UnmarshalYAML(n oneyaml.Node) error`. Both bodies are `return n.Decode(&s.Bytes)`.
 

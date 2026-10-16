@@ -13,9 +13,9 @@ Spec-correct YAML 1.2 by default. Edits change only the value you set, in its ow
 Benchmark results will come in a later update, measured with the [oneyaml-kit](https://github.com/recursive-ai-oss/oneyaml-kit) harness.
 <!-- end generated -->
 
-- **Spec-correct YAML 1.2 by default.** Plain scalars follow the Core schema, so `yes` is a string and `0755` is the integer 755. YAML 1.1 forms come only from the [compat packages](#compatibility-adapters-for-yamlv3-and-sigsk8sioyaml). Results against the yaml-test-suite are under [Correctness](#correctness).
-- **Minimal-diff edits.** `Document.Set` rewrites one value in its own style and falls back to the nearest style that can hold the new value. Reading it back always gives exactly the value you set. `Rename` changes a key in place, and `SetHeadComment` and `SetLineComment` write comments. See [Editing](docs/editing.md).
-- **Patches.** RFC 6902 JSON Patch, with `test` comparing values by the YAML data model (so `1` and `1.0` [differ](docs/patches.md#the-test-operation)), RFC 6901 pointers and RFC 7396 merge patch apply to a YAML file atomically and keep its layout. See [Patches](docs/patches.md).
+- **Spec-correct YAML 1.2 by default.** Plain scalars follow the Core schema, so plain `yes` is a string, plain `0755` is the integer 755, and quoted `"0755"` is a string. YAML 1.1 forms come only from the [compat packages](#compatibility-adapters-for-yamlv3-and-sigsk8sioyaml). Results against the yaml-test-suite are under [Correctness](#correctness).
+- **Minimal-diff edits.** `Document.Set` rewrites one value in its own style and falls back to the nearest style that can hold the new value. Reading it back with this package always gives exactly the value you set, and a new string that YAML 1.1 readers would take for something else, such as `yes` or `0755`, is quoted so that they read a string too. `Rename` changes a key in place, and `SetHeadComment` and `SetLineComment` write comments. See [Editing](docs/editing.md).
+- **Patches.** JSON Patch operations (RFC 6902) with YAML equality for `test`, so `1` and `1.0` [differ](docs/patches.md#the-test-operation), plus RFC 6901 pointers and RFC 7396 merge patch. They apply to a YAML file atomically and keep its layout. See [Patches](docs/patches.md).
 - **Bounded by default.** Nesting depth, alias expansion, the digits of a number and the work of a patch are bounded unless you pass `NoLimits()`. Input size, documents per stream and scalar length are bounded only with `Untrusted()`; select it, and size it with `Limits`, for input you do not control. Your own hooks run outside these bounds, and the compat packages have no `Untrusted()` mode. A panic caused by input is treated as a [security bug](SECURITY.md). No `unsafe` and no cgo. See [Limits](docs/limits.md).
 - **Compatibility adapters for yaml.v3 and sigs.k8s.io/yaml.** One import change keeps your call sites; the [known differences](#compatibility-adapters-for-yamlv3-and-sigsk8sioyaml) are listed. See [Migrating from yaml.v3](docs/migrate-yaml-v3.md) and [from sigs.k8s.io/yaml](docs/migrate-sigs-k8s-yaml.md).
 - **No dependencies** outside the standard library.
@@ -142,6 +142,7 @@ Each package's documentation lists every difference ([yamlv3](https://pkg.go.dev
 | Change a value, rename a key or write a comment, and keep the file's style | [Editing](docs/editing.md) |
 | Apply a JSON Patch or merge patch | [Patches](docs/patches.md) |
 | Read input you do not control | [Limits](docs/limits.md), [Security](SECURITY.md) |
+| Load a configuration file strictly | [Loading a configuration file strictly](docs/limits.md#loading-a-configuration-file-strictly) |
 | Know what is and is not conformant | [Conformance](docs/conformance.md) |
 | Move from yaml.v3 | [Migrating from yaml.v3](docs/migrate-yaml-v3.md) |
 | Move from sigs.k8s.io/yaml | [Migrating from sigs.k8s.io/yaml](docs/migrate-sigs-k8s-yaml.md) |
