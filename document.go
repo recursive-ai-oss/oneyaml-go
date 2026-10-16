@@ -77,9 +77,10 @@ type docStream struct {
 
 	dec decodeState // see document_decode.go
 	// rng holds the loops over Items and Entries that are running (see node.go),
-	// and rngID numbers them. They live in the stream, in a few fixed slots, so that
-	// a loop that does not edit costs no allocation.
+	// and rngID numbers them. The first live in the stream, in a few fixed slots,
+	// so that a loop that does not edit costs no allocation; more takes the rest.
 	rng   [rangeSlots]rangeSlot
+	more  []rangeMore
 	rngID uint32
 
 	// ed is made by the first edit: a stream that is only read does not carry it.

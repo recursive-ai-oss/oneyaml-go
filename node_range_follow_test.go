@@ -12,8 +12,8 @@ import (
 
 func slotsInUse(d *Document) int {
 	n := 0
-	for _, e := range d.s.rng {
-		if e.id != 0 {
+	for i := 0; i < d.s.nslots(); i++ {
+		if d.s.slotAt(i).id != 0 {
 			n++
 		}
 	}
@@ -123,7 +123,8 @@ func TestRangeSlotsAreFreed(t *testing.T) {
 	}
 }
 
-// Loops that a panic abandoned are bounded: they take at most the fixed slots.
+// A loop that a panic leaves gives its slot back, so any number of recovered
+// panics costs nothing and later loops still follow their edits.
 func TestRangeAbandonedLoopsAreBounded(t *testing.T) {
 	d := parseDoc(t, "a: [1, 2, 3]\nz: 0\n")
 	a := items(t, d, "/a")
@@ -138,8 +139,8 @@ func TestRangeAbandonedLoopsAreBounded(t *testing.T) {
 			}
 		}()
 	}
-	if n := slotsInUse(d); n > rangeSlots {
-		t.Fatalf("%d slots taken", n)
+	if n := slotsInUse(d); n != 0 {
+		t.Fatalf("%d slots taken after the panics", n)
 	}
 	var after runtime.MemStats
 	runtime.GC()
@@ -147,23 +148,96 @@ func TestRangeAbandonedLoopsAreBounded(t *testing.T) {
 	if grew := int64(after.HeapAlloc) - int64(before.HeapAlloc); grew > 1<<20 {
 		t.Errorf("heap grew by %d bytes", grew)
 	}
-	// Edits note the place of the slots only, never of the loops that were lost.
 	for i := 0; i < 1000; i++ {
 		if err := d.Set("/z", i); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if n := slotsInUse(d); n > rangeSlots {
+	if n := slotsInUse(d); n != 0 {
 		t.Fatalf("%d slots taken after the edits", n)
 	}
-	// A loop that finds every slot taken still runs; it ends at the first edit.
+}
+
+// After recovered panics, a new loop that edits still goes on to the end.
+func TestRangeEditsAfterRecoveredPanics(t *testing.T) {
+	d := parseDoc(t, "a: [1, 2, 3, 4]\n")
+	a := items(t, d, "/a")
+	for i := 0; i < 10; i++ {
+		func() {
+			defer func() { _ = recover() }()
+			for range a.Items() {
+				panic("stop")
+			}
+		}()
+	}
 	n := 0
-	for range items(t, d, "/a").Items() {
+	for it := range items(t, d, "/a").Items() {
+		ptr, err := it.Pointer()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Set(ptr, "x"); err != nil {
+			t.Fatal(err)
+		}
 		n++
 	}
-	if n != 3 {
-		t.Errorf("unregistered loop yielded %d items", n)
+	if n != 4 || string(d.Bytes()) != "a: [x, x, x, x]\n" {
+		t.Errorf("loop saw %d items; document %q", n, d.Bytes())
 	}
+}
+
+// Loops nested deeper than the fixed slots all go on after the edits their
+// bodies make.
+func TestRangeNestedEditingLoops(t *testing.T) {
+	for _, depth := range []int{5, 40} {
+		var sb strings.Builder
+		for i := 0; i < depth; i++ {
+			sb.WriteString(strings.Repeat("  ", i) + fmt.Sprintf("n%d:\n", i))
+		}
+		sb.WriteString(strings.Repeat("  ", depth) + "leaf: 0\n")
+		for i := depth - 1; i >= 0; i-- {
+			sb.WriteString(strings.Repeat("  ", i) + "s: 0\n")
+		}
+		d := parseDoc(t, sb.String())
+		var walk func(n Node)
+		max := 0
+		cur := 0
+		walk = func(n Node) {
+			cur++
+			max = max2(max, cur)
+			for _, v := range n.Entries() {
+				if v.Kind() == MappingNode {
+					walk(v)
+					continue
+				}
+				ptr, err := v.Pointer()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := d.Set(ptr, "done"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cur--
+		}
+		walk(d.Root())
+		if got := strings.Count(string(d.Bytes()), "done"); got != depth+1 {
+			t.Errorf("depth %d: %d values edited, want %d\n%s", depth, got, depth+1, d.Bytes())
+		}
+		if strings.Contains(string(d.Bytes()), ": 0") {
+			t.Errorf("depth %d: a value was left unedited", depth)
+		}
+		if n := slotsInUse(d); n != 0 {
+			t.Errorf("depth %d: %d slots taken at the end", depth, n)
+		}
+	}
+}
+
+func max2(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func collect(seq iter.Seq[Node], each func(i int)) []string {

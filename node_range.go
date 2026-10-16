@@ -18,12 +18,18 @@ import (
 // the way to it (noteEdit), and the loop finds its collection by it afterwards
 // (refind).
 //
-// The slots are a fixed array, so a loop that never edits costs no allocation.
-// A loop that finds all slots taken runs without one: it ends at the first edit.
-// A loop that is abandoned by a panic keeps its slot, which bounds what it can
-// cost; a deferred release would cost every loop, since a defer slows each
-// iteration.
+// The first slots are a fixed array, so a loop that never edits costs no
+// allocation. A loop that finds them taken gets a slot in a growable list, so
+// no loop is left without one. A slot is given back when its loop ends, however
+// it ends: a deferred release runs once per loop, not per step, and covers a
+// loop that a panic leaves.
 const rangeSlots = 3
+
+// rangeMore is a slot past the fixed ones, with the place it notes.
+type rangeMore struct {
+	rangeSlot
+	path rangePath
+}
 
 // rangeSlot is one running loop. id is 0 for a free slot; it tells loops apart, so
 // that a loop that ends late never frees the slot a later loop reuses.
@@ -69,7 +75,36 @@ func (s *docStream) watch(n Node, kind cst.Kind) uint64 {
 			return uint64(i+1)<<32 | uint64(e.id)
 		}
 	}
-	return 0
+	s.rngID++
+	id := s.rngID | 1<<31
+	m := rangeMore{rangeSlot: rangeSlot{id: id, epoch: n.gen, i: n.i, doc: n.doc, kind: kind}}
+	for i := range s.more {
+		if s.more[i].id == 0 {
+			s.more[i] = m
+			return uint64(rangeSlots+i+1)<<32 | uint64(id)
+		}
+	}
+	s.more = append(s.more, m)
+	return uint64(rangeSlots+len(s.more))<<32 | uint64(id)
+}
+
+// nslots is the number of slots, taken or free.
+func (s *docStream) nslots() int { return rangeSlots + len(s.more) }
+
+// slotAt returns slot i, counting the fixed ones first.
+func (s *docStream) slotAt(i int) *rangeSlot {
+	if i < rangeSlots {
+		return &s.rng[i]
+	}
+	return &s.more[i-rangeSlots].rangeSlot
+}
+
+// pathAt returns where slot i notes the place of its collection.
+func (s *docStream) pathAt(i int) *rangePath {
+	if i < rangeSlots {
+		return &s.es().rngPath[i]
+	}
+	return &s.more[i-rangeSlots].path
 }
 
 // slot returns the slot a handle names, or nil if the loop no longer has it.
@@ -77,17 +112,26 @@ func (s *docStream) slot(h uint64) *rangeSlot {
 	if h == 0 {
 		return nil
 	}
-	if i := int(h>>32) - 1; s.rng[i].id == uint32(h) {
-		return &s.rng[i]
+	if i := int(h>>32) - 1; i < s.nslots() && s.slotAt(i).id == uint32(h) {
+		return s.slotAt(i)
 	}
 	return nil
 }
 
 // unwatch frees the slot of a loop, if it still has it. The place noted for it, if
-// any, is dropped when the slot is next used.
+// any, is dropped when the slot is next used. Free slots at the end of the list
+// are cut off, so the list is as long as the deepest running loop needs.
 func (s *docStream) unwatch(h uint64) {
-	if i := int(h>>32) - 1; i >= 0 && s.rng[i].id == uint32(h) {
-		s.rng[i].id = 0
+	i := int(h>>32) - 1
+	if i < 0 || i >= s.nslots() || s.slotAt(i).id != uint32(h) {
+		return
+	}
+	s.slotAt(i).id = 0
+	if i >= rangeSlots {
+		s.more[i-rangeSlots].path = rangePath{}
+		for n := len(s.more); n > 0 && s.more[n-1].id == 0; n-- {
+			s.more = s.more[:n-1]
+		}
 	}
 }
 
@@ -95,8 +139,8 @@ func (s *docStream) unwatch(h uint64) {
 // edit changes the tree. A loop already noted is left alone, and so is one whose
 // node is already stale: its place is not known any more, and it ends.
 func (s *docStream) freezeRanges() {
-	for i := range s.rng {
-		e := &s.rng[i]
+	for i, n := 0, s.nslots(); i < n; i++ {
+		e := s.slotAt(i)
 		if e.id == 0 || e.st&rangeFrozen != 0 {
 			continue
 		}
@@ -106,7 +150,7 @@ func (s *docStream) freezeRanges() {
 		}
 		n := Node{s: s, i: e.i, doc: e.doc, gen: e.epoch}
 		if toks, seq, err := n.path(true); err == nil {
-			s.es().rngPath[i] = rangePath{toks, seq}
+			*s.pathAt(i) = rangePath{toks, seq}
 			e.st |= rangeOK
 		}
 	}
@@ -136,18 +180,18 @@ func (s *docStream) refind(h uint64) (coll int32, ok bool) {
 	c := edit.NewCtx(&s.tree, s.src, int(e.doc))
 	s.attach(c)
 	c.MaxAliasHops = s.cfg.limits.MaxAliasNodes
-	loc, err := c.Resolve(s.ed.rngPath[slot].toks, false)
+	loc, err := c.Resolve(s.pathAt(slot).toks, false)
 	if err != nil || loc.Node == 0 || s.tree.Nodes[loc.Node].Kind != e.kind {
 		return 0, false
 	}
 	e.i, e.epoch, e.st = loc.Node, s.epoch(), 0
-	s.ed.rngPath[slot] = rangePath{}
+	*s.pathAt(slot) = rangePath{}
 	return loc.Node, true
 }
 
 // ranging reports whether any loop over a collection is running.
 func (s *docStream) ranging() bool {
-	return s.rng[0].id|s.rng[1].id|s.rng[2].id != 0
+	return s.rng[0].id|s.rng[1].id|s.rng[2].id != 0 || len(s.more) > 0
 }
 
 // noteEdit follows a successful edit with the places of the running loops. The
@@ -165,12 +209,12 @@ func (s *docStream) noteEdit(doc int, op editKindOp, ptr string) {
 // shifts, and drops the place of each loop whose collection it replaces or
 // removes. An edit below a collection leaves its place alone.
 func (s *docStream) noteEditAt(doc int, op editKindOp, toks []string) {
-	for i := range s.rng {
-		e := &s.rng[i]
+	for i, n := 0, s.nslots(); i < n; i++ {
+		e := s.slotAt(i)
 		if e.id == 0 || e.st != rangeFrozen|rangeOK || int(e.doc) != doc {
 			continue // not running, no place noted, or in another document
 		}
-		if !s.ed.rngPath[i].follow(op, toks) {
+		if !s.pathAt(i).follow(op, toks) {
 			e.st &^= rangeOK
 		}
 	}
@@ -231,10 +275,11 @@ func (p *rangePath) follow(op editKindOp, toks []string) bool {
 // saveRanges keeps the noted places for a snapshot; it is nil when none is noted.
 func (s *docStream) saveRanges() []savedRange {
 	var out []savedRange
-	for i := range s.rng {
-		if e := &s.rng[i]; e.id != 0 && e.st&rangeFrozen != 0 {
-			p := rangePath{seq: s.ed.rngPath[i].seq} // never changed in place
-			p.toks = append(p.toks, s.ed.rngPath[i].toks...)
+	for i, n := 0, s.nslots(); i < n; i++ {
+		if e := s.slotAt(i); e.id != 0 && e.st&rangeFrozen != 0 {
+			src := s.pathAt(i)
+			p := rangePath{seq: src.seq} // never changed in place
+			p.toks = append(p.toks, src.toks...)
 			out = append(out, savedRange{e.id, e.st, p})
 		}
 	}
@@ -245,8 +290,8 @@ func (s *docStream) saveRanges() []savedRange {
 // snapshot gets it back as it was; one whose collection is valid again was only
 // noted by the edits that were undone, and is unfrozen.
 func (s *docStream) restoreRanges(sn docSnapshot) {
-	for i := range s.rng {
-		e := &s.rng[i]
+	for i, n := 0, s.nslots(); i < n; i++ {
+		e := s.slotAt(i)
 		if e.id == 0 {
 			continue
 		}
@@ -254,15 +299,15 @@ func (s *docStream) restoreRanges(sn docSnapshot) {
 		for _, sv := range sn.rng {
 			if sv.id == e.id {
 				e.st = sv.st
-				s.es().rngPath[i] = sv.path
+				*s.pathAt(i) = sv.path
 				done = true
 				break
 			}
 		}
 		if !done && e.epoch == s.epoch() {
 			e.st = 0
-			if s.ed != nil {
-				s.ed.rngPath[i] = rangePath{}
+			if i >= rangeSlots || s.ed != nil {
+				*s.pathAt(i) = rangePath{}
 			}
 		}
 	}

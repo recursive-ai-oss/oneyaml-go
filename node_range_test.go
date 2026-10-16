@@ -263,3 +263,48 @@ func BenchmarkRangeEntries(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkParseThenRangeEntries(b *testing.B) {
+	var sb strings.Builder
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&sb, "k%d: v\n", i)
+	}
+	data := []byte(sb.String())
+	b.ReportAllocs()
+	for b.Loop() {
+		doc, _ := oneyaml.Parse(data)
+		root := doc.Root()
+		for range root.Entries() {
+		}
+	}
+}
+
+func BenchmarkRangeItems(b *testing.B) {
+	var sb strings.Builder
+	for i := 0; i < 1000; i++ {
+		fmt.Fprintf(&sb, "- v%d\n", i)
+	}
+	doc, _ := oneyaml.Parse([]byte(sb.String()))
+	root := doc.Root()
+	b.ReportAllocs()
+	for b.Loop() {
+		for range root.Items() {
+		}
+	}
+}
+
+func BenchmarkRangeNestedItems(b *testing.B) {
+	doc, _ := oneyaml.Parse([]byte("- [[1, 2], [3, 4]]\n- [[5, 6], [7, 8]]\n"))
+	root := doc.Root()
+	b.ReportAllocs()
+	for b.Loop() {
+		for a := range root.Items() {
+			for c := range a.Items() {
+				for d := range c.Items() {
+					for range d.Items() {
+					}
+				}
+			}
+		}
+	}
+}

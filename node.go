@@ -426,8 +426,8 @@ func (n Node) Entry(i int) (key, value Node) {
 // item at the next position, as a fresh node. An edit that inserts or removes
 // items of a sequence on the way to this one moves the pointer with it. The loop
 // ends if the sequence is replaced or removed, is no longer a sequence, or has no
-// pointer (see Node.Pointer), and also when more than a few loops over one
-// Document are running at once and this one is not among the first.
+// pointer (see Node.Pointer). Any number of loops over one Document may run and
+// edit at once, and a loop that a panic leaves does not affect the others.
 //
 // Items appended during the loop are yielded, so a body that appends on every
 // pass never ends. Items inserted or removed before the current one may make the
@@ -444,6 +444,7 @@ func (n Node) Items() iter.Seq[Node] {
 		// read, so that a step copies no more than it did before loops could edit.
 		s, g := n.s, n.gen
 		h := s.watch(n, cst.Sequence)
+		defer s.unwatch(h)
 		pos := 0
 		for c := s.tree.First(n.i); c != 0; c = s.tree.Nodes[c].Next {
 			pos++
@@ -458,7 +459,6 @@ func (n Node) Items() iter.Seq[Node] {
 				}
 			}
 		}
-		s.unwatch(h)
 	}
 }
 
@@ -471,8 +471,8 @@ func (n Node) Items() iter.Seq[Node] {
 // at the next position, as fresh nodes. An edit that inserts or removes items of
 // a sequence on the way to this mapping moves the pointer with it. The loop ends
 // if the mapping is replaced or removed, is no longer a mapping, or has no
-// pointer (see Node.Pointer), and also when more than a few loops over one
-// Document are running at once and this one is not among the first.
+// pointer (see Node.Pointer). Any number of loops over one Document may run and
+// edit at once, and a loop that a panic leaves does not affect the others.
 //
 // Entries added at the end during the loop are yielded, so a body that adds an
 // entry on every pass never ends. Entries added or removed before the current one
@@ -487,6 +487,7 @@ func (n Node) Entries() iter.Seq2[Node, Node] {
 		}
 		s, g := n.s, n.gen
 		h := s.watch(n, cst.Mapping)
+		defer s.unwatch(h)
 		pos := 0
 		// The tree is read afresh each time: an edit, or a patch that was rolled
 		// back, can leave it in new slices.
@@ -508,7 +509,6 @@ func (n Node) Entries() iter.Seq2[Node, Node] {
 			}
 			k = s.tree.Nodes[v].Next
 		}
-		s.unwatch(h)
 	}
 }
 
