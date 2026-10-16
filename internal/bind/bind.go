@@ -90,7 +90,10 @@ func (s *AliasSpend) PathBudget(initial int) *int {
 // scope is closed, so a Node the type kept and decodes later starts a budget of
 // its own instead of carrying the old one (or keeping it alive).
 type Scope struct {
-	spend  *AliasSpend
+	spend *AliasSpend
+	// Cfg is the configuration of the read the call was made in, with the options
+	// the caller gave it: a decode made from a Node during the call starts from it.
+	Cfg    Config
 	closed atomic.Bool
 }
 

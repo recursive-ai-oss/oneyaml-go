@@ -1104,8 +1104,8 @@ func (s *docStream) firstDocument(v *edit.Value, fail func(error) error) error {
 			out = append(out, nl...)
 		}
 		out = append(out, edit.RenderRoot(v, nl, attempt == 1, s.cfg.yaml11)...)
-		if max := s.cfg.limits.MaxInputBytes; max > 0 && len(out) > max && len(out) > len(s.src) {
-			return fail(limitErr(LimitMaxInputBytes, "edit output size", max, ""))
+		if lerr := s.outputErr(out); lerr != nil {
+			return fail(lerr)
 		}
 		var nt cst.Tree
 		if err := s.buildTree(&nt, out, s.depth()); err != nil || len(nt.Docs) != 1 || !edit.Equal(&nt, out, nt.Docs[0].Root, v) {

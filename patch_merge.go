@@ -84,7 +84,7 @@ func (s *docStream) mergePatch(doc int, v *edit.Value, patchLen int) error {
 	}
 	// A merge patch can add members without bound, so the result is held to the
 	// same output limit as a 6902 patch.
-	if max := s.cfg.limits.MaxInputBytes; max > 0 && len(s.src) > max {
+	if max := s.cfg.limits.MaxInputBytes; max > 0 && s.overInput(0, max) {
 		if rerr := s.rollback(snap); rerr != nil {
 			return fail(nil, rerr)
 		}

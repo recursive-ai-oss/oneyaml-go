@@ -12,7 +12,11 @@ import "oneyaml.dev/go/internal/bind"
 // so a later KnownFields(false) can undo an earlier KnownFields().
 //
 // A read of a Document starts from the options the Document was parsed with and
-// applies the options given to the read on top, for that call only. The ones that
+// applies the options given to the read on top, for that call only. This works in
+// both directions: Limits, Untrusted or NoLimits given to a read replace the
+// bounds the Document was parsed with for that read, so NoLimits on a read of a
+// Document parsed with Untrusted removes its alias bounds. Pass such options
+// only for input you trust. The ones that
 // matter to a read are KnownFields, MergeKeys, Limits, Untrusted and NoLimits.
 // Indent and YAML11Strings concern writing and are ignored by a read, and the
 // size limits that concern parsing (MaxInputBytes, MaxDocuments) have no effect

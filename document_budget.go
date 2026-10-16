@@ -161,19 +161,98 @@ func (s *docStream) checkPatchSize(n int) error {
 	return nil
 }
 
+// maxStreamBytes is the longest text a Document holds: node offsets are 32-bit,
+// and Parse refuses more.
+const maxStreamBytes = math.MaxInt32 - 1
+
 // checkEditSize refuses an edit whose replacements would leave the text longer
-// than MaxInputBytes, as a patch does for its result. It is not applied inside a
-// patch, which holds every step to the same bound itself.
+// than MaxInputBytes, measured in the bytes the Document writes, or longer than
+// maxStreamBytes. It is not applied inside a patch, which holds every step to the
+// same bounds itself.
 func (s *docStream) checkEditSize(repls []edit.Repl) error {
-	max := s.cfg.limits.MaxInputBytes
-	if max <= 0 || s.batch {
+	if s.batch {
 		return nil
 	}
-	n := len(s.src)
+	grow := 0
 	for _, r := range repls {
-		n += len(r.Text) - (r.End - r.Start)
+		grow += len(r.Text) - (r.End - r.Start)
 	}
-	if n > max && n > len(s.src) {
+	if err := fixedSizeErr(len(s.src), grow); err != nil {
+		return err
+	}
+	max := s.cfg.limits.MaxInputBytes
+	if max <= 0 {
+		return nil
+	}
+	de, ok := s.docEncoding()
+	if !ok {
+		if grow > 0 && len(s.src)+grow > max {
+			return limitErr(LimitMaxInputBytes, "edit output size", max, "")
+		}
+		return nil
+	}
+	if de.factor()*(len(s.src)+grow)+de.markLen() <= max {
+		return nil
+	}
+	// Near the limit: count what is written, exactly.
+	cur := de.writtenLen(s.src) + de.markLen()
+	n := cur
+	for _, r := range repls {
+		n += de.writtenLen(r.Text) - de.writtenLen(s.src[r.Start:r.End])
+	}
+	if n > max && n > cur {
+		return limitErr(LimitMaxInputBytes, "edit output size", max, "")
+	}
+	return nil
+}
+
+// fixedSizeErr refuses a change of grow bytes to a text of cur bytes that would
+// pass maxStreamBytes. An edit that does not grow the text is never refused.
+func fixedSizeErr(cur, grow int) error {
+	if grow > 0 && cur+grow > maxStreamBytes {
+		return fixedLimitErr(LimitMaxInputBytes, "input size", maxStreamBytes)
+	}
+	return nil
+}
+
+// overInput reports whether the Document, with extra more UTF-8 bytes of text,
+// would be written longer than max. For text still to be added it counts at least
+// what the bytes cost in the encoding, so a refusal is never wrong; the exact
+// check follows once the text is in.
+func (s *docStream) overInput(extra, max int) bool {
+	de, ok := s.docEncoding()
+	if !ok {
+		return len(s.src)+extra > max
+	}
+	if de.factor()*(len(s.src)+extra)+de.markLen() <= max {
+		return false
+	}
+	return de.writtenLen(s.src)+de.markLen()+de.minLen(extra) > max
+}
+
+// outputErr refuses out, the whole text an edit would leave, if it is longer than
+// the text now and longer than MaxInputBytes in the bytes the Document writes, or
+// than maxStreamBytes.
+func (s *docStream) outputErr(out []byte) error {
+	if err := fixedSizeErr(len(s.src), len(out)-len(s.src)); err != nil {
+		return err
+	}
+	max := s.cfg.limits.MaxInputBytes
+	if max <= 0 {
+		return nil
+	}
+	de, ok := s.docEncoding()
+	if !ok {
+		if len(out) > max && len(out) > len(s.src) {
+			return limitErr(LimitMaxInputBytes, "edit output size", max, "")
+		}
+		return nil
+	}
+	if de.factor()*len(out)+de.markLen() <= max {
+		return nil
+	}
+	n, cur := de.writtenLen(out)+de.markLen(), de.writtenLen(s.src)+de.markLen()
+	if n > max && n > cur {
 		return limitErr(LimitMaxInputBytes, "edit output size", max, "")
 	}
 	return nil

@@ -147,7 +147,8 @@ func (e *SyntaxError) Error() string {
 // reports the same paths as a read without the hook. Inside the hook, the error
 // of its own Node.Decode holds the paths inside that node; a path of more than
 // 4 KiB that runs through hooks nested in one another is completed when the
-// outermost read ends.
+// outermost read ends, so it stays incomplete in an error the hook keeps or
+// wraps (with %w, say) instead of returning it.
 //
 // Error shortens a Path longer than 512 bytes to its first and last 256 bytes
 // joined by "..."; the Path field always holds the whole pointer.
@@ -299,7 +300,7 @@ func (e *LimitError) Error() string {
 	}
 	s := fmt.Sprintf("oneyaml: %s limit of %d exceeded", what, e.Max)
 	if e.Path != "" {
-		s += " at " + e.Path
+		s += " at " + shortPath(e.Path)
 	}
 	if e.Option != "" {
 		s += " (raise it with " + e.Option + ")"

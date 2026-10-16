@@ -45,7 +45,7 @@ func (d *Document) Get(ptr string, v any, opts ...Option) error {
 	c := edit.NewCtxLagging(&d.s.tree, d.s.src, d.idx)
 	hops, merge := d.s.cfg.limits.MaxAliasNodes, d.s.cfg.mergeKeys
 	if len(opts) > 0 {
-		rc := d.s.readConfig(opts)
+		rc := d.s.readConfig(d.s.cfg, opts)
 		hops, merge = rc.limits.MaxAliasNodes, rc.mergeKeys
 	}
 	c.MaxAliasHops = hops

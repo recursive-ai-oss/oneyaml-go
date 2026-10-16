@@ -87,6 +87,15 @@ func nodeFromRef(ref bind.NodeRef) Node {
 	return Node{s: s, i: ref.Node, sc: ref.Scope}
 }
 
+// inherit takes the settings that shape a read from o, the configuration of the
+// read around a hook; settings of the Document that do not concern reading stay.
+func (c *config) inherit(o config) {
+	c.knownFields, c.mergeKeys, c.aliasRatio = o.knownFields, o.mergeKeys, o.aliasRatio
+	c.exactNodes, c.exactBytes = o.exactNodes, o.exactBytes
+	c.limits.MaxDepth, c.limits.MaxAliasNodes, c.limits.MaxAliasBytes = o.limits.MaxDepth, o.limits.MaxAliasNodes, o.limits.MaxAliasBytes
+	c.limits.MaxScalarBytes, c.limits.MaxNumberDigits = o.limits.MaxScalarBytes, o.limits.MaxNumberDigits
+}
+
 func configFromBind(c bind.Config) config {
 	return config{
 		knownFields: c.KnownFields, mergeKeys: c.MergeKeys, aliasRatio: c.AliasRatio, exactNodes: c.ExactNodes, exactBytes: c.ExactBytes,
@@ -144,8 +153,8 @@ func checkTarget(v any) error {
 // readConfig returns the Document's options with opts applied on top, for one
 // read. It is a separate function so that the common call, with no options,
 // does not move a config to the heap.
-func (s *docStream) readConfig(opts []Option) config {
-	c := s.cfg
+func (s *docStream) readConfig(base config, opts []Option) config {
+	c := base
 	for _, o := range opts {
 		if o != nil {
 			o(&c)
@@ -165,8 +174,13 @@ func (s *docStream) decode(doc int, root int32, v any, sc *bind.Scope, opts []Op
 	in.w.reset(&s.tree, root)
 	sess := sessionPool.Get().(*session)
 	cfg := s.cfg
+	if sc.Spend() != nil {
+		// Inside a hook: the read around it may have been given options of its
+		// own, and a decode made from the hook's Node keeps them.
+		cfg.inherit(configFromBind(sc.Cfg))
+	}
 	if len(opts) > 0 {
-		cfg = s.readConfig(opts)
+		cfg = s.readConfig(cfg, opts)
 	}
 	cfg.spend = sc.Spend()
 	sess.b.Reset(in, bindConfig(&cfg, len(s.src)))
@@ -186,7 +200,7 @@ func (s *docStream) decode(doc int, root int32, v any, sc *bind.Scope, opts []Op
 	}
 	if err != nil {
 		err = convertError(err, s.src, &cfg, 0, 0)
-		if te, ok := err.(*TypeError); ok && sc != nil {
+		if te, ok := err.(*TypeError); ok && sc.Spend() != nil {
 			// Inside a hook: mark the errors with the call and the node, so that the
 			// read around the hook can tell them from the errors of another text
 			// and say where they are in the hook's value.

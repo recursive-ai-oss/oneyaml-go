@@ -1,6 +1,10 @@
 package oneyaml
 
-import "oneyaml.dev/go/internal/encoding"
+import (
+	"unicode/utf8"
+
+	"oneyaml.dev/go/internal/encoding"
+)
 
 // UTF-16 and UTF-32 documents. The scanner reads UTF-8 only, so a Document built
 // from UTF-16 or UTF-32 text keeps the UTF-8 form for parsing and editing and
@@ -40,4 +44,60 @@ var (
 type docEncoding struct {
 	enc encoding.Encoding
 	bom bool
+}
+
+// docEncoding returns how the Document writes its text when that is not UTF-8.
+func (s *docStream) docEncoding() (docEncoding, bool) {
+	if s == nil || s.enc == nil {
+		return docEncoding{}, false
+	}
+	de, ok := s.enc.(docEncoding)
+	return de, ok
+}
+
+// factor is the most bytes that one byte of UTF-8 text takes when written.
+func (e docEncoding) factor() int {
+	if e.enc == encoding.UTF16LE || e.enc == encoding.UTF16BE {
+		return 2
+	}
+	return 4
+}
+
+// markLen is the size of the byte order mark that is written.
+func (e docEncoding) markLen() int {
+	if !e.bom {
+		return 0
+	}
+	if e.enc == encoding.UTF16LE || e.enc == encoding.UTF16BE {
+		return 2
+	}
+	return 4
+}
+
+// minLen is the fewest bytes that n bytes of UTF-8 text take when written: three
+// bytes of Japanese text take two in UTF-16, and the rest take at least as many.
+func (e docEncoding) minLen(n int) int {
+	if e.factor() == 2 {
+		return n * 2 / 3
+	}
+	return n
+}
+
+// writtenLen is the size of the UTF-8 text p when written, without a mark. An
+// invalid byte counts as the replacement character, as it is written.
+func (e docEncoding) writtenLen(p []byte) int {
+	n := 0
+	for i := 0; i < len(p); {
+		r, w := rune(p[i]), 1
+		if r >= utf8.RuneSelf {
+			r, w = utf8.DecodeRune(p[i:])
+		}
+		i += w
+		if e.factor() == 4 || r >= 0x10000 {
+			n += 4
+		} else {
+			n += 2
+		}
+	}
+	return n
 }

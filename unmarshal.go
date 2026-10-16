@@ -309,7 +309,12 @@ func joinLinks(l *pathLink, rest string) string {
 }
 
 // pathBudget is the path text that the mismatches after the first may still take.
-type pathBudget struct{ left *int }
+type pathBudget struct {
+	left *int
+	// inner is set for the decode of a hook's Node, whose paths the read around
+	// the hook counts again in full: it charges only what it adds in front.
+	inner bool
+}
 
 func (b pathBudget) take(n int) bool {
 	if n > *b.left {
@@ -327,9 +332,9 @@ func typeErrors(e *bind.Error, src []byte, lineBase int, sp *bind.AliasSpend) *T
 	budget := max(len(src), pathBudgetMin)
 	var bud pathBudget
 	if sp != nil {
-		bud = pathBudget{sp.PathBudget(budget)}
+		bud = pathBudget{left: sp.PathBudget(budget), inner: true}
 	} else {
-		bud = pathBudget{&budget}
+		bud = pathBudget{left: &budget}
 	}
 	var out []*TypeError
 	if e.Multi == nil {
@@ -392,7 +397,11 @@ func typeErrorList(out []*TypeError, e *bind.Error, path string, src []byte, lin
 		if x.pre != nil {
 			n += x.pre.n
 		}
-		if len(out) > 0 && !bud.take(n) {
+		cost := n
+		if bud.inner {
+			cost = len(prefix)
+		}
+		if len(out) > 0 && !bud.take(cost) {
 			break
 		}
 		c := *x

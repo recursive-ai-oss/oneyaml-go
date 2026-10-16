@@ -674,7 +674,10 @@ func (b *patchBudget) chargeCopy(s *docStream, st *patchStep, n int) error {
 			return s.fail(st, limitErr(LimitMaxAliasBytes, "patch copy bytes", b.maxCopy, st.path))
 		}
 	}
-	if b.maxDoc > 0 && len(s.src)+n > b.maxDoc {
+	if len(s.src)+n > maxStreamBytes {
+		return s.fail(st, fixedLimitErr(LimitMaxInputBytes, "input size", maxStreamBytes))
+	}
+	if b.maxDoc > 0 && s.overInput(n, b.maxDoc) {
 		return s.fail(st, limitErr(LimitMaxInputBytes, "patch output size", b.maxDoc, st.path))
 	}
 	return nil
@@ -682,7 +685,10 @@ func (b *patchBudget) chargeCopy(s *docStream, st *patchStep, n int) error {
 
 // afterWrite checks the size of the document a step left, and passes err on.
 func (b *patchBudget) afterWrite(s *docStream, st *patchStep, err error) error {
-	if err == nil && b.maxDoc > 0 && len(s.src) > b.maxDoc {
+	if err == nil && len(s.src) > maxStreamBytes {
+		return s.fail(st, fixedLimitErr(LimitMaxInputBytes, "input size", maxStreamBytes))
+	}
+	if err == nil && b.maxDoc > 0 && s.overInput(0, b.maxDoc) {
 		return s.fail(st, limitErr(LimitMaxInputBytes, "patch output size", b.maxDoc, st.path))
 	}
 	return err
