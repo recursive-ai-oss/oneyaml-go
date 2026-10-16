@@ -156,6 +156,12 @@ func firstDiff(a, b []byte) string {
 func TestCompatV3MarshalCorpus(t *testing.T) {
 	tally := newTally("marshal-corpus")
 	for _, it := range compatCorpus(t) {
+		// The kit's safety inputs test read limits. yaml.v3 reads some of them,
+		// such as an alias expansion bomb, into a value that is gigabytes long
+		// once written out, so writing them measures only the size of the bomb.
+		if strings.Contains(it.name, "/safety/") {
+			continue
+		}
 		var v any
 		if yv3.Unmarshal(it.data, &v) != nil {
 			continue
