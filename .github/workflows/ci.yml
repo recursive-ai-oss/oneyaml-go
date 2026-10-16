@@ -108,6 +108,45 @@ jobs:
           RANGE: ${{ steps.range.outputs.range }}
         run: go run ./cmd/secretscan -range "$RANGE"
 
+  # The API of the library packages against the newest release tag. While that tag
+  # is v0 it only reports; from v1 on an incompatible change fails the job. Needs
+  # the tags, so the checkout is complete.
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            tools/go.mod
+      - name: API compatibility
+        run: tools/apicheck
+
+  # The kit revision named in the documentation's generated conformance regions
+  # must be the kit the conformance job checks out. It fails after the pin moves
+  # until the regions are regenerated from a run on that kit.
+  conformance-pin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26'
+          cache: true
+          cache-dependency-path: tools/go.mod
+      - name: Kit revision in the documentation matches the pin
+        working-directory: tools
+        run: go run ./cmd/pincheck
+
   # The tests on every supported Go version, without the shared test cases (the
   # conformance job runs those); the race detector on the newest.
   test:

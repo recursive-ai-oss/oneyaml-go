@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# tools/apicheck: compares the exported API of the library packages in the working
+# tree with the newest release tag reachable from HEAD, using apidiff.
+#
+#   tools/apicheck
+#
+# Additions are compatible and pass. An incompatible change is reported always, but
+# it fails the check (exit 1) only when the newest tag is v1 or higher: a v0 release
+# makes no compatibility promise, so before 1.0 the check informs and exits 0.
+# Environment: APIDIFF (path to the binary; default: apidiff on PATH, else installed
+# at the pinned version into GOBIN or the default Go bin directory).
+set -u
+cd "$(dirname "$0")/.." || exit 2
+
+# Pinned like the other CI tools. Bump on purpose.
+apidiff_version=v0.0.0-20261014143641-f0251eb4aa3e
+packages=(oneyaml.dev/go oneyaml.dev/go/compat/yamlv3 oneyaml.dev/go/compat/k8syaml)
+
+# The newest release by version order among tags reachable from HEAD, not the
+# nearest one, and never a pre-release.
+tag=$(git tag --merged HEAD --list 'v[0-9]*' --sort=-v:refname | grep -v -- '-' | head -n1)
+if [ -z "$tag" ]; then
+	echo "apicheck: no release tag reachable from HEAD; nothing to compare (is the checkout shallow? fetch tags)"
+	exit 0
+fi
+major=${tag#v}
+major=${major%%.*}
+
+apidiff=${APIDIFF:-$(command -v apidiff || true)}
+if [ -z "$apidiff" ]; then
+	go install "golang.org/x/exp/cmd/apidiff@$apidiff_version" || exit 2
+	apidiff=$(go env GOBIN)
+	[ -n "$apidiff" ] || apidiff=$(go env GOPATH)/bin
+	apidiff=$apidiff/apidiff
+fi
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/apicheck.XXXXXX") || exit 2
+trap 'rm -rf "$work"' EXIT
+
+# The old tree is exported with git archive, so the checkout is not touched.
+mkdir "$work/old"
+git archive "$tag" | tar -x -C "$work/old" || exit 2
+
+incompatible=0
+for pkg in "${packages[@]}"; do
+	rel=${pkg#oneyaml.dev/go}
+	rel=${rel#/}
+	if [ ! -d "$work/old/${rel:-.}" ]; then
+		echo "== $pkg: not in $tag, new package"
+		continue
+	fi
+	# apidiff -w reads the module that holds the current directory.
+	(cd "$work/old/${rel:-.}" && "$apidiff" -w "$work/old.out" "$pkg") || exit 2
+	(cd "${rel:-.}" && "$apidiff" -w "$work/new.out" "$pkg") || exit 2
+	out=$("$apidiff" "$work/old.out" "$work/new.out") || exit 2
+	echo "== $pkg against $tag"
+	if [ -z "$out" ]; then
+		echo "no API change"
+	else
+		echo "$out"
+	fi
+	if printf '%s\n' "$out" | grep -q '^Incompatible changes:'; then
+		incompatible=1
+	fi
+done
+
+if [ "$incompatible" = 1 ]; then
+	if [ "$major" -ge 1 ]; then
+		echo "FAIL: incompatible API changes against $tag"
+		exit 1
+	fi
+	echo "REPORT ONLY: incompatible API changes against $tag; $tag is v0, which allows them"
+	exit 0
+fi
+echo "API compatible with $tag"
