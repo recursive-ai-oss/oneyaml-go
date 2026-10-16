@@ -408,12 +408,27 @@ func (t *Tree) IsKey(n int32) bool {
 	if par == 0 || t.Nodes[par].Kind != Mapping {
 		return false
 	}
+	// Near the end, count back from the last child: an edit at the end of a large
+	// mapping must not read every key before it.
+	if cnt := t.Count(par); cnt > isKeyBack {
+		l := t.Last(par)
+		for j := cnt - 1; l != 0 && j >= cnt-isKeyBack; j-- {
+			if l == n {
+				return j%2 == 0
+			}
+			l = t.Prev(l)
+		}
+	}
 	i := 0
 	for c := t.First(par); c != n; c = t.Nodes[c].Next {
 		i++
 	}
 	return i%2 == 0
 }
+
+// isKeyBack is how many children from the end IsKey counts back over before it
+// counts forward from the first.
+const isKeyBack = 8
 
 // emptyAt returns the offset to give an empty scalar that is about to become a
 // child of parent after prev. The parser reports the position of whatever token

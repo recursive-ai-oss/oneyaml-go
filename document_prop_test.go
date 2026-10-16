@@ -299,6 +299,11 @@ func FuzzDocument(f *testing.F) {
 		if err := randomEdits(d, rand.New(rand.NewSource(seed)), 6, false); err != nil {
 			t.Fatal(err)
 		}
+		// The rename, comment, loop and batched removal paths against the paths they
+		// replace.
+		if err := editPathsAgree(data, seed); err != nil {
+			t.Fatal(err)
+		}
 	})
 }
 

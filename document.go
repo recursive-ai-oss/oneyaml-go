@@ -144,6 +144,7 @@ type editWork struct {
 	wholes       int // edits that parsed the whole stream
 	batches      int // runs of removals made in one pass
 	batchTries   int // runs of removals offered to the one-pass path that could pay
+	cursorWalks  int // times a child was looked up by walking from the first child of its collection
 }
 
 // Parse reads data as a YAML stream and returns it as a Document. The data is
@@ -469,7 +470,8 @@ func (s *docStream) editTree(doc int, op editKindOp, ptr string, v *edit.Value) 
 			return nil
 		}
 		if attempt == 0 && s.patchScalar(pl.target, repls, v) {
-			s.ed.cache.KeepKeys(genBefore, s.gen) // a scalar value changed; every key is where it was
+			s.ed.cache.KeepKeys(genBefore, s.gen)     // a scalar value changed; every key is where it was
+			s.keepCursor(genBefore, 0, 0, 0, 0, 0, 0) // and every node
 			return nil
 		}
 		var gone removedEntry
@@ -676,6 +678,12 @@ type regionInfo struct {
 	skip    int // tokens of the pointer that lead to the container
 	before  int // entries of the container that come before the region
 	outside int // children of the container that are not in the region
+
+	// The old nodes the region replaces, for a check that compares the run with
+	// what it was: nodes lo..hi of the stream's tree, children of cn; shift is what
+	// the region's offsets lack to be stream offsets.
+	lo, hi, cn int32
+	shift      int32
 }
 
 // neighboursOK checks the recorded neighbours against the new tree.

@@ -330,6 +330,19 @@ func (c *Ctx) findKey(cn int32, tok string) (value, key int32, ambiguous bool) {
 	return c.scanKey(cn, tok, big)
 }
 
+// findKeyLight is findKey for a look-up that comes with another on the same
+// mapping in one edit: it uses an index that exists and reads the keys otherwise,
+// without counting towards the scans that make an index. One rename looks up two
+// keys, and an index built for that would cost more than the edit.
+func (c *Ctx) findKeyLight(cn int32, tok string) (value, key int32, ambiguous bool) {
+	if s := c.memoSlot(cn); s != nil {
+		if v, k, amb, ok := c.probeKey(s, cn, tok); ok {
+			return v, k, amb
+		}
+	}
+	return c.scanKey(cn, tok, false)
+}
+
 // scanKey looks for key tok by reading the keys of mapping cn in turn. counted
 // says whether the keys read are added to the count.
 func (c *Ctx) scanKey(cn int32, tok string, counted bool) (value, key int32, ambiguous bool) {

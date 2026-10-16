@@ -34,9 +34,9 @@ import (
 //     scalar, for the merge key "<<", for a new key longer than 1000 bytes or not
 //     valid UTF-8, and for a tag on the key that would not fit the new text.
 //
-// The edit parses the whole document again, so a series of renames in a very large
-// document costs more than a series of Set calls. The document a view from Doc
-// selects is the one edited.
+// The edit parses only the entries around the key when it can, as Set does, and
+// the whole document otherwise. The document a view from Doc selects is the one
+// edited.
 func (d *Document) Rename(ptr, newKey string) error {
 	if d.isNil() {
 		return &EditError{Op: "rename", Pointer: ptr, Kind: ErrNilDocument}
@@ -53,8 +53,8 @@ func (d *Document) Rename(ptr, newKey string) error {
 		if err != nil || len(repls) == 0 {
 			return annotPlan{}, err
 		}
-		return annotPlan{repls: repls, sp: sp, skip: key, verify: func(nt *cst.Tree, out []byte) bool {
-			return string(edit.DecodeScalar(nil, nt, out, key)) == newKey
+		return annotPlan{repls: repls, sp: sp, skip: key, parent: loc.Parent, anchor: loc.Node, keys: true, verify: func(nt *cst.Tree, out []byte, _ int, off int32) bool {
+			return string(edit.DecodeScalar(nil, nt, out, key+off)) == newKey
 		}}, nil
 	})
 }
@@ -95,9 +95,8 @@ func (d *Document) SetHeadComment(ptr, text string) error {
 		if err != nil || len(repls) == 0 {
 			return annotPlan{}, err
 		}
-		doc := c.Doc
-		return annotPlan{repls: repls, sp: sp, verify: func(nt *cst.Tree, out []byte) bool {
-			s, e := edit.NewCtx(nt, out, doc).HeadCommentSpan(n)
+		return annotPlan{repls: repls, sp: sp, parent: loc.Parent, anchor: n, verify: func(nt *cst.Tree, out []byte, d int, off int32) bool {
+			s, e := edit.NewCtx(nt, out, d).HeadCommentSpan(n + off)
 			return edit.TrimComment(string(out[s:e])) == want
 		}}, nil
 	})
@@ -149,9 +148,8 @@ func (d *Document) SetLineComment(ptr, text string) error {
 		if err != nil || len(repls) == 0 {
 			return annotPlan{}, err
 		}
-		doc := c.Doc
-		return annotPlan{repls: repls, sp: sp, verify: func(nt *cst.Tree, out []byte) bool {
-			s, e := edit.NewCtx(nt, out, doc).LineCommentSpan(n)
+		return annotPlan{repls: repls, sp: sp, parent: loc.Parent, anchor: n, verify: func(nt *cst.Tree, out []byte, d int, off int32) bool {
+			s, e := edit.NewCtx(nt, out, d).LineCommentSpan(n + off)
 			return edit.TrimComment(string(out[s:e])) == comment
 		}}, nil
 	})
@@ -160,10 +158,17 @@ func (d *Document) SetLineComment(ptr, text string) error {
 // annotPlan is an edit that changes one stretch of text and leaves every node as it
 // was: a key rename or a comment.
 type annotPlan struct {
-	repls  []edit.Repl
-	sp     edit.Splice
-	skip   int32 // the node whose text the splice replaces
-	verify func(nt *cst.Tree, out []byte) bool
+	repls []edit.Repl
+	sp    edit.Splice
+	skip  int32 // the node whose text the splice replaces
+	// parent is the container the edit is in, and anchor a node of its entry: where
+	// a region edit looks. keys is set when the edit changes the text of a key.
+	parent, anchor int32
+	keys           bool
+	// verify reads the new text back as intended. nt is the new tree and doc the
+	// document in it; off is added to the number of a node of the old tree to give
+	// its number in nt.
+	verify func(nt *cst.Tree, out []byte, doc int, off int32) bool
 }
 
 // annotate runs a rename or comment edit on document doc. mk plans it on the current
@@ -193,11 +198,28 @@ func (s *docStream) annotate(doc int, op, ptr string, attempts int, mk func(c *e
 		if len(pl.repls) == 0 {
 			return nil
 		}
-		// The check needs the old tree, and parsing the new text reuses the slices of
-		// the current one.
+		gen := s.gen
+		if s.editRegion(c, &planned{repls: pl.repls, parent: pl.parent, anchor: pl.anchor, check: func(nt *cst.Tree, out []byte, rg *regionInfo) bool {
+			// Only the run the region replaces is compared; the rest of the tree is not
+			// touched by an edit inside it.
+			if rg == nil || s.tree.Nodes[rg.cn].Flow || pl.anchor < rg.lo || pl.anchor > rg.hi || (pl.skip != 0 && (pl.skip < rg.lo || pl.skip > rg.hi)) {
+				return false
+			}
+			return edit.SameRegionShape(&s.tree, rg.lo, rg.hi, rg.cn, nt, rg.shift, pl.sp, pl.skip) && pl.verify(nt, out, 0, 2-rg.lo)
+		}}) {
+			if !pl.keys {
+				s.ed.cache.KeepKeys(gen, s.gen) // no node moved and no key changed
+			}
+			if op == "rename" && s.ranging() {
+				s.noteEditAt(doc, opReplace, toks)
+			}
+			return nil
+		}
+		// The whole stream is parsed again. The check needs the old tree, and parsing
+		// the new text reuses the slices of the current one.
 		old := cst.Tree{Nodes: append([]cst.Node(nil), s.tree.Nodes...), Props: append([]cst.Prop(nil), s.tree.Props...), Docs: append([]cst.Doc(nil), s.tree.Docs...)}
 		check := func(nt *cst.Tree, out []byte, _ *regionInfo) bool {
-			return edit.SameShape(&old, nt, pl.sp, pl.skip) && pl.verify(nt, out)
+			return edit.SameShape(&old, nt, pl.sp, pl.skip) && pl.verify(nt, out, doc, 0)
 		}
 		done, lerr, err := s.applyRepls(pl.repls, check)
 		if err != nil {

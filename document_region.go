@@ -175,6 +175,10 @@ func indicatorAbove(src []byte, from, to int) bool {
 	return from >= 0 && from <= to && to <= len(src) && bytes.IndexByte(src[from:to], '?') >= 0
 }
 
+// nearEnd is how many entries back from the last one findRun looks for the entry
+// of an edit before it walks forward from the first.
+const nearEnd = 64
+
 // findRun looks for the touched entries. The walk to the entry that holds the
 // anchor node follows links only; the text of the entries is read from two entries
 // before it, which is as far back as an edit of that entry reaches.
@@ -185,29 +189,45 @@ func findRun(g geom, margin bool, cn, anchor int32, rs, re int) (runInfo, bool) 
 	if anchor != 0 {
 		// The entry is one of the last: go back from the end, not forward from the
 		// start, so that an edit at the end does not walk the whole container.
-		if last := t.Last(cn); last != 0 && (anchor == last || (mapping && anchor == t.Prev(last))) {
+		if last := t.Last(cn); last != 0 {
 			entries := t.Count(cn)
 			start := last
 			if mapping {
 				entries /= 2
 				start = t.Prev(last)
 			}
-			idx := entries - 1
-			sidx := max(idx-2, 0)
-			for i := idx; i > sidx; i-- {
-				start = t.Prev(start)
+			back := -1
+			for i := 0; i < nearEnd && start != 0; i++ {
+				l := start
 				if mapping {
+					l = t.Nodes[start].Next
+				}
+				if start == anchor || l == anchor {
+					back = i
+					break
+				}
+				if start = t.Prev(start); mapping && start != 0 {
 					start = t.Prev(start)
 				}
 			}
-			prev := t.Prev(start)
-			if sidx == 0 || rs >= g.lo(start) {
-				r, ok := scanRun(g, margin, mapping, start, sidx, prev, rs, re)
-				if ok && !(sidx > 0 && r.first == start && margin) {
-					return r, true
+			if back >= 0 {
+				idx := entries - 1 - back
+				sidx := max(idx-2, 0)
+				for i := idx; i > sidx; i-- {
+					start = t.Prev(start)
+					if mapping {
+						start = t.Prev(start)
+					}
 				}
+				prev := t.Prev(start)
+				if sidx == 0 || rs >= g.lo(start) {
+					r, ok := scanRun(g, margin, mapping, start, sidx, prev, rs, re)
+					if ok && !(sidx > 0 && r.first == start && margin) {
+						return r, true
+					}
+				}
+				return scanRun(g, margin, mapping, first, 0, 0, rs, re)
 			}
-			return scanRun(g, margin, mapping, first, 0, 0, rs, re)
 		}
 		var ef, el [4]int32
 		idx := 0
@@ -377,6 +397,7 @@ func (s *docStream) tryRegion(c *edit.Ctx, pl *planned, cn int32, skip, rs, re i
 // bytes of stand-in text, then the run's new text up to newEnd.
 func (s *docStream) commitRegion(pl *planned, cn int32, rt *cst.Tree, buf []byte, pad, newEnd, S, E int, runPrev, runFirst, runLast int32, rg *regionInfo) bool {
 	t := &s.tree
+	rg.lo, rg.hi, rg.cn, rg.shift = runFirst, t.SubtreeEnd(runLast), cn, int32(S-pad)
 	if !pl.check(rt, buf, rg) {
 		return false
 	}
@@ -395,9 +416,14 @@ func (s *docStream) commitRegion(pl *planned, cn int32, rt *cst.Tree, buf []byte
 		s.unshare()
 	}
 	s.ed.work.shifted = addSat(s.ed.work.shifted, len(t.Nodes)-1-int(t.SubtreeEnd(runLast)))
+	oldKids := t.Count(cn) - rg.outside
+	newKids := rt.Count(1)
 	t.Splice(cn, runPrev, runFirst, runLast, rt, int32(S-pad), int32(E), int32(delta))
 	s.dirty = true
+	gen := s.gen
 	s.gen++
+	step := 1 + b2i(t.Nodes[cn].Kind == cst.Mapping)
+	s.keepCursor(gen, runFirst, rg.hi, int32(len(rt.Nodes)-2)-(rg.hi-runFirst+1), cn, rg.before*step, newKids-oldKids)
 	s.ed.work.regions++
 	if spliceHook != nil {
 		spliceHook(s, &regionDebug{cn: cn, S: S, E: E, pad: pad, text: text, repls: pl.repls})

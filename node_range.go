@@ -319,3 +319,40 @@ func (s *docStream) restoreRanges(sn docSnapshot) {
 		}
 	}
 }
+
+// keepCursor keeps the child cursor (see childAt) valid across an edit, so that a
+// loop that edits as it goes, and asks for the child at its place after every edit,
+// does not walk the siblings from the first again each time, which would make a loop
+// over a large collection quadratic. gen is the stream's generation before the edit.
+//
+// An edit that replaced the nodes lo..hi, children of collection cn, by dn more
+// nodes (and dkids more children) leaves the nodes before lo as they were and moves
+// those after hi by dn. A cursor inside the run goes back to the start of the run,
+// whose child position is pos; one in a collection inside it is dropped. An edit
+// that changed no node number passes lo = hi = 0 and cn = 0.
+func (s *docStream) keepCursor(gen uint32, lo, hi, dn, cn int32, pos, dkids int) {
+	cu := &s.dec.cur
+	if cu.gen != gen || cu.node == 0 {
+		return
+	}
+	if lo == 0 { // no node moved
+		cu.gen = s.gen
+		return
+	}
+	switch {
+	case cu.node < lo && cu.parent < lo:
+		cu.gen = s.gen
+	case cu.node > hi && cu.parent < lo:
+		cu.node += dn
+		if cu.parent == cn {
+			cu.pos += dkids
+		}
+		cu.gen = s.gen
+	case cu.node > hi && cu.parent > hi:
+		cu.node += dn
+		cu.parent += dn
+		cu.gen = s.gen
+	case cu.parent == cn && cu.node >= lo && cu.node <= hi:
+		*cu = childCursor{parent: cn, gen: s.gen, pos: pos, node: lo}
+	}
+}

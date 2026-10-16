@@ -226,7 +226,7 @@ fmt.Println(errors.Is(err, oneyaml.ErrKeyExists))
 - the key carries an anchor that an alias uses (`ErrAnchorInUse`), because the alias would read the new key too. This is the same rule as for `Remove`. An anchor on the value does not count;
 - the key is empty, a collection, an alias or a block scalar, or is the merge key `<<`; the new key is longer than 1000 bytes or is not valid UTF-8; or a tag on the key does not fit the new key (`ErrUnsupportedEdit`).
 
-A rename parses the whole document again, so many renames in a very large document cost more than the same number of `Set` calls.
+A rename re-parses only the lines around the key, but it reads every key of the mapping to check that the new key is not already there, so many renames in a very wide mapping cost more than the same number of `Set` calls.
 
 ## Comments
 

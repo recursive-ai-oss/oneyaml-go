@@ -400,6 +400,8 @@ func (s *docStream) childAt(p int32, k int) int32 {
 	c, pos := s.tree.First(p), 0
 	if cu := &s.dec.cur; cu.parent == p && cu.gen == s.gen && cu.pos <= k {
 		c, pos = cu.node, cu.pos
+	} else if k > 0 && s.ed != nil {
+		s.ed.work.cursorWalks++ // a walk from the first child: tests count them
 	}
 	for ; pos < k && c != 0; pos++ {
 		c = s.tree.Nodes[c].Next

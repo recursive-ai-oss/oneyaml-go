@@ -100,7 +100,51 @@ func SameShape(old, nt *cst.Tree, sp Splice, skip int32) bool {
 
 // insideScalar reports whether offset at lies strictly inside the text of a
 // scalar other than skip: text put there would become part of the scalar.
+//
+// The non-empty scalars of a document lie in the node array in text order, one
+// after the other, so the one that can hold at is the last that starts before it,
+// and a binary search finds it. Collections and empty scalars lie between them;
+// when more than probeSpan of them follow each other the search gives up and reads
+// every node.
 func (c *Ctx) insideScalar(at int, skip int32) bool {
+	const probeSpan = 64
+	nodes := c.T.Nodes
+	text := func(i int) bool { return nodes[i].Kind == cst.Scalar && nodes[i].Start < nodes[i].End }
+	lo, hi := 1, len(nodes)
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		j := mid
+		for j < hi && j < mid+probeSpan && !text(j) {
+			j++
+		}
+		if j >= hi || j >= mid+probeSpan {
+			if j >= hi && j < mid+probeSpan {
+				hi = mid // no scalar from mid on: the search is in the lower half
+				continue
+			}
+			return c.insideScalarAll(at, skip)
+		}
+		if int(nodes[j].Start) < at {
+			lo = j + 1
+		} else {
+			hi = mid
+		}
+	}
+	// The last scalar that starts before at is the last one before lo.
+	n := 0
+	for i := lo - 1; i >= 1; i-- {
+		if text(i) {
+			return int32(i) != skip && int(nodes[i].Start) < at && at < int(nodes[i].End)
+		}
+		if n++; n > probeSpan {
+			return c.insideScalarAll(at, skip)
+		}
+	}
+	return false
+}
+
+// insideScalarAll is insideScalar by reading every node.
+func (c *Ctx) insideScalarAll(at int, skip int32) bool {
 	for i := 1; i < len(c.T.Nodes); i++ {
 		nd := &c.T.Nodes[i]
 		if nd.Kind == cst.Scalar && int32(i) != skip && int(nd.Start) < at && at < int(nd.End) {
@@ -171,10 +215,11 @@ func (c *Ctx) Rename(loc Loc, newKey string, safe bool) (repls []Repl, sp Splice
 	if kn.Style == scan.Plain && string(c.Src[kn.Start:kn.End]) == "<<" {
 		return nil, sp, 0, wrap(ErrUnsupported, "the key is a merge key")
 	}
-	if found, _, amb := c.findKey(loc.Parent, newKey); amb || (found != 0 && found != loc.Node) {
+	found, _, amb := c.findKeyLight(loc.Parent, newKey)
+	if amb || (found != 0 && found != loc.Node) {
 		return nil, sp, 0, wrap(ErrKeyExists, "%q is already a key of the mapping", newKey)
 	}
-	if found, _, _ := c.findKey(loc.Parent, newKey); found == loc.Node {
+	if found == loc.Node {
 		return nil, sp, 0, nil // the key already reads as newKey
 	}
 	if err := c.anchorsInUse(loc.Key, true); err != nil {
@@ -413,4 +458,80 @@ func (c *Ctx) LineComment(n int32, comment string) ([]Repl, Splice, error) {
 	text := " " + comment
 	sp = Splice{At: p, End: q, NewLen: len(text)}
 	return []Repl{{Start: p, End: q, Text: []byte(text)}}, sp, nil
+}
+
+// SameRegionShape is SameShape for the tree of one region: nt holds only the run
+// of children of container cn that the old nodes lo..hi of old make up, as the
+// children of its root node 1, with offsets that are shift less than those of the
+// stream after the splice sp. The run must come out as it was, node for node, with
+// every link and offset where the splice puts it. Node skip (0 for none) is the one
+// that holds the replaced text. The nodes outside the run are not read: a splice
+// inside the run does not touch them.
+func SameRegionShape(old *cst.Tree, lo, hi, cn int32, nt *cst.Tree, shift int32, sp Splice, skip int32) bool {
+	if lo < 2 || hi < lo || int(hi) >= len(old.Nodes) || len(nt.Nodes) < 2 || int32(len(nt.Nodes))-2 != hi-lo+1 {
+		return false
+	}
+	delta := int32(sp.NewLen - (sp.End - sp.At))
+	at, end := int32(sp.At), int32(sp.End)
+	moved := func(o, n int32) bool {
+		n += shift
+		switch {
+		case o <= at && n == o:
+			return true
+		case o >= end && n == o+delta:
+			return true
+		}
+		return false
+	}
+	idx := 2 - lo // old node number plus idx is the node number in nt
+	props := 0
+	for i := lo; i <= hi; i++ {
+		a, b := &old.Nodes[i], &nt.Nodes[i+idx]
+		if a.Kind != b.Kind || (a.Style != b.Style && i != skip) || a.Flow != b.Flow || a.Pair != b.Pair ||
+			a.Indent != b.Indent || (a.Prop == 0) != (b.Prop == 0) {
+			return false
+		}
+		if a.Parent == cn {
+			if b.Parent != 1 {
+				return false
+			}
+		} else if a.Parent < lo || b.Parent != a.Parent+idx {
+			return false
+		}
+		switch {
+		case a.Next == 0:
+			if b.Next != 0 {
+				return false
+			}
+		case a.Next > hi:
+			// The last child of the run: the old link leaves the run, the new one ends.
+			if a.Parent != cn || b.Next != 0 {
+				return false
+			}
+		case b.Next != a.Next+idx:
+			return false
+		}
+		if i == skip {
+			if b.Start+shift != a.Start && !moved(a.Start, b.Start) {
+				return false
+			}
+		} else if a.Start == a.End {
+			// An empty scalar's offset has no meaning; it only has to be empty again.
+			if b.Start != b.End {
+				return false
+			}
+		} else if !moved(a.Start, b.Start) || !moved(a.End, b.End) {
+			return false
+		}
+		if a.Prop != 0 {
+			props++
+			pa, pb := old.Props[a.Prop], nt.Props[b.Prop]
+			for _, p := range [][2]int32{{pa.AnchorStart, pb.AnchorStart}, {pa.AnchorEnd, pb.AnchorEnd}, {pa.TagStart, pb.TagStart}, {pa.TagEnd, pb.TagEnd}} {
+				if (p[0] != 0 || p[1] != 0) && p[0] != p[1]+shift && !moved(p[0], p[1]) {
+					return false
+				}
+			}
+		}
+	}
+	return len(nt.Props)-1 == props
 }
