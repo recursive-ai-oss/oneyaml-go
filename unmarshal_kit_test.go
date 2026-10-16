@@ -102,6 +102,14 @@ func kitCategory(err error) string {
 		return "limit"
 	case errors.As(err, &te):
 		return "type"
+	case errors.Is(err, oneyaml.ErrNotFound):
+		return "patch-path"
+	case errors.Is(err, oneyaml.ErrTestFailed):
+		return "patch-test"
+	case errors.Is(err, oneyaml.ErrInvalidPatch):
+		return "patch-invalid"
+	case errors.Is(err, oneyaml.ErrAliasWrite), errors.Is(err, oneyaml.ErrAnchorInUse):
+		return "refused-alias"
 	}
 	return "other"
 }
