@@ -211,3 +211,107 @@ func TestDocsLinksResolve(t *testing.T) {
 		}
 	}
 }
+
+var (
+	generatedBeginRE = regexp.MustCompile(`^<!-- generated:([a-z-]+) -->$`)
+	reportBeginRE    = regexp.MustCompile(`^<!-- kit-report:([a-z-]+) -->$`)
+	reportEndRE      = regexp.MustCompile(`^<!-- end kit-report:([a-z-]+) -->$`)
+)
+
+// The Markdown files hold two kinds of generated region, and this test checks
+// their shape, not their numbers.
+//
+// Benchmark regions, <!-- generated:KIND --> ... <!-- end generated -->, are
+// written by the oneyaml-kit `bin/bench readme` command. Every begin marker
+// names a kind the renderer knows and is closed before the next begins, and no
+// end marker stands alone. Every chart a region shows exists.
+//
+// Conformance report regions, <!-- kit-report:NAME --> ... <!-- end kit-report:NAME -->,
+// are the kit's own report pasted in at release. The renderer never sees them.
+// Each is closed by an end marker of its own name.
+//
+// The pages that must hold regions hold them.
+func TestDocsGeneratedBlocksAreWellFormed(t *testing.T) {
+	kinds := map[string]bool{"bench-hero": true, "bench-full": true, "conformance-line": true, "conformance-deviations": true}
+	reports := map[string]bool{"conformance-summary": true, "conformance": true}
+	required := map[string][]string{
+		"README.md":           {"bench-hero", "conformance-summary"},
+		"docs/performance.md": {"bench-full"},
+		"docs/conformance.md": {"conformance"},
+	}
+	srcRE := regexp.MustCompile(`(?:src|srcset)="([^"]+)"`)
+	for _, file := range markdownFiles(t) {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := map[string]int{}
+		open := "" // the name of the open region, of either family
+		report := false
+		for i, line := range strings.Split(strings.ReplaceAll(string(src), "\r", ""), "\n") {
+			line = strings.TrimSpace(line)
+			where := func(format string, args ...any) {
+				t.Errorf("%s:%d: "+format, append([]any{file, i + 1}, args...)...)
+			}
+			if m := generatedBeginRE.FindStringSubmatch(line); m != nil {
+				if open != "" {
+					where("block %q begins inside block %q", m[1], open)
+				}
+				if !kinds[m[1]] {
+					where("unknown generated block kind %q", m[1])
+				}
+				open, report = m[1], false
+				seen[m[1]]++
+				continue
+			}
+			if m := reportBeginRE.FindStringSubmatch(line); m != nil {
+				if open != "" {
+					where("report %q begins inside block %q", m[1], open)
+				}
+				if !reports[m[1]] {
+					where("unknown report region %q", m[1])
+				}
+				open, report = m[1], true
+				seen[m[1]]++
+				continue
+			}
+			if line == "<!-- end generated -->" {
+				if open == "" || report {
+					where("end marker does not close a generated block")
+				}
+				open = ""
+				continue
+			}
+			if m := reportEndRE.FindStringSubmatch(line); m != nil {
+				if open == "" || !report || open != m[1] {
+					where("end marker for report %q does not close the open region", m[1])
+				}
+				open = ""
+				continue
+			}
+			if open != "" && !report {
+				for _, m := range srcRE.FindAllStringSubmatch(line, -1) {
+					if strings.Contains(m[1], "://") {
+						continue
+					}
+					if _, err := os.Stat(filepath.Join(filepath.Dir(file), m[1])); err != nil {
+						where("chart %s does not exist", m[1])
+					}
+				}
+			}
+		}
+		if open != "" {
+			t.Errorf("%s: region %q is not closed", file, open)
+		}
+		for kind, n := range seen {
+			if n > 1 {
+				t.Errorf("%s: region %q appears %d times", file, kind, n)
+			}
+		}
+		for _, kind := range required[filepath.ToSlash(file)] {
+			if seen[kind] == 0 {
+				t.Errorf("%s: no %q region", file, kind)
+			}
+		}
+	}
+}
