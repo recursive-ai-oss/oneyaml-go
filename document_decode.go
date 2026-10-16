@@ -1,6 +1,7 @@
 package oneyaml
 
 import (
+	"errors"
 	"io"
 	"reflect"
 	"sort"
@@ -20,6 +21,12 @@ import (
 // valid only during the call; aliases inside it still resolve. A null value
 // leaves a pointer target nil without calling the method. An error the method
 // returns comes back from the decode as a *TypeError whose Unwrap gives it.
+//
+// A Node the method keeps past its return may be used later, one goroutine at a
+// time, and then decodes under the settings it was given. It must not be used
+// at the moment the method returns, from another goroutine: the read that made
+// the call reuses its state for the next one, and a use at that instant may see
+// it.
 type Unmarshaler interface {
 	UnmarshalYAML(node Node) error
 }
@@ -47,14 +54,27 @@ func hookErrorProbe(err error, ref bind.NodeRef) (msg, rel string, own bool) {
 		}
 		return unprefix(e.Error()), "", false
 	case *LimitError:
-		if e.rel && e.sc != nil && e.sc == ref.Scope && e.from != ref.Node {
-			rel, _ = nodeFromRef(ref).pathBelow(e.from)
-		}
-		return unprefix(err.Error()), rel, false
+		return unprefix(err.Error()), limitRel(e, ref), false
 	case *SyntaxError:
 		return unprefix(err.Error()), "", false
 	}
+	// A hook that wraps the error of its decode (fmt.Errorf with %w) still hands
+	// back a limit error that needs its path made whole.
+	var le *LimitError
+	if errors.As(err, &le) {
+		return err.Error(), limitRel(le, ref), false
+	}
 	return err.Error(), "", false
+}
+
+// limitRel is the path from the hook's node to where the limit error e was hit,
+// when e is the error of a decode made from that node in this call.
+func limitRel(e *LimitError, ref bind.NodeRef) string {
+	if e.rel && e.sc != nil && e.sc == ref.Scope && e.from != ref.Node {
+		rel, _ := nodeFromRef(ref).pathBelow(e.from)
+		return rel
+	}
+	return ""
 }
 
 // decodeState is the part of a docStream that decoding needs beyond the tree.

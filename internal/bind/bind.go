@@ -92,7 +92,10 @@ func (s *AliasSpend) PathBudget(initial int) *int {
 //
 // The scope names the binder of the call and reads the budget and the
 // configuration from it, so that a call costs one pointer and no copy of the
-// configuration. They are read only while the call runs.
+// configuration. They are read only while the call runs, and a Node used on
+// another goroutine as the call returns may still see the next read's state: the
+// public documentation tells callers not to do that. Copying the configuration
+// into every scope would cost an allocation of its size on each hook call.
 type Scope struct {
 	b      *Binder
 	closed atomic.Bool

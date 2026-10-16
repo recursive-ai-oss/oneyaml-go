@@ -120,13 +120,15 @@ type editState struct {
 	// lost reports that the tree was lost and the text could not be parsed again;
 	// see lose.
 	lost bool
+	// wlOK says that wl holds the written size, and wlScans counts the times it was
+	// counted from the whole text, for tests. They sit beside lost so that the
+	// three share a word.
+	wlOK    bool
+	wlScans uint32
 
 	// wl is the size of the text written in the Document's encoding while wlOK; see
-	// writtenSrc. wlScans counts the times it was counted from the whole text, for
-	// tests.
-	wl      int
-	wlOK    bool
-	wlScans int
+	// writtenSrc.
+	wl int
 
 	// cache holds the indexes of the anchors and of the keys of large mappings.
 	cache edit.Cache
