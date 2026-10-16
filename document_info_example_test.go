@@ -1,6 +1,7 @@
 package oneyaml_test
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
@@ -65,4 +66,30 @@ func ExampleNode_Items() {
 	// mapping
 	// x scalar
 	// y sequence
+}
+
+func ExampleNode_Find() {
+	// With MergeKeys, a search through merge sources is bounded by MaxAliasNodes.
+	// Find tells a refused search from an absent key; Lookup reports both as false.
+	src := "base: &base {a: 1, b: 2, c: 3, d: 4}\nuse:\n  <<: *base\n  own: 5\n"
+	limits := oneyaml.DefaultLimits()
+	limits.MaxAliasNodes = 2
+	doc, err := oneyaml.Parse([]byte(src), oneyaml.MergeKeys(), oneyaml.Limits(limits))
+	if err != nil {
+		log.Fatal(err)
+	}
+	var use oneyaml.Node
+	if err := doc.Get("/use", &use); err != nil {
+		log.Fatal(err)
+	}
+	own, err := use.Find("own")
+	fmt.Println(own.Value(), err)
+	_, err = use.Find("missing")
+	fmt.Println(errors.Is(err, oneyaml.ErrNotFound), errors.As(err, new(*oneyaml.LimitError)))
+	_, err = use.Find("d")
+	fmt.Println(errors.Is(err, oneyaml.ErrNotFound), errors.As(err, new(*oneyaml.LimitError)))
+	// Output:
+	// 5 <nil>
+	// false true
+	// false true
 }

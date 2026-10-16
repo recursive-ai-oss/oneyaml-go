@@ -29,7 +29,7 @@ fmt.Printf("%+v\n", oneyaml.UntrustedLimits())
 | `LimitSet` field | What it bounds | If it is exceeded |
 |---|---|---|
 | `MaxDepth` | nesting of collections, in input and when writing | `*LimitError`, `Limit` is `depth` |
-| `MaxAliasNodes` | nodes produced by expanding aliases; with `MergeKeys()`, also the keys one pointer lookup or `Node.Lookup` reads in `<<` merge sources ([Merge keys](editing.md#merge-keys)) | `*LimitError`; `Node.Lookup` finds nothing |
+| `MaxAliasNodes` | nodes produced by expanding aliases; with `MergeKeys()`, also the keys one pointer lookup or `Node.Lookup` reads in `<<` merge sources ([Merge keys](editing.md#merge-keys)) | `*LimitError`; `Node.Lookup` finds nothing; `Node.Find` returns the `*LimitError` |
 | `MaxAliasBytes` | scalar bytes produced by expanding aliases; also the bytes a patch copies | `*LimitError` |
 | `MaxInputBytes` | the size of the input, and the size of a document after a patch; the text of one patch or merge patch may be an eighth of it, but never less than 64 KiB and never more than the limit ([Bounds](patches.md#bounds)) | `*LimitError` |
 | `MaxScalarBytes` | the length of one scalar | `*LimitError` |

@@ -149,3 +149,73 @@ func TestPatchCopyFromMergeBudgetIsLimitError(t *testing.T) {
 		t.Fatalf("got %v, want a LimitError", err)
 	}
 }
+
+func TestNodeFind(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("a: &a\n")
+	for i := 0; i < 500; i++ {
+		fmt.Fprintf(&b, "  k%d: %d\n", i, i)
+	}
+	b.WriteString("b:\n  <<: *a\n  own: 1\n")
+	lim := oneyaml.DefaultLimits()
+	lim.MaxAliasNodes = 100
+	doc, err := oneyaml.Parse([]byte(b.String()), oneyaml.MergeKeys(), oneyaml.Limits(lim))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bn oneyaml.Node
+	if err := doc.Get("/b", &bn); err != nil {
+		t.Fatal(err)
+	}
+
+	// Found: Find adds no allocation to what Lookup already does (the search's
+	// own context).
+	if n, err := bn.Find("own"); err != nil || n.Value() != "1" {
+		t.Fatalf("own: %q, %v", n.Value(), err)
+	}
+	look := testing.AllocsPerRun(20, func() { _, _ = bn.Lookup("own") })
+	if got := testing.AllocsPerRun(20, func() { _, _ = bn.Find("own") }); got > look {
+		t.Errorf("Find of a present key allocates %v, Lookup %v", got, look)
+	}
+
+	// Refused by the merge bound: Lookup reads as absent, Find says why.
+	if _, ok := bn.Lookup("k400"); ok {
+		t.Error("Lookup found a key past the bound")
+	}
+	_, err = bn.Find("k400")
+	var le *oneyaml.LimitError
+	if !errors.As(err, &le) {
+		t.Fatalf("Find past the bound = %v, want a LimitError", err)
+	}
+	if errors.Is(err, oneyaml.ErrNotFound) {
+		t.Error("a refused search matches ErrNotFound")
+	}
+
+	// Absent: in a mapping without merges, and on a scalar.
+	plain, err := oneyaml.Parse([]byte("x: 1\n"), oneyaml.MergeKeys())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plain.Root().Find("nope"); !errors.Is(err, oneyaml.ErrNotFound) {
+		t.Errorf("absent: %v", err)
+	}
+	x, err := plain.Root().Find("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.Find("y"); !errors.Is(err, oneyaml.ErrNotFound) {
+		t.Errorf("scalar receiver: %v", err)
+	}
+	if _, err := (oneyaml.Node{}).Find("x"); !errors.Is(err, oneyaml.ErrNotFound) {
+		t.Errorf("zero Node: %v", err)
+	}
+
+	// Stale: the document was edited after the receiver was read.
+	root := plain.Root()
+	if err := plain.Set("/x", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.Find("x"); !errors.Is(err, oneyaml.ErrStaleNode) {
+		t.Errorf("stale: %v", err)
+	}
+}

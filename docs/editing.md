@@ -441,7 +441,7 @@ fmt.Print(string(doc.Bytes()))
 //   image: caddy
 ```
 
-Merge sources are searched depth-first, each mapping once, so a source that merges itself, directly or through others, does not loop. The keys a search reads count against `MaxAliasNodes` ([Limits](limits.md#each-limit)). A search past it fails with a `*LimitError`, whether it serves `Get`, a patch or an edit, and `Node.Lookup` then finds nothing. Adding a new key with `Set` does not search merge sources.
+Merge sources are searched depth-first, each mapping once, so a source that merges itself, directly or through others, does not loop. The keys a search reads count against `MaxAliasNodes` ([Limits](limits.md#each-limit)). A search past it fails with a `*LimitError`, whether it serves `Get`, a patch or an edit, and `Node.Lookup` then finds nothing, because its false result cannot say why; `Node.Find` returns the `*LimitError`. Adding a new key with `Set` does not search merge sources.
 
 Without `MergeKeys()`, `<<` is an ordinary key, and pointers address only the keys as written.
 
@@ -466,7 +466,7 @@ if errors.As(err, &ee) {
 
 ## Reading while you edit
 
-A `Node` is a view of the document as it was when you read it. An edit makes every `Node` read before it stale: `Stale` reports `true`, `Decode` and `Pointer` return an error matching `ErrStaleNode`, and the other methods return zero values. A zero value looks like an answer (`Value` of a stale node is `""`, the same as an empty scalar), so `Node.Err` is the check: it is `nil` for a node you can read, matches `ErrStaleNode` for a stale one, and matches `ErrNotFound` for the zero `Node`, such as the one a failed `Lookup` returns. Reading the node again after an edit is still the better habit.
+A `Node` is a view of the document as it was when you read it. An edit makes every `Node` read before it stale: `Stale` reports `true`, `Decode` and `Pointer` return an error matching `ErrStaleNode`, and the other methods return zero values. A zero value looks like an answer (`Value` of a stale node is `""`, the same as an empty scalar), so `Node.Err` is the check: it is `nil` for a node you can read, matches `ErrStaleNode` for a stale one, and matches `ErrNotFound` for the zero `Node`, such as the one a failed `Lookup` returns. `Lookup` returns only a boolean, so a false result cannot say whether the key is absent, the node is stale or a merge search was refused by a limit; `Node.Find(key)` returns the same node with an error that does (`ErrNotFound`, `ErrStaleNode` or a `*LimitError`). Reading the node again after an edit is still the better habit.
 
 <!-- example: ExampleNode_Err -->
 ```go

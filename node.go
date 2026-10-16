@@ -555,14 +555,55 @@ func (n Node) Entries() iter.Seq2[Node, Node] {
 // MergeKeys and the mapping has no such key itself, Lookup looks in its "<<"
 // merge sources, with the precedence Decode and Get use, because it answers the
 // question "what value has this key?". Entries, Items and Len describe the
-// mapping as written and do not include merged keys. A false result for a Node
-// that is not valid is explained by Err. Merge sources are searched depth-first,
-// each mapping once; the keys read count against MaxAliasNodes, and a search past
-// it finds nothing (Get reports it as a *LimitError).
+// mapping as written and do not include merged keys. Merge sources are searched
+// depth-first, each mapping once; the keys read count against MaxAliasNodes.
+//
+// Lookup is the convenience form: a false result means "no value", whatever the
+// reason. That includes a Node that is not valid (see Err) and a merge search
+// that went past MaxAliasNodes, which reads as absent here. Use [Node.Find] when
+// the difference matters, for example before falling back to a default.
 func (n Node) Lookup(key string) (Node, bool) {
+	v, ok, _ := n.lookup(key)
+	return v, ok
+}
+
+// Find is Lookup with the reason for a miss. It returns the value of the first
+// entry of a mapping whose key has the scalar text key, and a nil error. The
+// error is:
+//   - an error matching [ErrNotFound] when the key is absent, or n is not a
+//     mapping, or n is the zero Node;
+//   - an error matching [ErrStaleNode] when the Document was edited after n was
+//     read;
+//   - an error matching [ErrAmbiguousKey] when a merge brings the key in from
+//     two places of one source;
+//   - a [*LimitError] when, with MergeKeys, the search of the "<<" merge sources
+//     read more keys than MaxAliasNodes allows. The key may or may not exist;
+//     Document.Get reports the same refusal.
+//
+// The name is a verb that returns (value, error), the Go shape for an operation
+// that can fail for several reasons (like [os.Open]); Lookup keeps the comma-ok
+// shape of a map read, which has room for only one reason. A found key costs
+// what Lookup costs.
+func (n Node) Find(key string) (Node, error) {
+	v, ok, err := n.lookup(key)
+	if ok {
+		return v, nil
+	}
+	if err != nil {
+		return Node{}, err
+	}
+	if n.nd() == nil {
+		return Node{}, n.errInvalid("find")
+	}
+	return Node{}, &EditError{Op: "find", Pointer: key, Kind: ErrNotFound}
+}
+
+// lookup is the search behind Lookup and Find. When ok is false, err is the
+// refused merge search, or nil for an absent key or a Node that cannot be read.
+func (n Node) lookup(key string) (v Node, ok bool, err error) {
 	nd := n.nd()
 	if nd == nil || nd.Kind != cst.Mapping {
-		return Node{}, false
+		return Node{}, false, nil
 	}
 	c := n.ctx()
 	if n.s.cfg.mergeKeys {
@@ -575,16 +616,20 @@ func (n Node) Lookup(key string) (Node, bool) {
 			break
 		}
 		if n.s.tree.Nodes[k].Kind == cst.Scalar && c.KeyText(k) == key {
-			return n.child(v), true
+			return n.child(v), true, nil
 		}
 		k = n.s.tree.Nodes[v].Next
 	}
 	if c.Merge {
-		if v, err := c.MergedValue(n.i, key); err == nil && v != 0 {
-			return n.child(v), true
+		mv, merr := c.MergedValue(n.i, key)
+		if merr != nil {
+			return Node{}, false, editKind(merr)
+		}
+		if mv != 0 {
+			return n.child(mv), true, nil
 		}
 	}
-	return Node{}, false
+	return Node{}, false, nil
 }
 
 // Position returns the 1-based line and column of the start of the node, counted
