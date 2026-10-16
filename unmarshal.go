@@ -180,6 +180,12 @@ func convertError(err error, src []byte, cfg *config, lineBase, offBase int) err
 					if first, ok := bind.EarlierRounding(src, e.Offset); ok {
 						return floatKeyError(&bind.Error{Kind: bind.KindType, Offset: e.Offset, First: first, GoType: "float64", Category: "float-key"}, src, lineBase, offBase)
 					}
+					// Spelled differently, read alike: 1 and 0x1, null and ~.
+					if first, ok := bind.EarlierSameValue(src, e.Offset); ok {
+						earlier, _ := bind.KeyText(src, first)
+						later, _ := bind.KeyText(src, e.Offset)
+						return sameValueKeys(&bind.Error{Offset: e.Offset, First: first}, earlier, later, src, lineBase, offBase)
+					}
 				}
 			}
 			return syntaxFromBind(e, src, lineBase, offBase)

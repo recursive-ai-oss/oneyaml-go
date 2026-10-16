@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 
 	"oneyaml.dev/go/internal/parse"
+	"oneyaml.dev/go/internal/resolve"
+	"oneyaml.dev/go/internal/scan"
 )
 
 // FirstKey explains a duplicate key. off is the offset of the repeated key in
@@ -147,4 +150,67 @@ func floatOf(text []byte) (float64, bool) {
 		return 0, false
 	}
 	return f, f == f
+}
+
+// EarlierSameValue finds, for a duplicate key at offset off, an earlier key of
+// the same mapping that is written differently but reads as the same Core
+// schema value (1 and 0x1, null and ~, true and True). It only looks at plain
+// scalars without a tag, which is where such spellings come from.
+func EarlierSameValue(src []byte, off int) (first int, ok bool) {
+	var later any
+	var mapStart int
+	found := false
+	walkKeys(src, off, func(ev *parse.Event, isKey bool, ms int) bool {
+		if !isKey || ev.Start != off {
+			return true
+		}
+		if v, plain := plainKeyValue(src, ev); plain {
+			later, mapStart, found = v, ms, true
+		}
+		return false
+	})
+	if !found {
+		return 0, false
+	}
+	walkKeys(src, off, func(ev *parse.Event, isKey bool, ms int) bool {
+		if !isKey || ms != mapStart || ev.Start >= off {
+			return true
+		}
+		if v, plain := plainKeyValue(src, ev); plain && sameKeyValue(v, later) {
+			first, ok = ev.Start, true
+			return false
+		}
+		return true
+	})
+	return first, ok
+}
+
+// plainKeyValue is the generic value of a plain, untagged scalar key. Strings
+// are left out: two string keys are equal only when written alike, which the
+// caller has already looked for.
+func plainKeyValue(src []byte, ev *parse.Event) (any, bool) {
+	if ev.Style != scan.Plain || ev.HasTag() {
+		return nil, false
+	}
+	text, err := parse.AppendScalar(nil, src, ev)
+	if err != nil {
+		return nil, false
+	}
+	r := resolve.Core(text)
+	if r.Kind == resolve.String {
+		return nil, false
+	}
+	return anyOf(text, &r, tagNone), true
+}
+
+// sameKeyValue compares two generic key values, big integers by value.
+func sameKeyValue(a, b any) bool {
+	if x, ok := a.(*big.Int); ok {
+		y, ok := b.(*big.Int)
+		return ok && x.Cmp(y) == 0
+	}
+	if _, ok := b.(*big.Int); ok {
+		return false
+	}
+	return a == b
 }

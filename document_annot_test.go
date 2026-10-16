@@ -1205,3 +1205,27 @@ func TestYAMLPatchSyntaxErrorHasPosition(t *testing.T) {
 		t.Errorf("err %v, want a YAML error", err)
 	}
 }
+
+// Keys that are spelled differently but read as one value are named in the error,
+// with the position of the first, as the decoder does for any target.
+func TestRepeatedKeysByValueNameBothKeys(t *testing.T) {
+	for _, c := range []struct{ val, want string }{
+		{"{1: a, 0x1: b}", `mapping key "0x1" has the same value as the key "1" at line 3, column 11`},
+		{"{null: 1, ~: 2}", `mapping key "~" has the same value as the key "null" at line 3, column 11`},
+		{"{true: 1, True: 2}", `mapping key "True" has the same value as the key "true" at line 3, column 11`},
+	} {
+		var v any
+		derr := Unmarshal([]byte("v: "+c.val+"\n"), &v)
+		if derr == nil || !strings.Contains(derr.Error(), "has the same value as the key") {
+			t.Errorf("%s: Unmarshal error %v", c.val, derr)
+		}
+		d, _ := Parse([]byte("a: 1\n"))
+		err := d.ApplyPatch([]byte("- op: add\n  path: /z\n  value: " + c.val + "\n"))
+		if !errors.Is(err, ErrInvalidPatch) || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: patch error %v, want it to contain %s", c.val, err, c.want)
+		}
+		if d.String() != "a: 1\n" {
+			t.Errorf("%s: document changed", c.val)
+		}
+	}
+}
