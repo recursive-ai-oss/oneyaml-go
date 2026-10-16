@@ -64,7 +64,9 @@
 //     that takes the Node of gopkg.in/yaml.v3 because it comes from a module that
 //     still imports it, makes the read return an error naming the type and the
 //     method; yaml.v3 skips such a method silently and fills the value by its
-//     fields, which drops whatever the method validated;
+//     fields, which drops whatever the method validated. The same holds for a
+//     MarshalYAML method that is not MarshalYAML() (interface{}, error): Marshal
+//     returns an error naming the type and the method;
 //   - alias expansion is counted across the whole call: a type that decodes its
 //     own Node again counts against the same budget, which yaml.v3 starts afresh;
 //   - what yaml.v3 writes but cannot read back is written correctly: a block
@@ -96,6 +98,8 @@
 //     directly above a key or item, foot comments, the comments of a document,
 //     and comments after a "---" marker, a lone dash, an anchor or tag on a
 //     collection, or an explicit key. Comments inside a flow collection are
-//     read and written as yaml.v3 does, except a comment line just before the
-//     closing bracket, which is not read.
+//     read and written as yaml.v3 does, including a comment line just before the
+//     closing bracket, which is the foot comment of the last key or item. One
+//     shape differs: yaml.v3 puts such a comment after an empty value
+//     ({a: ,) on the mapping itself, the shim on the key.
 package yaml

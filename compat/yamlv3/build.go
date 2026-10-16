@@ -257,10 +257,12 @@ func sharedFor(ref bind.NodeRef) *buildShared {
 }
 
 type builder struct {
-	ref  bind.NodeRef
-	sh   *buildShared
-	li   *lineCursor
-	slab []Node
+	// foots holds the comments found before closing brackets while one tree is built.
+	foots []string
+	ref   bind.NodeRef
+	sh    *buildShared
+	li    *lineCursor
+	slab  []Node
 	// hook, when set, is recorded on every node built.
 	hook *hookCall
 	// kids is one allocation for the Content of every collection: each node but
@@ -339,6 +341,10 @@ type buildFrame struct {
 	parent *Node
 	// prev is the preceding sibling in a mapping, to place an empty value.
 	prev int32
+	// foot is 1 + the index in builder.foots of a comment that stood before the
+	// closing bracket of a flow collection: it belongs to this node, the last
+	// key or item. An index keeps the frame the size it was.
+	foot int32
 }
 
 // build converts the tree below c, in document order so that an alias finds the
@@ -346,6 +352,7 @@ type buildFrame struct {
 // written.
 func (b *builder) build(t *cst.Tree, c int32, tags []string) (*Node, error) {
 	var root *Node
+	b.foots = b.foots[:0]
 	// The first levels of nesting fit in this array, which stays on the stack.
 	var frames [24]buildFrame
 	stack := append(frames[:0], buildFrame{c: c})
@@ -378,13 +385,29 @@ func (b *builder) build(t *cst.Tree, c int32, tags []string) (*Node, error) {
 		if t == ref0(b) {
 			b.commentsFor(t, f.c, n, r)
 		}
+		if f.foot != 0 && !t.Nodes[f.c].Pair && n.FootComment == "" {
+			n.FootComment = b.foots[f.foot-1]
+		}
 		nd := &t.Nodes[f.c]
+		var foot int32
+		if nd.Pair {
+			foot = f.foot
+		} else if t == ref0(b) && nd.Flow {
+			if text := b.flowFoot(t, nd); text != "" {
+				b.foots = append(b.foots, text)
+				foot = int32(len(b.foots))
+			}
+		}
 		if nd.Kind == cst.Mapping || nd.Kind == cst.Sequence {
 			kids = t.Children(kids[:0], f.c)
 			for i := len(kids) - 1; i >= 0; i-- {
 				fr := buildFrame{c: kids[i], parent: n}
 				if nd.Kind == cst.Mapping && i%2 == 1 {
 					fr.prev = kids[i-1]
+				}
+				// The foot goes to the last item, or in a mapping to the last key.
+				if foot != 0 && i == len(kids)-1-b2i(nd.Kind == cst.Mapping) {
+					fr.foot = foot
 				}
 				stack = append(stack, fr)
 			}
@@ -555,3 +578,10 @@ func (b *builder) placeEmpty(t *cst.Tree, c, key int32, n *Node) {
 // ref0 returns the main tree of the builder (the predefined trees are built
 // without comments).
 func ref0(b *builder) *cst.Tree { return b.ref.Tree }
+
+func b2i(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}

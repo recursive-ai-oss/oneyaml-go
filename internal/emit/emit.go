@@ -801,7 +801,7 @@ func (e *Encoder) plan(t reflect.Type) *typeinfo.Plan {
 // done is true when the value has been written (or failed).
 func (e *Encoder) hooks(v reflect.Value, plan *typeinfo.Plan, p pos) (done bool, err error) {
 	h := plan.Hooks
-	if plan.BadMarshal && !e.v3 {
+	if plan.BadMarshal {
 		return true, &Error{Kind: KindHook, Type: v.Type(), Detail: v.Type().String() + " has a MarshalYAML method that is not MarshalYAML() (any, error); change its signature, or remove it to write the value by its fields"}
 	}
 	if h&(typeinfo.HookMarshaler|typeinfo.HookPtrMarshaler) != 0 {

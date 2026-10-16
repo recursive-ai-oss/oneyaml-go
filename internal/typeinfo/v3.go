@@ -26,6 +26,8 @@ func ForV3(t reflect.Type) *Plan {
 	p := &Plan{Type: t, Kind: t.Kind(), V3: true}
 	if t.Kind() != reflect.Interface {
 		p.Hooks = hooksOf(t)
+		// A MarshalYAML this package cannot call is reported, not skipped.
+		p.BadMarshal = badMarshal(t)
 	}
 	switch t {
 	case timeType:

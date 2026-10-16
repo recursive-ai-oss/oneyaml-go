@@ -89,3 +89,26 @@ func TestYAMLv3MarshalHookOfOtherPackageShape(t *testing.T) {
 type marshalOK struct{}
 
 func (marshalOK) MarshalYAML() (interface{}, error) { return "ok", nil }
+
+// foreignMarshal has a MarshalYAML the adapter cannot call. yaml.v3 skips it
+// and writes the fields; the adapter refuses, as it does on the read side.
+type foreignMarshal struct{ A int }
+
+func (f foreignMarshal) MarshalYAML(x int) (interface{}, error) { return "never", nil }
+
+func TestYAMLv3ForeignMarshalHookIsRefused(t *testing.T) {
+	if b, err := v3.Marshal(foreignMarshal{A: 1}); err != nil || string(b) != "a: 1\n" {
+		t.Fatalf("yaml.v3: %q %v", b, err)
+	}
+	for name, v := range map[string]any{
+		"direct": foreignMarshal{A: 1},
+		"ptr":    &foreignMarshal{A: 1},
+		"field":  struct{ P foreignMarshal }{},
+		"slice":  []foreignMarshal{{}},
+	} {
+		b, err := yaml.Marshal(v)
+		if err == nil || !strings.Contains(err.Error(), "foreignMarshal") || !strings.Contains(err.Error(), "MarshalYAML") {
+			t.Errorf("%s: want an error naming the type and method, got %q %v", name, b, err)
+		}
+	}
+}

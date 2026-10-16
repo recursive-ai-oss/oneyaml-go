@@ -604,7 +604,32 @@ func (b *builder) documentComments(d *Node) {
 		}
 		return
 	}
+	if bs == 0 && endsInFlow(d) {
+		// yaml.v3 gives the comments that follow a flow collection on the very
+		// first line of the text to the document, not to the key or item.
+		d.FootComment = strings.Join(block, "\n")
+		return
+	}
 	b.footFor(strings.Join(block, "\n"), indentOf(block[0], src, first))
+}
+
+// endsInFlow reports whether the last thing in the document is a flow
+// collection, reached through the last entry of block collections.
+func endsInFlow(d *Node) bool {
+	if len(d.Content) == 0 {
+		return false
+	}
+	n := d.Content[0]
+	for n != nil && (n.Kind == SequenceNode || n.Kind == MappingNode) {
+		if n.Style&FlowStyle != 0 {
+			return true
+		}
+		if len(n.Content) == 0 {
+			return false
+		}
+		n = n.Content[len(n.Content)-1]
+	}
+	return false
 }
 
 // emptyDocumentFoot handles a document that has a "---" marker and no content.
@@ -968,4 +993,52 @@ func (b *builder) endIndicatorComment(d *Node) {
 	if rest := bytes.TrimLeft(l[1:], " \t"); len(rest) < len(l)-1 && len(rest) > 0 && rest[0] == '#' && d.Content[0].LineComment == "" {
 		d.Content[0].LineComment = string(rest)
 	}
+}
+
+// flowFoot returns the comment lines that stand alone between the last entry of
+// the flow collection nd and its closing bracket, blank lines inside the block
+// kept. yaml.v3 gives them to the last key or item as its foot comment.
+func (b *builder) flowFoot(t *cst.Tree, nd *cst.Node) string {
+	if !b.cs.on || !nd.Flow || nd.End < 2 {
+		return ""
+	}
+	src := b.ref.Src
+	p := int(nd.End) - 1
+	if p >= len(src) || (src[p] != ']' && src[p] != '}') {
+		return ""
+	}
+	ls := lineStart(src, p)
+	if len(bytes.TrimSpace(src[ls:p])) != 0 || ls == 0 {
+		return ""
+	}
+	var lines []string
+	for i := ls; i > 0; {
+		ps := lineStart(src, i-1)
+		l := bytes.TrimSpace(src[ps : i-1])
+		if len(l) == 0 {
+			lines = append(lines, "")
+		} else if l[0] == '#' && !b.insideScalar(ps+indexNonBlank(src[ps:i-1])) {
+			lines = append(lines, string(l))
+		} else {
+			break
+		}
+		i = ps
+	}
+	// Collected bottom-up; drop the blank lines at either end and reverse.
+	// A blank line before the bracket stays as one newline at the end of the text.
+	tail := ""
+	for len(lines) > 0 && lines[0] == "" {
+		lines = lines[1:]
+		tail = "\n"
+	}
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	for x, y := 0, len(lines)-1; x < y; x, y = x+1, y-1 {
+		lines[x], lines[y] = lines[y], lines[x]
+	}
+	return strings.Join(lines, "\n") + tail
 }
