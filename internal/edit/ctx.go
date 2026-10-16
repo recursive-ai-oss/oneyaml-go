@@ -295,6 +295,10 @@ func (c *Ctx) keyIs(k int32, tok string) bool {
 	case scan.Plain:
 		// A plain scalar keeps its first and last character however it is folded;
 		// most keys differ there, and the line breaks need not be looked for.
+		// Folding only shortens text, so a shorter raw scalar cannot equal tok.
+		if len(raw) < len(tok) {
+			return false
+		}
 		if len(raw) > 0 && len(tok) > 0 && (raw[0] != tok[0] || raw[len(raw)-1] != tok[len(tok)-1]) {
 			return false
 		}

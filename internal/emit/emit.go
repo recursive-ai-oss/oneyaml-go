@@ -801,6 +801,9 @@ func (e *Encoder) plan(t reflect.Type) *typeinfo.Plan {
 // done is true when the value has been written (or failed).
 func (e *Encoder) hooks(v reflect.Value, plan *typeinfo.Plan, p pos) (done bool, err error) {
 	h := plan.Hooks
+	if plan.ForeignNode {
+		return true, &Error{Kind: KindHook, Type: v.Type(), Detail: v.Type().String() + " is the Node of another yaml.v3 module, which this package cannot write; build this package's yaml.Node instead, or write the value with that module"}
+	}
 	if plan.BadMarshal {
 		return true, &Error{Kind: KindHook, Type: v.Type(), Detail: v.Type().String() + " has a MarshalYAML method that is not MarshalYAML() (any, error); change its signature, or remove it to write the value by its fields"}
 	}

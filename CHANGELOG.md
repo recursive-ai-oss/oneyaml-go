@@ -15,6 +15,8 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ### Changed
 
+- **Breaking:** `Node.Find` returns an error matching `ErrAmbiguousKey`, and `Node.Lookup` returns `false`, for a key written more than once in the mapping, as `Get` and every edit already refused a pointer through it. They used to return the first entry. Use `Entries` to read every entry, or `Find` to learn why a lookup failed. See [Reading while you edit](docs/editing.md#reading-while-you-edit).
+- `compat/yamlv3` refuses, with an error naming the type, a value of the `Node` type of gopkg.in/yaml.v3 (for example one returned by a `MarshalYAML` method). It used to write the node's fields (`kind: 8`, `style: 0`, ...) where yaml.v3 writes the node. Build the package's own `yaml.Node` instead.
 - **Breaking:** `LimitError.Limit` is a `Limit` that names the `LimitSet` field (`LimitMaxDepth`), where it was free text (`"depth"`, `"alias expansion nodes"`, `"patch output size"`). Compare it with the constants. The old text is in `What`, and the message reads as before, apart from the option it suggests and, for a limit hit at a value, the path; the document-count limit from `Parse` now says "documents per stream", as the `Decoder`'s does. Patch limits report the field that governs them: `MaxInputBytes` for the patch text and for the document a patch makes, `MaxAliasBytes` for the text a patch copies.
 - **Breaking:** `LimitError.Option` has one form, `Limits (MaxDepth)`, naming the option and the field that raises the bound, where it was `Limits`, `Limits or NoLimits` or `Limits (MaxAliasNodes)` by place. It is empty when no option changes the bound (the nesting of a patch value, 10,000, and of typed values, 100,000, are such bounds), and always in `compat/yamlv3` and `compat/k8syaml`, which take no limit options and used to suggest `Limits`.
 - `LimitError.Path` is filled for the limits hit at a value while reading (alias expansion, scalar size, number digits), as it already was for patches. It stays empty for the input size, the document count and nesting that the parser stops at.
@@ -26,6 +28,7 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 - **Breaking** (only for code that uses these as values): `KnownFields`, `MergeKeys` and `YAML11Strings` are now `func(...bool) Option`, and `Document.Get`, `Document.Decode` and `Node.Decode` are variadic (`...Option`). Every call that compiled before still compiles. A method value or a function-typed variable, such as `var f func(string, any) error = doc.Get`, or an interface with the old method set, no longer matches; wrap the call in a function literal.
 - `Set`, `Rename`, `SetHeadComment` and `SetLineComment` refuse an edit that would leave the text longer than `MaxInputBytes` with a `*LimitError` (`errors.As` finds it inside the `*EditError`), as `ApplyPatch` and `ApplyMergePatch` already did. The document is unchanged. An edit that makes the text shorter is allowed. Before, only patches were held to the limit.
 - `Node` is documented as comparable: two Nodes are equal when they are the same node of the same state of the same Document, so a Node read before an edit never equals the one read after it.
+
 ## [0.3.0] - 2026-10-16
 
 ### Added

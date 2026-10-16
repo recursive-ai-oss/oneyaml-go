@@ -66,7 +66,11 @@
 //     method; yaml.v3 skips such a method silently and fills the value by its
 //     fields, which drops whatever the method validated. The same holds for a
 //     MarshalYAML method that is not MarshalYAML() (interface{}, error): Marshal
-//     returns an error naming the type and the method;
+//     returns an error naming the type and the method. The same holds for
+//     a value of the Node type of gopkg.in/yaml.v3, including one that a
+//     MarshalYAML method returns: yaml.v3 writes the node, this package cannot
+//     read that type without importing it, so Marshal returns an error naming
+//     the type; build this package's Node instead;
 //   - alias expansion is counted across the whole call: a type that decodes its
 //     own Node again counts against the same budget, which yaml.v3 starts afresh;
 //   - what yaml.v3 writes but cannot read back is written correctly: a block
@@ -93,10 +97,6 @@
 // yaml.v3 is wrong:
 //   - a repeated key is sometimes reported without the line of its first
 //     occurrence, as when the repeated key is written as an alias;
-//   - a MarshalYAML method that returns the *Node of gopkg.in/yaml.v3, as a type
-//     from a module that still imports it may, is called, but the Node it
-//     returns is written as an ordinary struct, field by field; yaml.v3 writes
-//     the node;
 //   - comments are recovered from the text and placed on the nodes where
 //     yaml.v3 places them in the common layouts: line comments, comments
 //     directly above a key or item, foot comments, the comments of a document,

@@ -351,7 +351,12 @@ func (c *Ctx) keyBytes(k int32) (text []byte, ok bool) {
 // node and the key node, both 0 if there is no such key, and ambiguous if the key
 // occurs more than once.
 func (c *Ctx) findKey(cn int32, tok string) (value, key int32, ambiguous bool) {
-	big := c.Cache != nil && c.T.Count(cn) >= 2*keyIndexMin
+	return c.findKeyFrom(cn, tok, 2*keyIndexMin)
+}
+
+// findKeyFrom is findKey for a mapping of at least min nodes getting an index.
+func (c *Ctx) findKeyFrom(cn int32, tok string, min int) (value, key int32, ambiguous bool) {
+	big := c.Cache != nil && c.T.Count(cn) >= min
 	if big {
 		if c.Cache.Keys == nil {
 			if c.Cache.pend != cn {
@@ -378,6 +383,14 @@ func (c *Ctx) findKey(cn int32, tok string) (value, key int32, ambiguous bool) {
 		}
 	}
 	return c.scanKey(cn, tok, big)
+}
+
+// FindKey is findKey for a reader outside the package: the value and key nodes
+// of tok in mapping cn (0 when absent), and whether tok occurs more than once.
+// A reader that looks keys up one after the other and must see every key to spot
+// a repeat passes a lower indexMin (a node count) than edits use.
+func (c *Ctx) FindKey(cn int32, tok string, indexMin int) (value, key int32, ambiguous bool) {
+	return c.findKeyFrom(cn, tok, indexMin)
 }
 
 // findKeyLight is findKey for a look-up that comes with another on the same

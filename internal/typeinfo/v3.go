@@ -28,6 +28,7 @@ func ForV3(t reflect.Type) *Plan {
 		p.Hooks = hooksOf(t)
 		// A MarshalYAML this package cannot call is reported, not skipped.
 		p.BadMarshal = badMarshal(t)
+		p.ForeignNode = foreignNode(t)
 	}
 	switch t {
 	case timeType:

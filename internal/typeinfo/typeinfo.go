@@ -94,6 +94,10 @@ type Plan struct {
 	// signature is not the accepted one. Encoding such a type is an error: the
 	// method would otherwise be ignored without a word.
 	BadMarshal bool
+	// ForeignNode is set by ForV3 for the Node type of the yaml.v3 module (or a
+	// pointer to it). That type cannot be read here without importing it, so
+	// writing it by its fields would be wrong; encoding it is an error.
+	ForeignNode bool
 	// V3 marks a plan built by ForV3.
 	V3 bool
 
@@ -213,6 +217,22 @@ func jsonHooksOf(t reflect.Type) Hooks {
 
 // badMarshal reports whether t, or a pointer to it, has a MarshalYAML method
 // that is not func() (any, error).
+// foreignNode reports whether t is yaml.v3's Node or a pointer to it, by name:
+// this module does not import yaml.v3.
+func foreignNode(t reflect.Type) bool {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct || t.Name() != "Node" {
+		return false
+	}
+	switch t.PkgPath() {
+	case "gopkg.in/yaml.v3", "go.yaml.in/yaml/v3":
+		return true
+	}
+	return false
+}
+
 func badMarshal(t reflect.Type) bool {
 	pt := t
 	if t.Kind() != reflect.Pointer {

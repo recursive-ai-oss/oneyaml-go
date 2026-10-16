@@ -600,8 +600,14 @@ func (n Node) Entries() iter.Seq2[Node, Node] {
 	}
 }
 
-// Lookup returns the value of the first entry of a mapping whose key has the
-// scalar text key. Aliases are not followed. When the Document was parsed with
+// nodeIndexMin is the node count (two per entry) from which Find and Lookup
+// index a mapping's keys. Spotting a repeated key means reading every key, so
+// repeated lookups in a mapping of this size are better served by an index.
+const nodeIndexMin = 64
+
+// Lookup returns the value of the entry of a mapping whose key has the scalar
+// text key. A key written more than once in the mapping has no single value, so
+// Lookup reports false for it, as Document.Get refuses a pointer through it. Aliases are not followed. When the Document was parsed with
 // MergeKeys and the mapping has no such key itself, Lookup looks in its "<<"
 // merge sources, with the precedence Decode and Get use, because it answers the
 // question "what value has this key?". Entries, Items and Len describe the
@@ -610,22 +616,23 @@ func (n Node) Entries() iter.Seq2[Node, Node] {
 //
 // Lookup is the convenience form: a false result means "no value", whatever the
 // reason. That includes a Node that is not valid (see Err) and a merge search
-// that went past MaxAliasNodes, which reads as absent here. Use [Node.Find] when
-// the difference matters, for example before falling back to a default.
+// that went past MaxAliasNodes, which reads as absent here, and a key written
+// more than once. Use [Node.Find] when the difference matters, for example before falling back to a default.
 func (n Node) Lookup(key string) (Node, bool) {
 	v, ok, _ := n.lookup(key)
 	return v, ok
 }
 
-// Find is Lookup with the reason for a miss. It returns the value of the first
-// entry of a mapping whose key has the scalar text key, and a nil error. The
-// error is:
+// Find is Lookup with the reason for a miss. It returns the value of the entry
+// of a mapping whose key has the scalar text key, and a nil error. The error is:
 //   - an error matching [ErrNotFound] when the key is absent, or n is not a
 //     mapping, or n is the zero Node;
 //   - an error matching [ErrStaleNode] when the Document was edited after n was
 //     read;
-//   - an error matching [ErrAmbiguousKey] when a merge brings the key in from
-//     two places of one source;
+//   - an error matching [ErrAmbiguousKey] when the mapping has the key more than
+//     once, or when a merge brings the key in from two places of one source.
+//     Document.Get refuses such a key the same way; [Node.Entries] still yields
+//     every entry;
 //   - a [*LimitError] when, with MergeKeys, the search of the "<<" merge sources
 //     read more keys than MaxAliasNodes allows. The key may or may not exist;
 //     Document.Get reports the same refusal.
@@ -660,15 +667,14 @@ func (n Node) lookup(key string) (v Node, ok bool, err error) {
 		c.Merge = true
 		c.MaxAliasHops = n.s.cfg.limits.MaxAliasNodes
 	}
-	for k := n.s.tree.First(n.i); k != 0; {
-		v := n.s.tree.Nodes[k].Next
-		if v == 0 {
-			break
-		}
-		if n.s.tree.Nodes[k].Kind == cst.Scalar && c.KeyText(k) == key {
-			return n.child(v), true, nil
-		}
-		k = n.s.tree.Nodes[v].Next
+	// The same search Get uses, so an index of a wide mapping is used and a key
+	// written twice is seen as one.
+	found, _, amb := c.FindKey(n.i, key, nodeIndexMin)
+	if amb {
+		return Node{}, false, &EditError{Op: "find", Pointer: key, Kind: ErrAmbiguousKey}
+	}
+	if found != 0 {
+		return n.child(found), true, nil
 	}
 	if c.Merge {
 		mv, merr := c.MergedValue(n.i, key)
