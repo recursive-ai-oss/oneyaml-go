@@ -3,8 +3,11 @@ package oneyaml
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
+
+	"oneyaml.dev/go/internal/edit"
 )
 
 // A pass over a large stream checks its result with a digest of the nodes that
@@ -118,7 +121,7 @@ func TestBatchDigestRefusesAndRestores(t *testing.T) {
 	out := []byte(strings.Replace(src, "p3: 3\n", "", 1))
 	out = bytes.Replace(out, []byte("p5: 5"), []byte("p5: 6"), 1)
 	treeBefore := append([]byte(nil), fmt.Sprint(s.tree.Nodes)...)
-	if s.commitRemoval(root.i, removed, out) {
+	if s.commitRemoval(root.i, removed, cutRepls(src, "p3: 3\n"), out) {
 		t.Fatal("a text that changes a surviving value was accepted")
 	}
 	if string(s.src) != src || fmt.Sprint(s.tree.Nodes) != string(treeBefore) {
@@ -129,7 +132,7 @@ func TestBatchDigestRefusesAndRestores(t *testing.T) {
 	}
 	// And the same text without the change is accepted.
 	out = []byte(strings.Replace(src, "p3: 3\n", "", 1))
-	if !s.commitRemoval(root.i, removed, out) {
+	if !s.commitRemoval(root.i, removed, cutRepls(src, "p3: 3\n"), out) {
 		t.Fatal("the plain removal was refused")
 	}
 	if string(s.src) != string(out) {
@@ -174,7 +177,7 @@ func TestBatchDigestNoticesEveryKindOfChange(t *testing.T) {
 			t.Fatalf("%s: fixture", c.name)
 		}
 		out = strings.Replace(out, c.from, c.to, 1)
-		if s.commitRemoval(1, removed, []byte(out)) {
+		if s.commitRemoval(1, removed, cutRepls(src, "gone: 1\n"), []byte(out)) {
 			t.Errorf("%s: a changed survivor was accepted", c.name)
 		}
 		if string(s.src) != src {
@@ -182,6 +185,94 @@ func TestBatchDigestNoticesEveryKindOfChange(t *testing.T) {
 		}
 		if err := sameAsFreshParse(d); err != nil {
 			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+}
+
+// cutRepls lists the ranges of src that hold the given texts, each cut out.
+func cutRepls(src string, subs ...string) []edit.Repl {
+	var out []edit.Repl
+	for _, sub := range subs {
+		i := strings.Index(src, sub)
+		out = append(out, edit.Repl{Start: i, End: i + len(sub)})
+	}
+	slices.SortFunc(out, func(a, b edit.Repl) int { return a.Start - b.Start })
+	return out
+}
+
+// The text can be the old one with the cut ranges taken out and still read as a
+// different tree, when the ranges are not the removed entries. The digest sees that
+// a survivor is gone or has moved, and the stream is left as it was.
+func TestBatchDigestNoticesStructuralChange(t *testing.T) {
+	oldMin, oldExact := batchMin, batchExactBelow
+	defer func() { batchMin, batchExactBelow = oldMin, oldExact }()
+	batchMin, batchExactBelow = 1, 0
+	const base = "gone: 1\nn:\n  x: 1\n  y: 2\nanch: &a [1, 2]\nref: *a\nlast: 'z'\n"
+	for _, c := range []struct {
+		name string
+		src  string
+		cut  []string
+	}{
+		// The removed entry has a continuation line that the cut leaves behind: the
+		// text still parses, and a surviving scalar now reads longer.
+		{"a continuation joins a scalar", "k: v\ngone: 1\n  cont\nz: 2\n", []string{"gone: 1\n"}},
+		{"a continuation fills an empty value", "k:\ngone: 1\n  cont\nz: 2\n", []string{"gone: 1\n"}},
+		{"a continuation fills an empty tagged value", "k: !!str\ngone: 1\n  cont\nz: 2\n", []string{"gone: 1\n"}},
+		{"a continuation fills an empty anchored value", "k: &a\ngone: 1\n  cont\nz: 2\n", []string{"gone: 1\n"}},
+		{"a continuation joins a quoted scalar", "k: 'v\n  w'\ngone: 1\n  cont\nz: 2\nk2: 'a'\n", []string{"gone: 1\n"}},
+		{"a continuation joins an alias key line", "a: &x 1\nk: *x\ngone: 1\n  cont\nz: 2\n", []string{"gone: 1\n"}},
+		{"a survivor key is cut too", "", []string{"gone: 1\nn:\n"}},
+		{"a value is cut", "", []string{"gone: 1\n", "  x: 1\n"}},
+		{"the cut ends inside a scalar", "", []string{"gone: 1\nn:\n  x: "}},
+		{"an anchor is cut", "", []string{"gone: 1\nn:\n  x: 1\n  y: 2\nanch: &a "}},
+		{"an alias is cut", "", []string{"gone: 1\n", "*a"}},
+		{"indentation is cut", "", []string{"gone: 1\nn:\n  "}},
+	} {
+		src := c.src
+		if src == "" {
+			src = base
+		}
+		d := mustParse(t, src)
+		s := d.s
+		s.es()
+		removed := map[int32]struct{}{}
+		for k := range d.Root().Entries() {
+			if k.Value() == "gone" {
+				removed[k.i] = struct{}{}
+			}
+		}
+		repls := cutRepls(src, c.cut...)
+		out := make([]byte, 0, len(src))
+		at := 0
+		for _, r := range repls {
+			out = append(out, src[at:r.Start]...)
+			at = r.End
+		}
+		out = append(out, src[at:]...)
+		if !outIsSrcWithout([]byte(src), out, repls) {
+			t.Fatalf("%s: fixture", c.name)
+		}
+		if s.commitRemoval(1, removed, repls, out) {
+			t.Errorf("%s: a changed tree was accepted", c.name)
+		}
+		if string(s.src) != src {
+			t.Errorf("%s: the text changed after a refusal", c.name)
+		}
+		if err := sameAsFreshParse(d); err != nil {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+}
+
+func TestRemovalMapShift(t *testing.T) {
+	rm := newRemovalMap([]edit.Repl{{Start: 10, End: 14}, {Start: 20, End: 21}})
+	for _, c := range []struct {
+		x    int32
+		del  int32
+		inOK bool
+	}{{0, 0, true}, {10, 0, true}, {11, 0, false}, {13, 0, false}, {14, 4, true}, {20, 4, true}, {21, 5, true}, {99, 5, true}} {
+		if d, ok := rm.shift(c.x); ok != c.inOK || (ok && d != c.del) {
+			t.Errorf("shift(%d) = %d, %v; want %d, %v", c.x, d, ok, c.del, c.inOK)
 		}
 	}
 }

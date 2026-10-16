@@ -125,6 +125,7 @@ func (c *Ctx) Resolve(toks []string, write bool) (Loc, error) {
 		nd := &c.T.Nodes[cur]
 		if nd.Kind == cst.Alias {
 			if write {
+				c.T.SettleTo(cur) // the alias came from a value, which may be stale
 				return Loc{}, wrap(ErrAlias, "below the alias %s", c.Src[nd.Start:nd.End])
 			}
 			hops++

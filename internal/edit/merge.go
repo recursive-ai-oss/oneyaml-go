@@ -10,6 +10,7 @@ import (
 // isMergeKey reports whether the key node k is the merge key: a plain, untagged
 // "<<", the same test the decoder applies.
 func (c *Ctx) isMergeKey(k int32) bool {
+	c.T.SettleTo(k) // the offsets of a key may be stale on the lazy path
 	nd := &c.T.Nodes[k]
 	if nd.Kind != cst.Scalar || nd.Style != scan.Plain || nd.End-nd.Start != 2 {
 		return false

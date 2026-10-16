@@ -492,6 +492,16 @@ func (s *docStream) editTree(doc int, op editKindOp, ptr string, v *edit.Value) 
 			c.MergeAddOnly = op == opSet || op == opAdd
 		}
 		pl, err := s.plan(c, op, toks, v, opt)
+		if err != nil && lazy {
+			// An error from a plan on stale offsets is not trusted: plan again on a
+			// settled tree and report that answer.
+			lazy = false
+			s.tree.Settle()
+			c = s.ctx(doc)
+			c.Merge = s.cfg.mergeKeys
+			c.MergeAddOnly = op == opSet || op == opAdd
+			pl, err = s.plan(c, op, toks, v, opt)
+		}
 		if err != nil {
 			return fail(editKind(err))
 		}

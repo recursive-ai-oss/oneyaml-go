@@ -110,7 +110,7 @@ func TestBatchDigestKeepsDocumentsWithoutRoot(t *testing.T) {
 	root := d.Root().i
 	tr := &d.s.tree
 	tr.Docs = append(append([]cst.Doc{{}}, tr.Docs...), cst.Doc{})
-	_, roots, ok := newKeptDigest().ofOld(tr, d.s.src, root, map[int32]struct{}{first: {}})
+	_, roots, ok := newKeptDigest().ofOld(tr, root, map[int32]struct{}{first: {}}, nil)
 	if !ok || len(roots) != 3 || roots[0] != 0 || roots[1] != 1 || roots[2] != 0 {
 		t.Fatalf("ok %v roots %v, want true [0 1 0]", ok, roots)
 	}

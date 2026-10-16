@@ -2,7 +2,6 @@ package oneyaml
 
 import (
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"hash/maphash"
 	"math/bits"
@@ -71,6 +70,7 @@ func (s *docStream) removeKeys(doc int, parentToks, keys []string, mustExist boo
 		seen[k] = struct{}{}
 	}
 	toks := append(slices.Clone(parentToks), "")
+	var entry map[string]int32 // key text to its key node, when the look-up below made it
 	if batchMin > 1 {
 		// See whether the pass would pay before any removal is planned: when it
 		// would not, this look-up is all that is spent.
@@ -89,7 +89,10 @@ func (s *docStream) removeKeys(doc int, parentToks, keys []string, mustExist boo
 			}
 		} else {
 			// One pass over the entries, not one scan of the mapping per key. A key
-			// that is not a plain scalar is not counted; planning finds it.
+			// that is not a plain scalar is not counted; planning finds it. The entries
+			// of the keys are kept, so that planning does not build a key index of the
+			// whole mapping to find them again.
+			entry = make(map[string]int32, len(keys))
 			for k := t.First(par); k != 0; {
 				v := t.Nodes[k].Next
 				if v == 0 {
@@ -97,6 +100,10 @@ func (s *docStream) removeKeys(doc int, parentToks, keys []string, mustExist boo
 				}
 				if text, ok := c.KeyBytes(k); ok {
 					if _, want := seen[string(text)]; want {
+						if _, twice := entry[string(text)]; twice {
+							return false // ambiguous: the one-by-one path reports it
+						}
+						entry[string(text)] = k
 						after = addSat(after, len(s.src)-int(t.Nodes[k].Start))
 					}
 				}
@@ -111,9 +118,15 @@ func (s *docStream) removeKeys(doc int, parentToks, keys []string, mustExist boo
 	var repls []edit.Repl
 	for _, k := range keys {
 		toks[len(toks)-1] = k
-		loc, err := c.Resolve(toks, true)
-		if err != nil {
-			return false
+		var loc edit.Loc
+		if kn, found := entry[k]; found {
+			loc = edit.Loc{Node: t.Nodes[kn].Next, Parent: par, Key: kn, Tok: k}
+		} else if entry == nil || c.Merge {
+			// A key the look-up did not find is missing, unless a merge brings it in.
+			var err error
+			if loc, err = c.Resolve(toks, true); err != nil {
+				return false
+			}
 		}
 		if loc.Node == 0 {
 			if mustExist {
@@ -183,7 +196,7 @@ func (s *docStream) removeKeys(doc int, parentToks, keys []string, mustExist boo
 
 	s.ed.work.wholes++
 	if len(s.src) >= batchExactBelow {
-		return s.commitRemoval(par, removed, out)
+		return s.commitRemoval(par, removed, repls, out)
 	}
 	nt := s.takeSpare()
 	if err := s.buildTree(&nt, out, s.depth()); err != nil || !sameEntriesKept(t, s.src, par, removed, &nt, out) {
@@ -208,9 +221,14 @@ func (s *docStream) removeKeys(doc int, parentToks, keys []string, mustExist boo
 // must be the same. Two trees of a document of millions of nodes cost more than
 // the text ever did. If the digests differ the old text is parsed again into the
 // same slices, which leaves the stream as it was.
-func (s *docStream) commitRemoval(par int32, removed map[int32]struct{}, out []byte) bool {
+func (s *docStream) commitRemoval(par int32, removed map[int32]struct{}, repls []edit.Repl, out []byte) bool {
+	// The digest does not read the text of the nodes that stay: it is enough that the
+	// new text is the old one with the ranges cut out, which is read once here.
+	if !outIsSrcWithout(s.src, out, repls) {
+		return false
+	}
 	t := &s.tree
-	want, roots, ok := newKeptDigest().ofOld(t, s.src, par, removed)
+	want, roots, ok := newKeptDigest().ofOld(t, par, removed, newRemovalMap(repls))
 	if !ok {
 		return false
 	}
@@ -224,7 +242,7 @@ func (s *docStream) commitRemoval(par int32, removed map[int32]struct{}, out []b
 	}
 	err := s.buildTree(&nt, out, s.depth())
 	if err == nil {
-		got, nodes := want.sameSeed().ofNew(&nt, out)
+		got, nodes := want.sameSeed().ofNew(&nt)
 		err = errBatchMismatch
 		if got == want.sum && nodes == want.nodes && docsKept(oldDocs, roots, nt.Docs) {
 			err = nil
@@ -358,83 +376,145 @@ func sameEntriesKept(t *cst.Tree, src []byte, par int32, removed map[int32]struc
 // document order, so that the old tree (with the removed entries left out) and the
 // new tree can be compared without both being in memory. What is folded is what
 // sameEntriesKept compares: kind, flow and pair flags, the child count of a
-// collection, the indentation and the text of a scalar, the text of an alias, and the
-// anchor and tag text. Kinds and child counts in document order fix the tree, so the
-// parent of a node is not folded. The seed is
-// random for each pass, so text cannot be made to collide with a digest on purpose.
+// collection, the indentation of a scalar, and the place of the text of a scalar,
+// alias, anchor and tag. The text itself is not read: the caller has checked that
+// the new text is the old text with the removed ranges cut out, so a survivor whose
+// span moves by exactly the length of the cut ranges before it has the same text.
+// Offsets of collections and of empty scalars are not folded, since the parser
+// places them by context, not by text. Kinds and child counts in document order fix
+// the tree, so the parent of a node is not folded.
+//
+// The sum is a multiply-and-fold mix under two random keys chosen for each pass, so
+// that text cannot be made to collide with a digest on purpose.
 type keptDigest struct {
-	seed  maphash.Seed
-	sum   uint64
-	nodes int
-	buf   []byte
+	k1, k2 uint64
+	sum    uint64
+	nodes  int
 }
 
 func newKeptDigest() *keptDigest {
-	return &keptDigest{seed: maphash.MakeSeed(), buf: make([]byte, 0, 2*digestChunk)}
+	seed := maphash.MakeSeed()
+	return &keptDigest{k1: maphash.Comparable(seed, 1), k2: maphash.Comparable(seed, 2) | 1}
 }
 
-// sameSeed returns an empty digest with the seed of d.
-func (d *keptDigest) sameSeed() *keptDigest {
-	return &keptDigest{seed: d.seed, buf: make([]byte, 0, 2*digestChunk)}
+// sameSeed returns an empty digest with the keys of d.
+func (d *keptDigest) sameSeed() *keptDigest { return &keptDigest{k1: d.k1, k2: d.k2} }
+
+func (d *keptDigest) mix(x uint64) {
+	hi, lo := bits.Mul64(d.sum^x^d.k1, d.k2)
+	d.sum = hi ^ lo
 }
 
-func (d *keptDigest) fold(nd *cst.Node, indent int32, src []byte, props []cst.Prop) {
-	// Kinds and child counts, in document order, fix the tree, so a node's parent and
-	// style are not folded: the text of a scalar includes its quotes and block header.
-	b := append(d.buf, byte(nd.Kind)|byte(b2i(nd.Flow))<<3|byte(b2i(nd.Pair))<<4|byte(b2i(nd.Prop != 0))<<5)
+// span folds the place of the text [a, b), moved back by the length of the ranges
+// cut before it. It reports false when the text is partly cut: it is then not a
+// survivor of this removal.
+func (d *keptDigest) span(rm *removalMap, a, b int32) bool {
+	da, oka := rm.shift(a)
+	db, okb := rm.shift(b)
+	if !oka || !okb || da != db {
+		return false
+	}
+	d.mix(uint64(uint32(a-da)) | uint64(uint32(b-db))<<32)
+	return true
+}
+
+// fold adds node nd. rm moves the offsets of the old tree to where they lie in the
+// new text; it is nil for the new tree. It reports false when a span of the node
+// lies across a cut range.
+func (d *keptDigest) fold(nd *cst.Node, indent int32, props []cst.Prop, rm *removalMap) bool {
+	w := uint64(nd.Kind) | uint64(b2i(nd.Flow))<<3 | uint64(b2i(nd.Pair))<<4 | uint64(b2i(nd.Prop != 0))<<5
+	ok := true
 	switch nd.Kind {
 	case cst.Scalar:
-		b = binary.LittleEndian.AppendUint32(b, uint32(indent))
-		b = binary.LittleEndian.AppendUint32(b, uint32(nd.End-nd.Start))
-		b = append(b, src[nd.Start:nd.End]...)
+		w |= uint64(uint32(indent)) << 8
+		d.mix(w)
+		if nd.End > nd.Start {
+			ok = d.span(rm, nd.Start, nd.End)
+		} else {
+			d.mix(1 << 63)
+		}
 	case cst.Alias:
-		b = binary.LittleEndian.AppendUint32(b, uint32(nd.End-nd.Start))
-		b = append(b, src[nd.Start:nd.End]...)
+		d.mix(w)
+		ok = d.span(rm, nd.Start, nd.End)
 	default:
-		b = binary.LittleEndian.AppendUint32(b, uint32(indent))
+		w |= uint64(uint32(indent)) << 8
+		d.mix(w)
 	}
 	if nd.Prop != 0 {
 		p := &props[nd.Prop]
-		var flags byte
+		var flags uint64
 		if p.HasAnchor() {
 			flags |= 1
+			ok = d.span(rm, p.AnchorStart, p.AnchorEnd) && ok
 		}
 		if p.HasTag() {
 			flags |= 2
+			ok = d.span(rm, p.TagStart, p.TagEnd) && ok
 		}
-		b = append(b, flags)
-		b = binary.LittleEndian.AppendUint32(b, uint32(p.AnchorEnd-p.AnchorStart))
-		b = append(b, src[p.AnchorStart:p.AnchorEnd]...)
-		b = binary.LittleEndian.AppendUint32(b, uint32(p.TagEnd-p.TagStart))
-		b = append(b, src[p.TagStart:p.TagEnd]...)
+		d.mix(flags)
 	}
-	d.buf = b
 	d.nodes++
-	if len(b) >= digestChunk {
-		d.flush()
-	}
+	return ok
 }
 
-// digestChunk is how many bytes of folded nodes are hashed at once: hashing a few
-// bytes per node costs more than the node, a block of them does not.
-const digestChunk = 4096
+// removalMap tells where the offsets of the old text lie in the text without the
+// removed ranges. The ranges are sorted and apart.
+type removalMap struct {
+	start, end []int32
+	cum        []int32 // bytes cut by the ranges up to and including i
+	hint       int     // where the last look-up ended
+}
 
-// flush hashes the bytes folded so far into the sum. The chunks fall in the same
-// places for the same nodes, so equal trees give equal sums.
-func (d *keptDigest) flush() {
-	if len(d.buf) == 0 {
-		return
+func newRemovalMap(repls []edit.Repl) *removalMap {
+	rm := &removalMap{start: make([]int32, len(repls)), end: make([]int32, len(repls)), cum: make([]int32, len(repls))}
+	var c int32
+	for i, r := range repls {
+		c += int32(r.End - r.Start)
+		rm.start[i], rm.end[i], rm.cum[i] = int32(r.Start), int32(r.End), c
 	}
-	v := maphash.Bytes(d.seed, d.buf)
-	d.sum = bits.RotateLeft64(d.sum, 27) ^ v
-	d.sum *= 0x9E3779B97F4A7C15
-	d.buf = d.buf[:0]
+	return rm
+}
+
+// shift returns how many bytes before offset x are cut, and false when x lies inside
+// a cut range (a survivor never starts or ends there).
+func (rm *removalMap) shift(x int32) (int32, bool) {
+	if rm == nil {
+		return 0, true
+	}
+	// Offsets come in text order, so the range found last is nearly always the one.
+	i := rm.hint
+	if !((i == 0 || rm.end[i-1] <= x) && (i == len(rm.end) || x < rm.end[i])) {
+		i, _ = slices.BinarySearch(rm.end, x+1) // the first range that ends after x
+		rm.hint = i
+	}
+	if i < len(rm.end) && rm.start[i] < x {
+		return 0, false
+	}
+	if i == 0 {
+		return 0, true
+	}
+	return rm.cum[i-1], true
+}
+
+// outIsSrcWithout reports whether out is src with the ranges of repls (sorted, apart,
+// replaced by nothing) cut out.
+func outIsSrcWithout(src, out []byte, repls []edit.Repl) bool {
+	at := 0
+	for _, r := range repls {
+		n := r.Start - at
+		if n < 0 || len(out) < n || !bytes.Equal(src[at:r.Start], out[:n]) {
+			return false
+		}
+		out = out[n:]
+		at = r.End
+	}
+	return bytes.Equal(src[at:], out)
 }
 
 // ofOld folds the nodes of t that are not in a removed entry. It returns the digest
 // (d itself), the node numbers the roots of the documents get, and false when the
 // removed entries are not whole subtrees that lie apart.
-func (d *keptDigest) ofOld(t *cst.Tree, src []byte, par int32, removed map[int32]struct{}) (*keptDigest, []int32, bool) {
+func (d *keptDigest) ofOld(t *cst.Tree, par int32, removed map[int32]struct{}, rm *removalMap) (*keptDigest, []int32, bool) {
 	gone := make([][2]int32, 0, len(removed))
 	for k := range removed {
 		v := t.Nodes[k].Next
@@ -470,11 +550,12 @@ func (d *keptDigest) ofOld(t *cst.Tree, src []byte, par int32, removed map[int32
 			roots = append(roots, next)
 			doc++
 		}
-		d.fold(nd, indent, src, t.Props)
+		if !d.fold(nd, indent, t.Props, rm) {
+			return d, nil, false
+		}
 		next++
 	}
 	doc, roots = rootless(t.Docs, doc, roots)
-	d.flush()
 	return d, roots, doc == len(t.Docs)
 }
 
@@ -489,16 +570,15 @@ func rootless(docs []cst.Doc, doc int, roots []int32) (int, []int32) {
 }
 
 // ofNew folds all the nodes of nt, as ofOld folds the ones that stay in the old tree.
-func (d *keptDigest) ofNew(nt *cst.Tree, out []byte) (sum uint64, nodes int) {
+func (d *keptDigest) ofNew(nt *cst.Tree) (sum uint64, nodes int) {
 	for j := 1; j < len(nt.Nodes); j++ {
 		nd := &nt.Nodes[j]
 		indent := nd.Indent
 		if nd.Kind == cst.Alias {
 			indent = 0
 		}
-		d.fold(nd, indent, out, nt.Props)
+		d.fold(nd, indent, nt.Props, nil)
 	}
-	d.flush()
 	return d.sum, d.nodes
 }
 
