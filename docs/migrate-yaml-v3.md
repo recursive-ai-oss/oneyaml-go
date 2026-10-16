@@ -142,7 +142,7 @@ if errors.As(err, &te) {
 - **A date is a string** in a generic value; there is no implicit `time.Time`.
 - **The `<<` key is an ordinary key** unless you pass `MergeKeys()`.
 - **A nil slice is written as `null`**, not `[]`. The default indentation is two spaces, not four.
-- **Type errors are collected**, as in yaml.v3: a value that does not fit is skipped, the rest is read, and one `*TypeError` reports up to 100 mismatches. A syntax error, a limit error or an error from your own hook stops the read at once.
+- **Type errors are collected**, as in yaml.v3: a value that does not fit is skipped, the rest is read, and one `*TypeError` reports every mismatch; the read stops at the 100th. A syntax error, a limit error or an error from your own hook stops the read at once and is returned alone.
 - **A duplicate key is an error**, as in yaml.v3.
 
 <!-- example: Example_fromYAMLv3Forms -->

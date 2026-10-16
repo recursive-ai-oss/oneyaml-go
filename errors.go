@@ -70,13 +70,19 @@ func (e *SyntaxError) Error() string {
 // When reading, a mismatch does not stop the decode. The value that does not fit
 // is skipped and its target is left as it was (an element of a slice or array is
 // left zero, and a map entry is not added); the rest of the document is still
-// read, and every mismatch is reported. The error returned describes the first
+// read, and every mismatch is reported, up to the bound below. The error returned describes the first
 // one and More holds the others, in input order, so errors.As finds a
-// *TypeError whether there was one problem or many. Syntax errors, limit errors
-// and errors from your own hooks still stop at once. At most 100 mismatches are
-// kept, and the paths of the ones after the first together take no more than
-// the larger of the input size and 1 MiB: when a deeply nested document would
-// pass that, the later mismatches are left out.
+// *TypeError whether there was one problem or many. At most 100 mismatches are
+// collected; the read stops at the 100th. The first mismatch is always reported
+// whole, and the paths of the ones after it together take no more than the
+// larger of the input size and 1 MiB: when the next would pass that, collecting
+// stops and the later mismatches are left out, so a document with very long
+// keys (keys reached through aliases, say) may report fewer than 100. Syntax
+// errors, limit errors and errors from your own hooks stop the read at once and
+// are returned alone, without the mismatches collected before them.
+//
+// Error shortens a Path longer than 512 bytes to its first and last 256 bytes
+// joined by "..."; the Path field always holds the whole pointer.
 type TypeError struct {
 	// Path is the RFC 6901 pointer to the value, empty for the root.
 	Path string

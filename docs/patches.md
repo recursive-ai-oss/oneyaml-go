@@ -111,7 +111,7 @@ A pointer addresses the keys written in the file, so a key that a `<<` merge bri
 
 ## Patches written in YAML
 
-`ApplyPatch` also takes a patch kept as YAML, a sequence of operations with the same members as the JSON form. Text that reads as JSON is taken as JSON first. A YAML patch applies exactly as the JSON patch with the same operations does:
+`ApplyPatch` also takes a patch kept as a YAML file: a block list of operations with the same members as the JSON form. It applies exactly as the JSON patch with the same operations does:
 
 <!-- example: ExampleDocument_ApplyPatch_yaml -->
 ```go
@@ -139,7 +139,15 @@ fmt.Print(doc)
 //   tier: web
 ```
 
-A YAML patch must be one document, and may not use what JSON has no form for: aliases, a collection as a key, or the same key twice in a mapping. Each of these fails with `ErrInvalidPatch`. Text that is neither JSON nor a YAML sequence fails with the JSON error. `ApplyMergePatch` reads JSON only.
+The first significant byte decides how the text is read. Text that starts with `[` or `{` is JSON, and only JSON, so its errors are JSON errors. A flow-style YAML patch such as `[{op: add, path: /a, value: 1}]` is therefore refused, because its keys are not quoted. All other text is read as YAML.
+
+A YAML patch fails with `ErrInvalidPatch` when it:
+
+- holds more than one document, or is not a list;
+- uses an alias, a local tag such as `!foo`, a collection as a key, or the same key twice in a mapping, none of which JSON can express;
+- has a scalar that cannot be read, such as a double-quoted escape that is not a Unicode character.
+
+A YAML patch nested deeper than the depth limit fails with a `*LimitError`. `ApplyMergePatch` reads JSON only.
 
 ## Aliases
 

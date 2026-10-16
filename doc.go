@@ -68,10 +68,10 @@
 // # Patch
 //
 // [Document.ApplyPatch] applies an RFC 6902 JSON Patch, written as JSON or as a
-// YAML sequence of operations, whose test operation compares values by the YAML
-// data model, so 1 and 1.0 differ (see the Document.ApplyPatch documentation). [Document.Apply] takes
-// the same operations as Go values ([PatchAdd], [PatchReplace] and the rest),
-// and [Document.ApplyMergePatch] applies an RFC 7396 merge patch. A patch is
+// YAML block list of operations, whose test operation compares values by the
+// YAML data model, so 1 and 1.0 differ (see the Document.ApplyPatch
+// documentation). [Document.Apply] takes the same operations as Go values
+// ([PatchAdd], [PatchReplace] and the rest), and [Document.ApplyMergePatch] applies an RFC 7396 merge patch. A patch is
 // atomic: if any operation fails, the document is unchanged. The edits it makes
 // follow the same rules as [Document.Set].
 //

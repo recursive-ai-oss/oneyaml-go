@@ -90,9 +90,11 @@ func (s *session) release() {
 // *TypeError. Read it with Document.Get(pointer, &node).
 //
 // A mapping key that occurs twice is an error, judged after resolution, so 1 and
-// 0x1 clash. Read into a generic value, two keys that are different numbers but
-// round to the same float64 (1e-400 and 2e-400) are a *TypeError that says so,
-// since a map cannot hold them apart. Merge keys are ordinary keys unless the
+// 0x1 clash, and so do 1e400 and 10e399, which are the same number. Two keys
+// that are different numbers but round to the same float64 (1e-400 and 2e-400,
+// or 1e400 and .inf) are a *TypeError that says so, since a map cannot hold
+// them apart; a key repeated after an entry that did not fit is still a
+// duplicate. Merge keys are ordinary keys unless the
 // MergeKeys option is given. Unknown struct keys are skipped unless KnownFields
 // is given.
 //
@@ -104,9 +106,11 @@ func (s *session) release() {
 // do not fit their targets and a *LimitError when a limit is exceeded. A value
 // that does not fit is skipped and its target keeps what it held, and the rest
 // of the document is still read; the *TypeError describes the first mismatch and
-// lists the others in its More field. At most 100 mismatches are collected; the
-// read stops at the 100th. A syntax error, a limit error or an error from a hook
-// of your own stops the read at once. UTF-16 and UTF-32 input, with or without a
+// lists the others in its More field. A nil pointer target stays nil when its
+// value does not fit. At most 100 mismatches are collected; the read stops at
+// the 100th. A syntax error, a limit error or an error from a hook of your own
+// stops the read at once, and the error returned is that error alone: the
+// mismatches collected before it are dropped. UTF-16 and UTF-32 input, with or without a
 // byte order mark, is converted to UTF-8 first; the offsets of errors in such
 // input index the UTF-8 form.
 func Unmarshal(data []byte, v any, opts ...Option) error {

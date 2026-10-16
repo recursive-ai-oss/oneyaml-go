@@ -190,6 +190,7 @@ fmt.Println(errors.Is(err, oneyaml.ErrKeyExists))
 - the mapping already has the new key (`ErrKeyExists`);
 - the pointer is the root or an item of a sequence (`ErrNotAnEntry`);
 - the pointer leads through an alias (`ErrAliasWrite`). Renaming an entry whose value is an alias is allowed;
+- the key carries an anchor that an alias uses (`ErrAnchorInUse`), because the alias would read the new key too. This is the same rule as for `Remove`. An anchor on the value does not count;
 - the key is empty, a collection, an alias or a block scalar, or is the merge key `<<`; the new key is longer than 1000 bytes or is not valid UTF-8; or a tag on the key does not fit the new key (`ErrUnsupportedEdit`).
 
 A rename parses the whole document again, so many renames in a very large document cost more than the same number of `Set` calls.
@@ -274,7 +275,8 @@ fmt.Println(replicas.LineComment())
 
 Some places cannot hold a comment, and the setters refuse them with `ErrUnsupportedEdit`:
 
-- anything inside a flow collection;
+- a head comment for anything inside a flow collection;
+- a line comment inside a flow collection, unless nothing, not even a comma, follows the item on its line, as for the last item of a flow collection written one item per line;
 - a head comment for an entry that shares its line with another, such as the first key of a mapping written after `- `;
 - a line comment for the root block collection, or for a value that something else follows on its line.
 

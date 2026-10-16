@@ -91,7 +91,7 @@ Use it when you need to change a YAML file that people also edit by hand, apply 
 
 Think twice when:
 
-- You need comments in any place. The comment setters write a comment above an entry or after a value, and refuse places such as the inside of a flow collection ([Comments](docs/editing.md#comments)).
+- You need comments in any place. The comment setters write a comment above an entry or after a value, and refuse places such as most of the inside of a flow collection ([Comments](docs/editing.md#comments)).
 - You need to stream events. The parser is not exposed; `Parse` and `NewDecoder` read a whole document.
 - You hold very large files in memory. A `Document` keeps the text and an index of it, which is an order of magnitude larger than the text for dense input. Set `MaxInputBytes`, or use `Untrusted()`, for input from outside.
 - Your data uses a collection as a mapping key and you read it into `any`. A Go map cannot hold it; a `Document` can.
