@@ -12,6 +12,7 @@ import (
 	"math"
 	"math/big"
 	"strconv"
+	"sync/atomic"
 )
 
 // Kind is the resolved type of a plain scalar.
@@ -73,6 +74,13 @@ type Result struct {
 	Digits []byte
 }
 
+// bigConversions counts the conversions of digit strings to big integers, which
+// cost time quadratic in the digits; tests use it to show that a path avoids them.
+var bigConversions atomic.Int64
+
+// BigConversions returns how many digit strings Big has converted so far.
+func BigConversions() int64 { return bigConversions.Load() }
+
 // Big returns the value of an Int result as a big.Int. It allocates.
 func (r Result) Big() *big.Int {
 	n := new(big.Int)
@@ -84,6 +92,7 @@ func (r Result) Big() *big.Int {
 		n.SetUint64(r.U)
 		return n
 	}
+	bigConversions.Add(1)
 	d := r.Digits
 	clean := make([]byte, 0, len(d))
 	for _, c := range d {

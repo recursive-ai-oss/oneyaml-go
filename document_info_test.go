@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestNodeIterationAndIndexing(t *testing.T) {
@@ -72,16 +71,16 @@ func TestSequentialItemAccessIsLinear(t *testing.T) {
 	}
 	d, _ := Parse([]byte(sb.String()))
 	r := d.Root()
-	// Walking from the start for every call takes about n*n/2 = 5e9 link steps,
-	// many seconds; with the cursor it is n steps.
-	start := time.Now()
+	// Walking from the start for every call takes about n*n/2 = 5e9 link steps;
+	// with the cursor it is n steps. The walks from the first child are counted.
+	d.s.es()
 	for i := 0; i < n; i++ {
 		if r.Item(i).Source() != strconv.Itoa(i) {
 			t.Fatal("wrong item")
 		}
 	}
-	if el := time.Since(start); el > 2*time.Second {
-		t.Errorf("%d sequential Item calls took %v", n, el)
+	if w := d.s.ed.work.cursorWalks; w > 10 {
+		t.Errorf("%d sequential Item calls walked from the first child %d times", n, w)
 	}
 }
 

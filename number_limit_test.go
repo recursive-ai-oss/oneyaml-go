@@ -3,11 +3,12 @@ package oneyaml_test
 import (
 	"errors"
 	"math/big"
+	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	oneyaml "oneyaml.dev/go"
+	"oneyaml.dev/go/internal/resolve"
 )
 
 func digits(n int) string { return "1" + strings.Repeat("7", n-1) }
@@ -83,12 +84,11 @@ func TestMaxNumberDigits(t *testing.T) {
 
 type bigInt = big.Int
 
-// The default allows a 100,000 digit integer, exactly and quickly.
+// The default allows a 100,000 digit integer, exactly.
 func TestHundredThousandDigitsDecode(t *testing.T) {
 	in := digits(100_000)
 	want, _ := new(big.Int).SetString(in, 10)
 	var v any
-	t0 := time.Now()
 	if err := oneyaml.Unmarshal([]byte(in), &v); err != nil {
 		t.Fatal(err)
 	}
@@ -99,23 +99,25 @@ func TestHundredThousandDigitsDecode(t *testing.T) {
 	if err := oneyaml.Unmarshal([]byte(in), &b); err != nil || b.Cmp(want) != 0 {
 		t.Fatal(err)
 	}
-	if d := time.Since(t0); d > 2*time.Second {
-		t.Fatalf("took %v", d)
-	}
 	// One digit more is past the default.
 	wantLimit(t, oneyaml.Unmarshal([]byte(digits(100_001)), &v))
 }
 
-// A huge float text must not take quadratic time either way.
+// A huge float text is read without any big-integer conversion (the float is
+// strconv's, which is linear in the text), so the digit limit does not apply.
 func TestHugeFloatIsLinear(t *testing.T) {
 	in := "0." + strings.Repeat("3", 2_000_000) + "e5"
-	t0 := time.Now()
+	want, _ := strconv.ParseFloat(in, 64)
 	var v any
+	before := resolve.BigConversions()
 	err := oneyaml.Unmarshal([]byte(in), &v, oneyaml.NoLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d := time.Since(t0); d > 3*time.Second {
-		t.Fatalf("%v for 2M digits", d)
+	if f, ok := v.(float64); !ok || f != want {
+		t.Fatalf("got %T %v", v, v)
+	}
+	if n := resolve.BigConversions() - before; n != 0 {
+		t.Errorf("%d big-integer conversions for a float", n)
 	}
 }

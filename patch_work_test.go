@@ -6,8 +6,20 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
-	"time"
 )
+
+// checkStoppedAtBound shows that a refused patch stopped when the bound was
+// reached: the work its edits did, counted as the bound counts it, is not much
+// past the bound. A refusal that came late would be the quadratic behaviour the
+// bound exists to prevent.
+func checkStoppedAtBound(t *testing.T, d *Document, le *LimitError) {
+	t.Helper()
+	w := d.s.ed.work
+	cost := w.bytes + 8*w.nodes + w.shifted + w.moved/8
+	if cost > 2*le.Max {
+		t.Errorf("refused after work %d, bound %d", cost, le.Max)
+	}
+}
 
 // bigBlockMapping is a block mapping of n short entries.
 func bigBlockMapping(n int) string {
@@ -37,7 +49,7 @@ func swapScalars(ops int) (src string, patch []byte) {
 
 // A patch of many operations that each move or re-read much of the document costs
 // more than its size allows. The work is counted, a patch past the bound is
-// refused and undone, and refusing does not take minutes.
+// refused and undone, and the work done before refusing stays within the bound.
 func TestPatchWorkIsBounded(t *testing.T) {
 	removeSrc := bigBlockMapping(30000)
 	// Removes with a test between them are separate edits; consecutive removes from
@@ -60,12 +72,10 @@ func TestPatchWorkIsBounded(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := mustParse(t, tc.src, tc.opts...)
-			start := time.Now()
 			err := d.ApplyPatch(tc.patch)
-			el := time.Since(start)
 			var le *LimitError
 			if !errors.As(err, &le) || le.Limit != "patch work" {
-				t.Fatalf("got %v after %v", err, el)
+				t.Fatalf("got %v", err)
 			}
 			if le.Max <= 0 || le.Option == "" {
 				t.Fatalf("limit error without bound or option: %+v", le)
@@ -76,9 +86,7 @@ func TestPatchWorkIsBounded(t *testing.T) {
 			if err := sameAsFreshParse(d); err != nil {
 				t.Fatal(err)
 			}
-			if !underRace && el > 5*time.Second {
-				t.Errorf("refusing took %v", el)
-			}
+			checkStoppedAtBound(t, d, le)
 		})
 	}
 
@@ -125,9 +133,8 @@ func TestFlowAppendPatchesRun(t *testing.T) {
 		for preset, opts := range map[string][]Option{"untrusted": {Untrusted()}, "default": nil} {
 			t.Run(name+"/"+preset, func(t *testing.T) {
 				d := mustParse(t, "d: "+val+"\n", opts...)
-				start := time.Now()
 				if err := d.ApplyPatch(p); err != nil {
-					t.Fatalf("got %v after %v", err, time.Since(start))
+					t.Fatalf("got %v", err)
 				}
 				w := d.s.ed.work
 				if w.wholes > 4 || w.regions < 1400 {
@@ -151,11 +158,10 @@ func TestFlowAppendPatchesRun(t *testing.T) {
 	big := build(4000, func(int) string { return `{"op":"copy","from":"/v","path":"/f/-"}` })
 	for preset, opts := range map[string][]Option{"untrusted": {Untrusted()}, "default": nil} {
 		d := mustParse(t, "a: 1\nv: "+item+"\n", opts...)
-		start := time.Now()
 		if err := d.ApplyPatch(big); err != nil {
 			t.Fatalf("4000 copies, %s: %v", preset, err)
 		}
-		t.Logf("4000 copies, %s: %v, work %+v", preset, time.Since(start), d.s.ed.work)
+		t.Logf("4000 copies, %s: work %+v", preset, d.s.ed.work)
 	}
 }
 
@@ -177,11 +183,10 @@ func TestMergePatchWorkIsBounded(t *testing.T) {
 	}
 	sb.WriteString("}")
 	d := mustParse(t, src.String(), Untrusted())
-	start := time.Now()
 	err := d.ApplyMergePatch([]byte(sb.String()))
 	var le *LimitError
 	if !errors.As(err, &le) || le.Limit != "patch work" {
-		t.Fatalf("got %v after %v", err, time.Since(start))
+		t.Fatalf("got %v", err)
 	}
 	if string(d.Bytes()) != src.String() {
 		t.Fatal("document changed")
@@ -189,9 +194,7 @@ func TestMergePatchWorkIsBounded(t *testing.T) {
 	if err := sameAsFreshParse(d); err != nil {
 		t.Fatal(err)
 	}
-	if !underRace && time.Since(start) > 5*time.Second {
-		t.Errorf("refusing took %v", time.Since(start))
-	}
+	checkStoppedAtBound(t, d, le)
 
 	// Many members added to a flow mapping are cheap and succeed.
 	sb.Reset()
@@ -306,25 +309,24 @@ func TestRemovingFirstKeysKeepsTheKeyIndex(t *testing.T) {
 	}
 }
 
-// Reading a node of a document with no line breaks does not read the whole
-// document each time.
-func TestNodeMethodsDoNotScanTheDocument(t *testing.T) {
+// Node methods work on a document with no line breaks. That they do not read the
+// whole line on every call is measured by BenchmarkNodeMethodsLongLine.
+func TestNodeMethodsOnOneLongLine(t *testing.T) {
 	const n = 40000
-	src := "[" + strings.TrimSuffix(strings.Repeat("&a 0, *a, ", n), ", ") + "]\n"
-	d := mustParse(t, strings.TrimSuffix(src, "\n"))
-	root := d.Root()
-	start := time.Now()
+	src := "[" + strings.TrimSuffix(strings.Repeat("&a 0, *a, ", n), ", ") + "]"
+	d := mustParse(t, src)
 	count := 0
-	for it := range root.Items() {
-		it.Target()
-		it.LineComment()
+	for it := range d.Root().Items() {
+		if v := it.Target().Value(); v != "0" {
+			t.Fatalf("item %d: target %q", count, v)
+		}
+		if c := it.LineComment(); c != "" {
+			t.Fatalf("item %d: comment %q", count, c)
+		}
 		count++
 	}
 	if count != 2*n {
 		t.Fatalf("%d items", count)
-	}
-	if el := time.Since(start); !underRace && el > 2*time.Second {
-		t.Errorf("%d nodes took %v", count, el)
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 )
 
 // batchShapes are documents in which runs of entries are removed from a mapping.
@@ -137,7 +136,6 @@ func TestManyRemovalsFromALargeMappingAreOnePass(t *testing.T) {
 	for _, kind := range []string{"merge", "6902"} {
 		for preset, opts := range map[string][]Option{"default": nil, "untrusted": {Untrusted()}} {
 			d := mustParse(t, src, opts...)
-			start := time.Now()
 			var err error
 			if kind == "merge" {
 				err = d.ApplyMergePatch([]byte("{" + strings.Join(m, ",") + "}"))
@@ -154,7 +152,6 @@ func TestManyRemovalsFromALargeMappingAreOnePass(t *testing.T) {
 			if string(d.Bytes()) != want.String() {
 				t.Fatalf("%s %s: wrong result", kind, preset)
 			}
-			t.Logf("%s %s: %v", kind, preset, time.Since(start))
 		}
 	}
 }

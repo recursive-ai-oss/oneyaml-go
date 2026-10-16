@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
+
+	"oneyaml.dev/go/internal/resolve"
 )
 
 // A copy of an alias whose anchor follows the destination is written out in
@@ -109,17 +110,17 @@ func TestMergePatchOutputIsBounded(t *testing.T) {
 }
 
 // Equality of two long integers must not convert them to big integers, which
-// takes time quadratic in the digits.
+// costs quadratic work in the digits.
 func TestPatchTestComparesHugeIntegersByDigits(t *testing.T) {
 	digits := strings.Repeat("7", 2_000_000)
 	d := mustParse(t, "n: "+digits+"\n", NoLimits())
 	ok := `[{"op":"test","path":"/n","value":` + digits + `}]`
 	bad := `[{"op":"test","path":"/n","value":` + digits[:len(digits)-1] + `8}]`
-	start := time.Now()
+	before := resolve.BigConversions()
 	defer func() {
-		// Linear comparison takes milliseconds; the big-integer route takes seconds.
-		if el := time.Since(start); el > 3*time.Second {
-			t.Errorf("took %v", el)
+		// Comparing the digit strings converts nothing.
+		if n := resolve.BigConversions() - before; n != 0 {
+			t.Errorf("%d big-integer conversions", n)
 		}
 	}()
 	if err := d.ApplyPatch([]byte(ok)); err != nil {

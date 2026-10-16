@@ -7,7 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	oneyaml "oneyaml.dev/go"
 	yaml "oneyaml.dev/go/compat/yamlv3"
@@ -159,13 +158,8 @@ func TestCyclesAndSharedNodes(t *testing.T) {
 		go func() { _, err := yaml.Marshal(mk()); done <- err }()
 		go func() { var v interface{}; done <- mk().Decode(&v) }()
 		for i := 0; i < 2; i++ {
-			select {
-			case err := <-done:
-				if err == nil {
-					t.Errorf("%s: no error", name)
-				}
-			case <-time.After(20 * time.Second):
-				t.Fatalf("%s: still running", name)
+			if err := <-done; err == nil {
+				t.Errorf("%s: no error", name)
 			}
 		}
 	}
@@ -318,16 +312,14 @@ func TestAliasBudgetIsSharedByNestedDecodes(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			t0 := time.Now()
 			err := c.run()
 			var le *oneyaml.LimitError
 			if !errors.As(err, &le) {
 				t.Errorf("error %v, want a limit error", err)
 			}
-			// The call count is the bound; time is only reported, as it varies
-			// too much between machines and under the race detector to assert.
+			// The call count is the bound.
 			if n := c.calls.Load(); n > 1_100_000 {
-				t.Errorf("%d calls in %v", n, time.Since(t0))
+				t.Errorf("%d calls", n)
 			}
 		})
 	}
