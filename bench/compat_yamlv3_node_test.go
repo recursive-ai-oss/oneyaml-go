@@ -104,7 +104,9 @@ var nodeExceptions = map[string]string{
 
 func testNodeFields(t *testing.T, name string, f nodeFields) {
 	tally := newTally(name)
+	rg := newGapTracker(commentReadGaps)
 	for _, it := range compatCorpus(t) {
+		rg.see(it.name)
 		var yn yv3.Node
 		var cn compat.Node
 		yerr := yv3.Unmarshal(it.data, &yn)
@@ -119,6 +121,7 @@ func testNodeFields(t *testing.T, name string, f nodeFields) {
 			} else if r := nodeDifference(it, nil, nil); r != "" {
 				tally.note(r, it.name)
 			} else if f.comments && commentReadGaps[gapName(it.name)] {
+				rg.use(it.name)
 				tally.note("GAP: comment placement", it.name)
 			} else {
 				tally.unexplained = append(tally.unexplained, fmt.Sprintf("%s: %s", it.name, firstLineDiff(a, b)))
@@ -132,6 +135,9 @@ func testNodeFields(t *testing.T, name string, f nodeFields) {
 		}
 	}
 	tally.report(t)
+	if f.comments {
+		rg.check(t)
+	}
 }
 
 func TestCompatV3NodeStructure(t *testing.T) { testNodeFields(t, "node-structure", nodeFields{}) }
@@ -166,7 +172,9 @@ func toCompat(n *yv3.Node, seen map[*yv3.Node]*compat.Node) *compat.Node {
 // libraries.
 func TestCompatV3NodeWrite(t *testing.T) {
 	tally := newTally("node-write")
+	wg := newGapTracker(commentWriteGaps)
 	for _, it := range compatCorpus(t) {
+		wg.see(it.name)
 		var yn yv3.Node
 		if yv3.Unmarshal(it.data, &yn) != nil {
 			continue
@@ -183,6 +191,7 @@ func TestCompatV3NodeWrite(t *testing.T) {
 			if r := writeDifference(&yn, yb, cb, yerr, cerr); r != "" {
 				tally.note(r, it.name)
 			} else if commentWriteGaps[gapName(it.name)] {
+				wg.use(it.name)
 				tally.note("GAP: comment layout", it.name)
 			} else if commentInFlow(&yn, false) {
 				tally.note("GAP: comments inside flow collections are not written", it.name)
@@ -192,6 +201,7 @@ func TestCompatV3NodeWrite(t *testing.T) {
 		}
 	}
 	tally.report(t)
+	wg.check(t)
 }
 
 // commentInFlow reports whether any node inside a flow collection has a comment.
@@ -210,43 +220,45 @@ func commentInFlow(n *yv3.Node, inFlow bool) bool {
 
 // Known gaps: inputs where the shim places a comment on a different node than
 // yaml.v3 does (reading), or lays one out differently (writing). Each is a real
-// difference to close, not an intended one, so the list is a ratchet: a new input
-// that differs fails the test, and so does a name here that has started to match.
-var commentReadGaps = map[string]bool{
-	"2XXW/in.yaml": true,
-	"5TYM/in.yaml": true,
-	"5WE3/in.yaml": true,
-	"735Y/in.yaml": true,
-	"7BMT/in.yaml": true,
-	"7TMG/in.yaml": true,
-	"C4HZ/in.yaml": true,
-	"J7PZ/in.yaml": true,
-	"JHB9/in.yaml": true,
-	"P94K/in.yaml": true,
-	"RZP5/in.yaml": true,
-	"U3XV/in.yaml": true,
-	"W42U/in.yaml": true,
-	"X8DW/in.yaml": true,
-	"XW4D/in.yaml": true,
-	// A comment after "?" with no key text: yaml.v3 puts it on the mapping.
-	"edit/set-value-of-explicit-null-key-at-end-of-large-mapping/input.yaml": true,
-	"parse/encoding-utf-16be-with-bom/input.yaml":                            true,
-	"parse/encoding-utf-16le-with-bom/input.yaml":                            true,
-	"parse/encoding-utf-8-with-bom/input.yaml":                               true,
-	"parse/encoding-utf-8-without-bom/input.yaml":                            true,
-	"roundtrip/multiple-documents-with-markers/input.yaml":                   true,
-	"helm-ingress-nginx":                                                     true,
-	"prometheus-config":                                                      true,
+// difference to close, not an intended one, so the lists are a ratchet: a new
+// input that differs fails the test, and so does a name here that has started to
+// match.
+//
+// The read list is empty: every comment in the corpus lands where yaml.v3 puts
+// it.
+var commentReadGaps = map[string]bool{}
+
+// 7T8X: a folded scalar that starts with a line break. yaml.v3 puts a blank line
+// between its text lines (and writes an indentation indicator one lower, which is
+// the top-level difference listed elsewhere); the shim's block scalar writer, in
+// the shared emitter, leaves the blank lines out and so folds the lines together
+// when read back. The comment in the input is not the cause.
+var commentWriteGaps = map[string]bool{
+	"7T8X/in.yaml": true,
 }
 
-var commentWriteGaps = map[string]bool{
-	"7T8X/in.yaml":       true,
-	"P94K/in.yaml":       true,
-	"Q9WF/in.yaml":       true,
-	"RZP5/in.yaml":       true,
-	"X8DW/in.yaml":       true,
-	"XW4D/in.yaml":       true,
-	"helm-ingress-nginx": true,
+// gapTracker notes which names on a gap list were met in the corpus and which of
+// them still differed, so a name that has started to match is reported.
+type gapTracker struct {
+	list       map[string]bool
+	seen, used map[string]bool
+}
+
+func newGapTracker(list map[string]bool) *gapTracker {
+	return &gapTracker{list: list, seen: map[string]bool{}, used: map[string]bool{}}
+}
+
+func (g *gapTracker) see(name string) { g.seen[gapName(name)] = true }
+
+func (g *gapTracker) use(name string) { g.used[gapName(name)] = true }
+
+func (g *gapTracker) check(t *testing.T) {
+	t.Helper()
+	for name := range g.list {
+		if g.seen[name] && !g.used[name] {
+			t.Errorf("%s is on a gap list but no longer differs from yaml.v3: remove it", name)
+		}
+	}
 }
 
 func gapName(name string) string {

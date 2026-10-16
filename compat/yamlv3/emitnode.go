@@ -146,6 +146,12 @@ func (w *nodeWriter) endLine() {
 // a line of its own; a line that does not start with "#" gets "# " in front.
 func (w *nodeWriter) comment(col int, text string) {
 	w.endLine()
+	// Like an entry, a comment at the column of a foot comment just written is
+	// set off from it by a blank line.
+	if w.footCol == col && !w.keepEnd {
+		w.buf = append(w.buf, '\n')
+	}
+	w.footCol = -1
 	breaks, pound, wrote := true, false, false
 	for i := 0; i < len(text); {
 		r, sz := utf8.DecodeRuneInString(text[i:])
@@ -217,9 +223,10 @@ func (w *nodeWriter) document(d *Node) {
 		w.endLine()
 	}
 	if d.FootComment != "" {
-		if !w.keepEnd {
+		if !w.keepEnd && w.footCol != 0 {
 			// A blank line sets the comment off from the content, unless the
-			// content is a keep-chomped block scalar, which would take it.
+			// content is a keep-chomped block scalar, which would take it. After a
+			// foot comment at column 0, comment writes the blank line itself.
 			w.buf = append(w.buf, '\n')
 		}
 		w.comment(0, d.FootComment)
@@ -809,6 +816,11 @@ func (w *nodeWriter) blockMap(n *Node, col int, inline bool) {
 			w.node(&vv, vp, "")
 		} else {
 			w.node(v, vp, "")
+		}
+		if v.Kind == ScalarNode && v.HeadComment != "" {
+			// yaml.v3 has no place before a value for its head comment: it writes it
+			// below the line, at the column of the key.
+			w.comment(col, v.HeadComment)
 		}
 		if k.FootComment != "" {
 			w.footComment(col, k.FootComment)

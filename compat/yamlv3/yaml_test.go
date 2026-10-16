@@ -3,6 +3,7 @@ package yaml_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -326,5 +327,80 @@ func TestCommentsOfEmptyDocumentAreItsFoot(t *testing.T) {
 		if n.FootComment != c.foot || r.HeadComment != "" || r.FootComment != "" || r.LineComment != "" {
 			t.Errorf("%q: foot %q, root comments %q %q %q", c.in, n.FootComment, r.HeadComment, r.LineComment, r.FootComment)
 		}
+	}
+}
+
+// commentsOf lists the comments of every node that has one, in document order,
+// as "value H=... L=... F=...".
+func commentsOf(n *yaml.Node) []string {
+	var out []string
+	var walk func(n *yaml.Node)
+	walk = func(n *yaml.Node) {
+		if n.HeadComment != "" || n.LineComment != "" || n.FootComment != "" {
+			out = append(out, fmt.Sprintf("%q H=%q L=%q F=%q", n.Value, n.HeadComment, n.LineComment, n.FootComment))
+		}
+		for _, c := range n.Content {
+			walk(c)
+		}
+	}
+	walk(n)
+	return out
+}
+
+// The expected lists are what yaml.v3 itself reads from the same text.
+func TestCommentPlacementLikeYAMLv3(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{"marker comment heads the first key", "--- # c\na: 1\n", `"a" H="# c" L="" F=""`},
+		{"comments above a tagged marker", "# top\n--- !!map\na: 1\n", `"a" H="# top" L="" F=""`},
+		{"item comment then a blank line", "- # c\n\n- b\n", `"b" H="# c\n" L="" F=""`},
+		{"dedent splits a foot from a head", "g:\n  p: {}\n  # f1\n  # f2\n# h\nq: 1\n",
+			`"p" H="" L="" F="# f1\n# f2"` + "\n" + `"q" H="# h" L="" F=""`},
+		{"a block after an empty value is the next head", "a:\n  # x\n\n# y\nb: 1\n", `"b" H="# x\n\n# y" L="" F=""`},
+		{"blocks across a blank line: foot, then head", "a: 1\n# f\n\n# h\nb: 2\n",
+			`"a" H="" L="" F="# f"` + "\n" + `"b" H="# h" L="" F=""`},
+		{"a value after a comment line has the head", "key: # k\n  # lines\n  value\n",
+			`"key" H="" L="# k" F=""` + "\n" + `"value" H="# lines" L="" F=""`},
+		{"comment after an anchor goes to the first key", "top: &n # c\n  k: v\n", `"k" H="" L="# c" F=""`},
+		{"comment after a tag goes to the first key", "- !!map # c\n  foo: bar\n", `"foo" H="" L="# c" F=""`},
+		{"a key written alone after a question mark", "? k # c\n", `"k" H="" L="# c" F=""`},
+		{"comment in a flow sequence", "[a,\n# c\nb]\n", `"b" H="# c" L="" F=""`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var n yaml.Node
+			if err := yaml.Unmarshal([]byte(tc.src), &n); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(commentsOf(&n), "\n"); got != tc.want {
+				t.Fatalf("%q:\n got %s\nwant %s", tc.src, got, tc.want)
+			}
+		})
+	}
+}
+
+// A foot comment and the head comment of the next entry stay a blank line apart,
+// and a value's head comment is written below its line, as yaml.v3 writes them.
+func TestCommentLayoutLikeYAMLv3(t *testing.T) {
+	for _, src := range []string{
+		"a: 1\n# f\n\n# h\nb: 2\n",
+		"key: value # c\n# lines\n",
+	} {
+		var n yaml.Node
+		if err := yaml.Unmarshal([]byte(src), &n); err != nil {
+			t.Fatal(err)
+		}
+		out, err := yaml.Marshal(&n)
+		if err != nil || string(out) != src {
+			t.Fatalf("%q written as %q (%v)", src, out, err)
+		}
+	}
+	// The tree yaml.v3 reads from "key:  # c\n  # lines\n  value" puts the head
+	// comment on the value.
+	n := yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "key", LineComment: "# c"},
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "value", HeadComment: "# lines"},
+	}}}}
+	out, err := yaml.Marshal(&n)
+	if want := "key: value # c\n# lines\n"; err != nil || string(out) != want {
+		t.Fatalf("got %q (%v), want %q", out, err, want)
 	}
 }
