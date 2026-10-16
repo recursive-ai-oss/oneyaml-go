@@ -147,9 +147,11 @@ jobs:
           done
       - name: go test -race
         if: matrix.go == '1.27'
+        # The race detector slows the large-input tests several times over; the
+        # longer timeout only guards against a hang, no test depends on it.
         run: |
           for m in $(git ls-files '*go.mod' | xargs -n1 dirname); do
-            echo "== $m"; (cd "$m" && go test -race ./...)
+            echo "== $m"; (cd "$m" && go test -race -timeout 30m ./...)
           done
 
   # Other operating systems on the newest supported Go; the short tier is enough here.
