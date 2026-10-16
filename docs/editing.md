@@ -403,7 +403,7 @@ A merged key belongs to its merge source, and changing it there would change eve
 
 - `Set` on a key that only a merge source has adds an explicit key to the mapping, which overrides the merged one;
 - `Remove`, the patch operations `remove`, `replace` and `move`, and a merge patch member `null`, of such a key are refused with `ErrAliasWrite`, as is any write below it (`/web/image/tag`) or through the merge key (`/web/<</image`). A patch `add` or a merge patch member that sets such a key adds an explicit key, as `Set` does;
-- a patch `copy` reads its `from` as written, so a `copy` from such a key fails with `ErrNotFound`.
+- a patch `copy` reads its `from` as `test` does, so a `copy` from such a key copies the merged value and leaves the merge source unchanged.
 
 <!-- example: ExampleMergeKeys_pointer -->
 ```go

@@ -107,7 +107,7 @@ fmt.Print(string(doc.Bytes()))
 // "2": dos
 ```
 
-A pointer addresses the keys written in the file. With `MergeKeys()`, `test` also reads a key that a `<<` merge brings in, and `remove`, `replace` and `move` of such a key are refused with `ErrAliasWrite`; [Merge keys](editing.md#merge-keys) has the rules. If two keys have the same text the pointer is ambiguous and the operation fails with `ErrAmbiguousKey`. A key that is itself a collection cannot be addressed by a pointer. A pointer that is not valid fails with `ErrInvalidPointer`; a patch that is not valid fails with `ErrInvalidPatch`. Patch text must be UTF-8.
+A pointer addresses the keys written in the file. With `MergeKeys()`, `test` and the `from` of `copy` also read a key that a `<<` merge brings in, and `remove`, `replace` and `move` of such a key are refused with `ErrAliasWrite`; [Merge keys](editing.md#merge-keys) has the rules. If two keys have the same text the pointer is ambiguous and the operation fails with `ErrAmbiguousKey`. A key that is itself a collection cannot be addressed by a pointer. A pointer that is not valid fails with `ErrInvalidPointer`; a patch that is not valid fails with `ErrInvalidPatch`. Patch text must be UTF-8.
 
 ## Patches written in YAML
 

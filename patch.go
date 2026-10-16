@@ -79,10 +79,10 @@ func PatchTest(path string, v any) PatchOp { return PatchOp{Op: "test", Path: pa
 //     an eighth of it (never less than 64 KiB, and never more than the limit).
 //     NoLimits removes the bounds.
 //   - With MergeKeys, "test" reads a key that a "<<" merge brings in, as Get
-//     does. "remove", "replace" and "move" of a key that only a merge source
-//     has, and writes below it, are refused (ErrAliasWrite), because they would
+//     does, and so does the "from" of "copy" (the source stays unchanged).
+//     "remove", "replace" and "move" of a key that only a merge source has,
+//     and writes below it, are refused (ErrAliasWrite), because they would
 //     change the source; "add" of such a key adds a key of the mapping's own.
-//     The "from" of "copy" addresses only keys as written.
 //   - New members go at the end of their mapping, in the style of their
 //     siblings; comments outside the edited values stay.
 //
@@ -527,11 +527,10 @@ func (s *docStream) relocate(doc int, st *patchStep, b *patchBudget) error {
 	}
 	// A move reads below no alias, since it removes what it reads.
 	c := s.ctx(doc)
-	if move {
-		// Tell a key that only a merge brings in (a write into the source, refused)
-		// from a missing one.
-		c.Merge = s.cfg.mergeKeys
-	}
+	// With MergeKeys the source is read as test and Get read it: a copy takes the
+	// merged value, and a move tells a key that only a merge brings in (a write
+	// into the merge source, refused) from a missing one.
+	c.Merge = s.cfg.mergeKeys
 	loc, err := c.Resolve(fromToks, move)
 	c.Merge = false
 	if err != nil {
