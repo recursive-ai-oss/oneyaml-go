@@ -289,7 +289,7 @@ func (b *builder) commentsFor(t *cst.Tree, c int32, n *Node, r role) {
 					}
 				}
 			}
-			if len(block) > 0 && bstart > 0 && b.cs.seenToken && b.blankAbove(bstart) {
+			if len(block) > 0 && bstart > 0 && b.cs.seenToken && b.blankAbove(bstart) && !dashLine(src, bstart) {
 				// Another block above, set off by a blank line and directly under the
 				// previous content, is that content's foot comment.
 				block2, bstart2, _ := b.commentBlockAbove(src, bstart, nil)
@@ -307,6 +307,14 @@ func (b *builder) commentsFor(t *cst.Tree, c int32, n *Node, r role) {
 	if !collection {
 		b.cs.seenToken = true
 	}
+}
+
+// dashLine reports whether the line that starts at ls is an item with a comment
+// and no value ("- # c"). The block that ends at such a line stops there, so what
+// lies above it was not taken as part of the block and is not a separate one.
+func dashLine(src []byte, ls int) bool {
+	t := bytes.TrimSpace(src[ls:lineEnd(src, ls)])
+	return len(t) > 0 && t[0] == '-' && !bytes.HasPrefix(t, []byte("---")) && (len(t) == 1 || t[1] == ' ')
 }
 
 // blankAbove reports whether the line above the line that starts at ls is blank.

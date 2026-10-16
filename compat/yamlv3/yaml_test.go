@@ -285,6 +285,7 @@ func TestDashLineCommentsStayWhole(t *testing.T) {
 		{"- -# c\n- x\n", "- -# c\n- x\n"},
 		{"# a\n- # c\n- x\n", "# a\n-\n# c\n- x\n"},
 		{"- # c\n- x\n", "-\n# c\n- x\n"},
+		{"top:\n  # a\n\n  - # c\n  - x\n", "top:\n    -\n    # c\n    - x\n# a\n"},
 	} {
 		var n yaml.Node
 		if err := yaml.Unmarshal([]byte(c.in), &n); err != nil {
