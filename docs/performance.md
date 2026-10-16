@@ -15,7 +15,7 @@ The figures are measured, not bounds. They describe these inputs on this machine
 
 ### Tasks
 
-Each task starts from a state that is built outside the clock, fresh for every iteration. The timed work is what a caller of the library does.
+Each task starts from a state that is built outside the clock, fresh for every iteration, with one exception. In unchanged emit, a write can take nanoseconds, so a library whose write of a used document allocates the same as a write of a fresh one shares one parsed document between iterations. oneyaml-go's write allocates nothing either way. The timed work is what a caller of the library does.
 
 | Task | Timed work, as oneyaml-go does it | The answer is accepted when |
 |---|---|---|
@@ -31,13 +31,13 @@ The competitors do the same work through their own APIs. For the document tasks 
 
 ### Workloads
 
-The inputs are real files, vendored byte for byte with their source and licence: a GitHub Actions workflow, a Compose file, Helm chart values, two OpenAPI descriptions, a multi-document Kubernetes manifest and a Prometheus configuration. Generated inputs add typed records, Compose files with anchors and merge keys, Kubernetes streams, OpenAPI and Helm-style documents at several sizes, and stress shapes: deep nesting, long scalars of every style, flow-heavy data, anchors and aliases, Unicode, and every scalar style and chomping mode. Two small reference cases edit a block scalar. The kit's notes list them under [Workloads](https://github.com/recursive-ai-oss/oneyaml-kit/blob/38acec388e68e7b7e46035c6278ce4cba519d482/docs/benchmarks.md#workloads).
+The inputs are real files, vendored byte for byte with their source and licence: a GitHub Actions workflow, a Compose file, Helm chart values, two OpenAPI descriptions, a multi-document Kubernetes manifest and a Prometheus configuration. Generated inputs add typed records, Compose files with anchors and merge keys, Kubernetes streams, OpenAPI and Helm-style documents at several sizes, and stress shapes: deep nesting, long scalars of every style, flow-heavy data, anchors and aliases, Unicode, and every scalar style and chomping mode. Two small reference cases edit a block scalar. The kit's notes at the run's revision list them under [Workloads](https://github.com/recursive-ai-oss/oneyaml-kit/blob/38acec388e68e7b7e46035c6278ce4cba519d482/docs/benchmarks.md#workloads).
 
 The expected values do not come from any of the libraries being measured. A generated input and its value come from the same generator. A real file's value is accepted only when two independent YAML 1.2 parsers agree on it. The expected bytes after an edit are exact text substitutions on the input.
 
 ### The correctness check before timing
 
-Each library's answer is checked before it is timed. A library gets a number only if its answer was right. A wrong answer is marked "differs" and a refused input is marked "rejects", and neither carries a time or a memory figure. The report of the run lists every such cell with the first difference the check found. See the [correctness guard](https://github.com/recursive-ai-oss/oneyaml-kit/blob/38acec388e68e7b7e46035c6278ce4cba519d482/docs/benchmarks.md#correctness-guard) in the kit's notes.
+Each library's answer is checked before it is timed. A library gets a number only if its answer was right. A wrong answer is marked "differs" and a refused input is marked "rejects", and neither carries a time or a memory figure. The report of the run lists every such cell with the first difference the check found. See the [correctness guard](https://github.com/recursive-ai-oss/oneyaml-kit/blob/38acec388e68e7b7e46035c6278ce4cba519d482/docs/benchmarks.md#correctness-guard) in the kit's notes at the run's revision.
 
 ### Time and memory
 
@@ -45,7 +45,12 @@ The time is the ns/op that Go's `testing.Benchmark` reports, so it is a mean ove
 
 ### Reading the tables
 
-Each row compares oneyaml-go with the strongest competitor in that row: the fastest for time, and the one that allocated least for memory. The ratio is our figure divided by theirs, so below 1.0× is better for oneyaml-go. A small gap counts as a tie (the kit's [verdicts](https://github.com/recursive-ai-oss/oneyaml-kit/blob/38acec388e68e7b7e46035c6278ce4cba519d482/docs/benchmarks.md#verdicts) give the bands), and a loss is marked ▼. A † marks a competitor that did less than the full task, for example json-patch, which works on JSON and so cannot keep the text of the file. It is still compared with.
+Each row compares oneyaml-go with the strongest competitor in that row: the fastest for time, and the one that allocated least for memory. The ratio is our figure divided by theirs, so below 1.0× is better for oneyaml-go. A small gap counts as a tie (the kit's [verdicts](https://github.com/recursive-ai-oss/oneyaml-kit/blob/38acec388e68e7b7e46035c6278ce4cba519d482/docs/benchmarks.md#verdicts) at the run's revision give the bands: under 5% for time and 2% for memory), and a loss is marked ▼.
+
+
+A time in parentheses names the answer a competitor was checked against when it is not the plain one. *(merged)* means it applied `<<` merge keys while loading, a YAML 1.1 extension, and was checked against the merged value; YAML 1.2, and oneyaml-go by default, read `<<` as an ordinary key. Such a cell did different work from ours and is still compared with. *(value-only)* is explained by the † below.
+
+A † marks a cell that was not measured on exactly the task as specified, for example json-patch, which works on JSON and so cannot keep the text of the file. It is still compared with. In this Go run every patch cell carries a † for "text API", ours included: every library's patch is timed from the input text to the output text, and the palantir-yamlpatch cells passed the same byte-for-byte check as ours, so that mark does not mean less work. Only the "value-only" json-patch cells were judged more loosely.
 
 The README summary takes, for each task, the geometric mean over the real-world files that task has. The tables below show every workload.
 
@@ -57,7 +62,7 @@ The unchanged-emit ratio is much further below 1.0× than that of any other row,
 
 A row says "no rival" when oneyaml-go gave a correct answer and no competitor did. There is no comparison in such a row, so it is not a win and it is not counted as one. In this run those rows are:
 
-- **document parse, unchanged emit and edit script** on several real files and generated inputs: the competitors' documents did not write the input back byte for byte. They changed blank lines, indentation, quoting or escapes, or the layout of a flow collection.
+- **document parse, unchanged emit and edit script** on several real files and generated inputs: the competitors' documents did not write the input back byte for byte. They changed blank lines, indentation, quoting or escapes, or the layout of a flow collection. In the edit script on the `reference-b` case, goccy/go-yaml also wrote the edited block scalar as a plain scalar, so the text lost its style.
 - **dump** on the typed-records inputs: the text the competitors wrote did not read back to the expected value. For example, a float with a whole-number value came back as an integer, or a string of digits lost its quotes and came back as a number.
 - **patch** on the GitHub Actions workflow: the competitors' output differed from the expected bytes, or the patch was refused.
 
@@ -72,7 +77,7 @@ bin/bench run --mode full --lang go
 bin/bench readme --results out --library oneyaml-go --readme <oneyaml-go>/README.md --docs <oneyaml-go>/docs --charts docs/img
 ```
 
-The first command writes the result file, a report with every cell and charts under `out/bench`. The second writes the generated blocks of this page and of the README. A run on any machine other than the kit's rented cloud instance (`bin/bench-cloud full --lang go`), or a quick run, is labelled a smoke result. It shows the layout and the rough picture but it is not a claim, and `bin/bench readme` refuses it unless you pass `--allow-smoke`, which labels every block.
+The first command writes the result file, a report with every cell and charts under `out/bench`. The second writes the generated blocks of this page and of the README. The blocks on this page were written by `bin/bench readme` at kit revision eb80eef from that result file; that revision adds the list of cells without a number and labels memory as bytes allocated per operation. A run on any machine other than the kit's rented cloud instance (`bin/bench-cloud full --lang go`), or a quick run, is labelled a smoke result. It shows the layout and the rough picture but it is not a claim, and `bin/bench readme` refuses it unless you pass `--allow-smoke`, which labels every block.
 
 ## Results
 
@@ -228,16 +233,16 @@ The first command writes the result file, a report with every cell and charts un
 | edit script | `helm-values-1m` | 1 MiB | 733 µs | differs [21] | differs [23] | unsupported | unsupported | differs [2] | unsupported | unsupported | unsupported | no rival |
 | edit script | `wide-map-64k` | 64 KiB | 92.1 µs | 4.8 ms | 4.44 ms | unsupported | unsupported | 1.15 ms | unsupported | unsupported | unsupported | 0.08× of `goccy-go-yaml` ▲ win |
 | edit script | `wide-map-1m` | 1 MiB | 2.27 ms | 92.9 ms | 84.6 ms | unsupported | unsupported | 17.4 ms | unsupported | unsupported | unsupported | 0.13× of `goccy-go-yaml` ▲ win |
-| patch (RFC 6902) | `compose-wordpress` | 815 B | 20.9 µs | unsupported | unsupported | unsupported | unsupported | unsupported | differs [9] | differs [11] | 142 µs (value-only) † | 0.15× of `json-patch` † (text API, value-only) ▲ win |
-| patch (RFC 6902) | `gha-workflow` | 9.43 KiB | 99.6 µs | unsupported | unsupported | unsupported | unsupported | unsupported | differs [9] | differs [11] | rejects [6] | no rival |
-| patch (RFC 6902) | `reference-a` | 51 B | 4.42 µs | unsupported | unsupported | unsupported | unsupported | unsupported | differs [9] | 12.8 µs † | 21 µs (value-only) † | 0.34× of `palantir-yamlpatch-goccy` † (text API) ▲ win |
-| patch (RFC 6902) | `reference-b` | 51 B | 4.43 µs | unsupported | unsupported | unsupported | unsupported | unsupported | differs [8] | differs [10] | 21 µs (value-only) † | 0.21× of `json-patch` † (text API, value-only) ▲ win |
-| patch (RFC 6902) | `records-4k` | 4.14 KiB | 72.5 µs | unsupported | unsupported | unsupported | unsupported | unsupported | 686 µs † | differs [12] | differs [7] | 0.11× of `palantir-yamlpatch` † (text API) ▲ win |
-| patch (RFC 6902) | `records-64k` | 64.2 KiB | 1.04 ms | unsupported | unsupported | unsupported | unsupported | unsupported | 11.8 ms † | differs [12] | differs [7] | 0.09× of `palantir-yamlpatch` † (text API) ▲ win |
-| patch (RFC 6902) | `records-1m` | 1 MiB | 16.7 ms | unsupported | unsupported | unsupported | unsupported | unsupported | 190 ms † | differs [12] | differs [7] | 0.09× of `palantir-yamlpatch` † (text API) ▲ win |
-| patch (RFC 6902) | `records-8m` | 8 MiB | 149 ms | unsupported | unsupported | unsupported | unsupported | unsupported | 1.4 s † | differs [12] | differs [7] | 0.11× of `palantir-yamlpatch` † (text API) ▲ win |
+| patch (RFC 6902) | `compose-wordpress` | 815 B | 20.9 µs † | unsupported | unsupported | unsupported | unsupported | unsupported | differs [9] | differs [11] | 142 µs (value-only) † | 0.15× of `json-patch` † (text API, value-only) ▲ win |
+| patch (RFC 6902) | `gha-workflow` | 9.43 KiB | 99.6 µs † | unsupported | unsupported | unsupported | unsupported | unsupported | differs [9] | differs [11] | rejects [6] | no rival |
+| patch (RFC 6902) | `reference-a` | 51 B | 4.42 µs † | unsupported | unsupported | unsupported | unsupported | unsupported | differs [9] | 12.8 µs † | 21 µs (value-only) † | 0.34× of `palantir-yamlpatch-goccy` † (text API) ▲ win |
+| patch (RFC 6902) | `reference-b` | 51 B | 4.43 µs † | unsupported | unsupported | unsupported | unsupported | unsupported | differs [8] | differs [10] | 21 µs (value-only) † | 0.21× of `json-patch` † (text API, value-only) ▲ win |
+| patch (RFC 6902) | `records-4k` | 4.14 KiB | 72.5 µs † | unsupported | unsupported | unsupported | unsupported | unsupported | 686 µs † | differs [12] | differs [7] | 0.11× of `palantir-yamlpatch` † (text API) ▲ win |
+| patch (RFC 6902) | `records-64k` | 64.2 KiB | 1.04 ms † | unsupported | unsupported | unsupported | unsupported | unsupported | 11.8 ms † | differs [12] | differs [7] | 0.09× of `palantir-yamlpatch` † (text API) ▲ win |
+| patch (RFC 6902) | `records-1m` | 1 MiB | 16.7 ms † | unsupported | unsupported | unsupported | unsupported | unsupported | 190 ms † | differs [12] | differs [7] | 0.09× of `palantir-yamlpatch` † (text API) ▲ win |
+| patch (RFC 6902) | `records-8m` | 8 MiB | 149 ms † | unsupported | unsupported | unsupported | unsupported | unsupported | 1.4 s † | differs [12] | differs [7] | 0.11× of `palantir-yamlpatch` † (text API) ▲ win |
 
-**Peak / allocated heap per operation**
+**Allocated bytes per operation (B/op)**
 
 | Task | Workload | Input | `oneyaml-go` | `yaml-v3` | `yaml-v4` | `yaml-v2` | `sigs-yaml` | `goccy-go-yaml` | `palantir-yamlpatch` | `palantir-yamlpatch-goccy` | `json-patch` | Ours vs strongest competitor |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -388,14 +393,14 @@ The first command writes the result file, a report with every cell and charts un
 | edit script | `helm-values-1m` | 1 MiB | 65.9 KiB in 34 allocs | differs [21] | differs [23] | unsupported | unsupported | differs [2] | unsupported | unsupported | unsupported | no rival |
 | edit script | `wide-map-64k` | 64 KiB | 4.7 KiB in 47 allocs | 8.03 MiB in 15,549 allocs | 8.04 MiB in 16,174 allocs | unsupported | unsupported | 622 KiB in 11,862 allocs | unsupported | unsupported | unsupported | <0.01× of `goccy-go-yaml` ▲ win |
 | edit script | `wide-map-1m` | 1 MiB | 4.7 KiB in 47 allocs | 159 MiB in 225,094 allocs | 159 MiB in 234,100 allocs | unsupported | unsupported | 10.1 MiB in 171,114 allocs | unsupported | unsupported | unsupported | <0.01× of `goccy-go-yaml` ▲ win |
-| patch (RFC 6902) | `compose-wordpress` | 815 B | 17.6 KiB in 121 allocs | unsupported | unsupported | unsupported | unsupported | unsupported | differs [9] | differs [11] | 115 KiB in 1,048 allocs † | 0.15× of `json-patch` † (text API, value-only) ▲ win |
-| patch (RFC 6902) | `gha-workflow` | 9.43 KiB | 54.3 KiB in 130 allocs | unsupported | unsupported | unsupported | unsupported | unsupported | differs [9] | differs [11] | rejects [6] | no rival |
-| patch (RFC 6902) | `reference-a` | 51 B | 4.33 KiB in 42 allocs | unsupported | unsupported | unsupported | unsupported | unsupported | differs [9] | 10.1 KiB in 276 allocs † | 22.9 KiB in 204 allocs † | 0.43× of `palantir-yamlpatch-goccy` † (text API) ▲ win |
-| patch (RFC 6902) | `reference-b` | 51 B | 4.34 KiB in 43 allocs | unsupported | unsupported | unsupported | unsupported | unsupported | differs [8] | differs [10] | 22.8 KiB in 204 allocs † | 0.19× of `json-patch` † (text API, value-only) ▲ win |
-| patch (RFC 6902) | `records-4k` | 4.14 KiB | 37.6 KiB in 91 allocs | unsupported | unsupported | unsupported | unsupported | unsupported | 774 KiB in 3,829 allocs † | differs [12] | differs [7] | 0.05× of `palantir-yamlpatch` † (text API) ▲ win |
-| patch (RFC 6902) | `records-64k` | 64.2 KiB | 402 KiB in 91 allocs | unsupported | unsupported | unsupported | unsupported | unsupported | 12.6 MiB in 55,211 allocs † | differs [12] | differs [7] | 0.03× of `palantir-yamlpatch` † (text API) ▲ win |
-| patch (RFC 6902) | `records-1m` | 1 MiB | 5.85 MiB in 91 allocs | unsupported | unsupported | unsupported | unsupported | unsupported | 230 MiB in 870,902 allocs † | differs [12] | differs [7] | 0.03× of `palantir-yamlpatch` † (text API) ▲ win |
-| patch (RFC 6902) | `records-8m` | 8 MiB | 71.1 MiB in 94 allocs | unsupported | unsupported | unsupported | unsupported | unsupported | 1.73 GiB in 6,885,064 allocs † | differs [12] | differs [7] | 0.04× of `palantir-yamlpatch` † (text API) ▲ win |
+| patch (RFC 6902) | `compose-wordpress` | 815 B | 17.6 KiB in 121 allocs † | unsupported | unsupported | unsupported | unsupported | unsupported | differs [9] | differs [11] | 115 KiB in 1,048 allocs † | 0.15× of `json-patch` † (text API, value-only) ▲ win |
+| patch (RFC 6902) | `gha-workflow` | 9.43 KiB | 54.3 KiB in 130 allocs † | unsupported | unsupported | unsupported | unsupported | unsupported | differs [9] | differs [11] | rejects [6] | no rival |
+| patch (RFC 6902) | `reference-a` | 51 B | 4.33 KiB in 42 allocs † | unsupported | unsupported | unsupported | unsupported | unsupported | differs [9] | 10.1 KiB in 276 allocs † | 22.9 KiB in 204 allocs † | 0.43× of `palantir-yamlpatch-goccy` † (text API) ▲ win |
+| patch (RFC 6902) | `reference-b` | 51 B | 4.34 KiB in 43 allocs † | unsupported | unsupported | unsupported | unsupported | unsupported | differs [8] | differs [10] | 22.8 KiB in 204 allocs † | 0.19× of `json-patch` † (text API, value-only) ▲ win |
+| patch (RFC 6902) | `records-4k` | 4.14 KiB | 37.6 KiB in 91 allocs † | unsupported | unsupported | unsupported | unsupported | unsupported | 774 KiB in 3,829 allocs † | differs [12] | differs [7] | 0.05× of `palantir-yamlpatch` † (text API) ▲ win |
+| patch (RFC 6902) | `records-64k` | 64.2 KiB | 402 KiB in 91 allocs † | unsupported | unsupported | unsupported | unsupported | unsupported | 12.6 MiB in 55,211 allocs † | differs [12] | differs [7] | 0.03× of `palantir-yamlpatch` † (text API) ▲ win |
+| patch (RFC 6902) | `records-1m` | 1 MiB | 5.85 MiB in 91 allocs † | unsupported | unsupported | unsupported | unsupported | unsupported | 230 MiB in 870,902 allocs † | differs [12] | differs [7] | 0.03× of `palantir-yamlpatch` † (text API) ▲ win |
+| patch (RFC 6902) | `records-8m` | 8 MiB | 71.1 MiB in 94 allocs † | unsupported | unsupported | unsupported | unsupported | unsupported | 1.73 GiB in 6,885,064 allocs † | differs [12] | differs [7] | 0.04× of `palantir-yamlpatch` † (text API) ▲ win |
 
 Cells without a number, with what the correctness guard found:
 
@@ -426,5 +431,5 @@ Cells without a number, with what the correctness guard found:
 
 Relative figures are ours ÷ the strongest competitor in that row, so below 1.0× is better for us and ▼ marks a loss. A † names a cell that did less than the full task; it still counts. Cells without a number say why.
 
-Method: full run of 2026-10-16T13:51:47Z, **full run**. Kit revision 38acec388e68 (rendered with kit version 0.1.0). `oneyaml-go 30e7fc4bf7b4`; competitors `yaml-v3 v3.0.5`, `yaml-v4 v4.0.0-rc.6`, `yaml-v2 v2.4.0`, `sigs-yaml v1.6.0`, `goccy-go-yaml v1.19.2`, `palantir-yamlpatch v1.5.0`, `palantir-yamlpatch-goccy v1.5.0`, `json-patch v5.9.11`. Runtime go1.26.0 (target linux/amd64), measured with testing.B: ns/op from testing.Benchmark at its default benchtime (20 ms in quick mode). Memory: B/op and allocs/op from testing.B (ReportAllocs). Intel(R) Xeon(R) Platinum 8488C (16 logical CPUs, 30.8 GiB), Linux 7.0.0-1014-aws (x86_64), host load (1 min) 0.68 before, 0.76 after.
+Method: full run of 2026-10-16T13:51:47Z, **full run**. Kit revision 38acec388e68 (rendered with kit version 0.1.0). `oneyaml-go v0.3.0 (30e7fc4bf7b4)`; competitors `yaml-v3 v3.0.5`, `yaml-v4 v4.0.0-rc.6`, `yaml-v2 v2.4.0`, `sigs-yaml v1.6.0`, `goccy-go-yaml v1.19.2`, `palantir-yamlpatch v1.5.0`, `palantir-yamlpatch-goccy v1.5.0`, `json-patch v5.9.11`. Runtime go1.26.0 (target linux/amd64), measured with testing.B: ns/op from testing.Benchmark at its default benchtime. Memory: B/op and allocs/op from testing.B (ReportAllocs). Intel(R) Xeon(R) Platinum 8488C (16 logical CPUs, 30.8 GiB), Linux 7.0.0-1014-aws (x86_64), host load (1 min) 0.68 before, 0.76 after.
 <!-- end generated -->
