@@ -33,7 +33,8 @@
 // [Unmarshaler], which receives a [Node]; UnmarshalYAML(func(any) error) error,
 // the older form that yaml.v2, yaml.v3 and goccy/go-yaml accept;
 // [encoding.TextUnmarshaler], for a
-// scalar; and [encoding/json.Unmarshaler], which receives the value as JSON. So
+// scalar; and [encoding/json.Unmarshaler], which receives the value as JSON,
+// a plain number with its digits as written. So
 // types written for encoding/json, such as Kubernetes API types with json tags
 // and UnmarshalJSON methods, load as they are. An UnmarshalYAML method of any
 // other form, such as yaml.v3's UnmarshalYAML(*yaml.Node) error, is reported as
@@ -48,8 +49,10 @@
 // the nearest style that can when it cannot, and it adds a missing key at the
 // end of its mapping in the style of its siblings. Reading the value back always
 // gives exactly the value set. [Document.Remove] deletes an entry with the
-// comments that belong to it. [Document.Bytes] and [Document.WriteTo] write the
-// result. An edit that cannot be made, such as one that would write through an
+// comments that belong to it, [Document.Rename] changes a key in place, and
+// [Document.SetHeadComment] and [Document.SetLineComment] write or remove a
+// comment. [Document.Bytes] and [Document.WriteTo] write the result, and a
+// Document prints as its text. An edit that cannot be made, such as one that would write through an
 // alias, returns an [*EditError] and leaves the document unchanged.
 //
 // An edit makes every [Node] read before it stale ([Node.Stale]). A range over
@@ -64,9 +67,9 @@
 //
 // # Patch
 //
-// [Document.ApplyPatch] applies an RFC 6902 JSON Patch whose test operation
-// compares values by the YAML data model, so 1 and 1.0 differ (see the
-// Document.ApplyPatch documentation). [Document.Apply] takes
+// [Document.ApplyPatch] applies an RFC 6902 JSON Patch, written as JSON or as a
+// YAML sequence of operations, whose test operation compares values by the YAML
+// data model, so 1 and 1.0 differ (see the Document.ApplyPatch documentation). [Document.Apply] takes
 // the same operations as Go values ([PatchAdd], [PatchReplace] and the rest),
 // and [Document.ApplyMergePatch] applies an RFC 7396 merge patch. A patch is
 // atomic: if any operation fails, the document is unchanged. The edits it makes
@@ -101,15 +104,17 @@
 // # Errors
 //
 // Errors are values to test with [errors.As] and [errors.Is]: [*SyntaxError]
-// carries the line, column, offset and a category (see [CategorySyntax],
-// [CategoryEncoding] and [CategoryDuplicateKey]); [*TypeError] the path
-// and position of a value that does not fit its target, all of them when a read
-// finds several, with [ErrUnknownField] to match a key the target lacks; [*LimitError] the limit
-// and the option that raises it; and [*EditError] the operation, the pointer and
-// a kind to match against [ErrNotFound], [ErrAliasWrite], [ErrAmbiguousKey],
-// [ErrTestFailed], [ErrAnchorInUse], [ErrInvalidPatch], [ErrInvalidPointer],
-// [ErrUndefinedAlias], [ErrUnsupportedEdit], [ErrStaleNode], [ErrNoPointer] and
-// [ErrNilDocument]. Match errors by type and kind: the text of a message is
+// carries the line, column, offset and a category ([CategorySyntax],
+// [CategoryEncoding] or [CategoryDuplicateKey], which also names the key and
+// where it first appeared); [*TypeError] the path and position of a value that
+// does not fit its target, and of every other one when a read finds several,
+// with [ErrUnknownField] to match a key the target lacks; [*LimitError] the
+// limit and the option that raises it; and [*EditError] the operation, the
+// pointer and a kind to match against [ErrNotFound], [ErrAliasWrite],
+// [ErrAmbiguousKey], [ErrTestFailed], [ErrAnchorInUse], [ErrInvalidPatch],
+// [ErrInvalidPointer], [ErrUndefinedAlias], [ErrUnsupportedEdit],
+// [ErrKeyExists], [ErrNotAnEntry], [ErrInvalidComment], [ErrStaleNode],
+// [ErrNoPointer] and [ErrNilDocument]. Match errors by type and kind: the text of a message is
 // written for people and may change in any release.
 //
 // The library contains no unsafe code. A panic caused by input is treated as a

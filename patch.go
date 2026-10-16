@@ -47,10 +47,11 @@ func PatchCopy(from, path string) PatchOp { return PatchOp{Op: "copy", Path: pat
 // PatchTest returns a "test" operation.
 func PatchTest(path string, v any) PatchOp { return PatchOp{Op: "test", Path: path, Value: v} }
 
-// ApplyPatch applies an RFC 6902 JSON Patch, given as JSON text, to the document.
-// The patch is atomic: if any operation fails, including a "test" that does not
-// match, the document is left exactly as it was, byte for byte, and the error is
-// an *EditError that names the operation.
+// ApplyPatch applies an RFC 6902 JSON Patch, given as JSON text or as a YAML
+// block list of operations, to the document. The patch is atomic: if any
+// operation fails, including a "test" that does not match, the document is left
+// exactly as it was, byte for byte, and the error is an *EditError that names
+// the operation.
 //
 // The operations follow the RFC, with these points where YAML needs a decision:
 //   - Pointers address mapping keys by their scalar text, and a key that occurs
@@ -77,12 +78,18 @@ func PatchTest(path string, v any) PatchOp { return PatchOp{Op: "test", Path: pa
 //   - New members go at the end of their mapping, in the style of their
 //     siblings; comments outside the edited values stay.
 //
-// Text that does not start with "[" or "{" and is not JSON is read as YAML: a block
-// list of operations, as a patch kept in a YAML file is written, gives the same
-// result as the JSON form. Text that starts like JSON is judged as JSON only. A
-// YAML patch may not use aliases, tags outside the core schema, a key named twice or more than one
-// document, and a scalar the decoder cannot read (a bad escape) refuses the whole
-// patch with ErrInvalidPatch.
+// Text whose first significant byte is "[" or "{" is read as JSON only, with
+// JSON errors; so is a flow-style YAML patch such as [{op: add, ...}]. Other text
+// is read as YAML: one document holding a block list of operations with the
+// same members, as a patch kept in a YAML file is written, gives the same
+// result as the JSON form. The non-specific tag "!" is allowed and makes a
+// scalar a string. A YAML patch is refused with ErrInvalidPatch when it uses
+// aliases, a tag outside the core schema, a collection as a key, or keys that
+// repeat by value as the Core schema reads them (1 and 0x1, null and ~); when
+// it holds more than one document; or when it has a scalar the decoder cannot
+// read (a bad escape). A YAML syntax error is reported with its line and
+// column. Text that is neither JSON nor a YAML list fails with the JSON error,
+// and a YAML patch nested past the depth limit fails with a *LimitError.
 //
 // A patch applies to the first document, or to the document a view from Doc
 // selects.

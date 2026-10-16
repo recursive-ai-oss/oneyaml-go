@@ -82,15 +82,15 @@ Run your tests, and look at these places in particular:
 | `yaml.Unmarshal(data, &v)` | `oneyaml.Unmarshal(data, &v)` |
 | `yaml.Marshal(v)` | `oneyaml.Marshal(v)` |
 | `yaml.NewDecoder(r)`, `dec.Decode(&v)`, `io.EOF` at the end | `oneyaml.NewDecoder(r)`, the same |
-| `dec.KnownFields(true)` | `oneyaml.KnownFields()` passed to the call |
+| `dec.KnownFields(true)` | `oneyaml.KnownFields()` passed to the call; `errors.Is(err, oneyaml.ErrUnknownField)` matches a key the struct lacks |
 | `yaml.NewEncoder(w)`, `enc.SetIndent(n)` | `oneyaml.NewEncoder(w, oneyaml.Indent(n))` |
 | `yaml.Marshaler`, `MarshalYAML() (interface{}, error)` | `oneyaml.Marshaler`, the same method |
 | `yaml.Unmarshaler`, `UnmarshalYAML(*yaml.Node) error` | `oneyaml.Unmarshaler`, `UnmarshalYAML(oneyaml.Node) error`; the old form is an error, see [Hooks](#hooks) |
 | `UnmarshalYAML(func(interface{}) error) error` | the same method, unchanged |
-| `yaml.Node` for reading | `Document.Root()` and `oneyaml.Node`, a read-only view |
+| `yaml.Node` for reading | `Document.Root()` and `oneyaml.Node`, a read-only view; `HeadComment()` and `LineComment()` return comments trimmed as yaml.v3 does |
 | `yaml.Node` as a field, to keep part of a document unparsed | `Document.Get(pointer, &node)`; a `oneyaml.Node` is not a decode target |
-| `yaml.Node` to change a file | `Document.Set`, `Remove`, `ApplyPatch` |
-| `yaml.TypeError` with `Errors []string` | `*oneyaml.TypeError`, one error with the path and position of the first value that does not fit |
+| `yaml.Node` to change a file | `Document.Set`, `Remove`, `Rename`, `SetHeadComment`, `SetLineComment`, `ApplyPatch`; see [Editing a file](#editing-a-file) |
+| `yaml.TypeError` with `Errors []string` | `*oneyaml.TypeError` for the first value that does not fit, with the others in `More`; `All()` returns every one, each with its path and position |
 | struct tag `omitempty` | the same: zero values, empty collections and zero structs are left out, and an `IsZero` method decides when a type has one. One difference: a struct counts as zero only when all its fields are zero, unexported ones too, where yaml.v3 looks at exported fields only |
 | struct tags `flow` and `inline` (a struct or a map) | the same |
 | no `omitzero` | `omitzero` leaves out a zero value, or one whose `IsZero` returns true, as `encoding/json` does; an empty but non-nil slice is kept |
@@ -142,7 +142,7 @@ if errors.As(err, &te) {
 - **A date is a string** in a generic value; there is no implicit `time.Time`.
 - **The `<<` key is an ordinary key** unless you pass `MergeKeys()`.
 - **A nil slice is written as `null`**, not `[]`. The default indentation is two spaces, not four.
-- **A type error stops at the first** and the error says where.
+- **Type errors are collected**, as in yaml.v3: a value that does not fit is skipped, the rest is read, and one `*TypeError` reports up to 100 mismatches. A syntax error, a limit error or an error from your own hook stops the read at once.
 - **A duplicate key is an error**, as in yaml.v3.
 
 <!-- example: Example_fromYAMLv3Forms -->
@@ -182,7 +182,7 @@ When it reads a value, the `oneyaml` package tries a type's methods in this orde
 | `MarshalYAML() (interface{}, error)` | called as yaml.v3 calls it |
 | `MarshalYAML` or `UnmarshalYAML` with any other signature | a `*TypeError` |
 | `UnmarshalText` and `MarshalText` | used for scalars, as in yaml.v3 |
-| `UnmarshalJSON` and `MarshalJSON`, and no YAML or text method | used, with the value passed as JSON text; yaml.v3 ignores them |
+| `UnmarshalJSON` and `MarshalJSON`, and no YAML or text method | used, with the value passed as JSON text; yaml.v3 ignores them. A plain number arrives with its digits as written; inside a mapping or sequence, a float is rounded to `float64` |
 
 A method with a signature the package does not call is reported, not skipped, so a type is never quietly filled field by field when you meant it to read itself. The compat package keeps yaml.v3's own form: with the import swapped, `UnmarshalYAML(*yaml.Node) error` works unchanged.
 
@@ -247,6 +247,8 @@ fmt.Print(string(doc.Bytes()))
 // replicas: 3
 ```
 
-The rules for the style of the new value, for adding and removing keys and for anchors are in [Editing](editing.md). For how the libraries compare, see [Comparison](comparison.md).
+The same holds for the other changes yaml.v3 makes through a `yaml.Node`. To rename a key, call `Rename(pointer, newKey)` instead of setting the key node's `Value`. To change a comment, call `SetHeadComment` or `SetLineComment` instead of setting the node's `HeadComment` or `LineComment` field. Both edit the file in place, and the rest of it stays as it was.
+
+The rules for the style of the new value, for adding, removing and renaming keys, for comments and for anchors are in [Editing](editing.md). For how the libraries compare, see [Comparison](comparison.md).
 
 The supported Go versions are listed under [Stability](../README.md#stability) in the README.

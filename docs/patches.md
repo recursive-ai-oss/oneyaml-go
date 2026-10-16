@@ -6,9 +6,9 @@ There are three entry points on `Document`:
 
 | Method | Takes |
 |---|---|
-| `ApplyPatch(rfc6902 []byte)` | an RFC 6902 patch as JSON text |
+| `ApplyPatch(rfc6902 []byte)` | an RFC 6902 patch as JSON text, or as a YAML sequence of operations ([details](#patches-written-in-yaml)) |
 | `Apply(ops ...PatchOp)` | the same operations as Go values: `PatchAdd`, `PatchRemove`, `PatchReplace`, `PatchMove`, `PatchCopy`, `PatchTest` |
-| `ApplyMergePatch(rfc7396 []byte)` | an RFC 7396 merge patch as JSON text |
+| `ApplyMergePatch(rfc7396 []byte)` | an RFC 7396 merge patch as JSON text only |
 
 ## A patch is atomic
 
@@ -107,7 +107,39 @@ fmt.Print(string(doc.Bytes()))
 // "2": dos
 ```
 
-If two keys have the same text the pointer is ambiguous and the operation fails with `ErrAmbiguousKey`. A key that is itself a collection cannot be addressed by a pointer. A pointer that is not valid fails with `ErrInvalidPointer`; a patch that is not valid fails with `ErrInvalidPatch`. Patch text must be UTF-8.
+A pointer addresses the keys written in the file, so a key that a `<<` merge brings in is not found; [Editing](editing.md#anchors-aliases-and-tags) has the merge-key rules. If two keys have the same text the pointer is ambiguous and the operation fails with `ErrAmbiguousKey`. A key that is itself a collection cannot be addressed by a pointer. A pointer that is not valid fails with `ErrInvalidPointer`; a patch that is not valid fails with `ErrInvalidPatch`. Patch text must be UTF-8.
+
+## Patches written in YAML
+
+`ApplyPatch` also takes a patch kept as YAML, a sequence of operations with the same members as the JSON form. Text that reads as JSON is taken as JSON first. A YAML patch applies exactly as the JSON patch with the same operations does:
+
+<!-- example: ExampleDocument_ApplyPatch_yaml -->
+```go
+doc, err := oneyaml.Parse([]byte("replicas: 2\nimage: nginx:1.25\n"))
+if err != nil {
+	log.Fatal(err)
+}
+patch := `
+- op: replace
+  path: /replicas
+  value: 5
+- op: add
+  path: /labels
+  value:
+    tier: web
+`
+if err := doc.ApplyPatch([]byte(patch)); err != nil {
+	log.Fatal(err)
+}
+fmt.Print(doc)
+// Output:
+// replicas: 5
+// image: nginx:1.25
+// labels:
+//   tier: web
+```
+
+A YAML patch must be one document, and may not use what JSON has no form for: aliases, a collection as a key, or the same key twice in a mapping. Each of these fails with `ErrInvalidPatch`. Text that is neither JSON nor a YAML sequence fails with the JSON error. `ApplyMergePatch` reads JSON only.
 
 ## Aliases
 

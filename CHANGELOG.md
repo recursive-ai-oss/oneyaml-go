@@ -4,6 +4,27 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added
+
+- `Document.Rename` changes the key of a mapping entry in place, keeping the value, its position and its comments. It refuses a key that already exists (`ErrKeyExists`) and a pointer that is not a mapping entry (`ErrNotAnEntry`). See [Renaming a key](docs/editing.md#renaming-a-key).
+- `Document.SetHeadComment` and `Document.SetLineComment` write, replace or remove the comment above an entry or after a value. Text that cannot be a comment is refused with `ErrInvalidComment`. See [Comments](docs/editing.md#comments).
+- `ApplyPatch` also reads a patch written as a YAML sequence of operations. `ApplyMergePatch` still reads JSON only. See [Patches written in YAML](docs/patches.md#patches-written-in-yaml).
+- `Document` and `Node` have a `String` method, so printing one prints its YAML.
+- `TypeError.More` and `TypeError.All` report every value that did not fit (see Changed). `ErrUnknownField` matches an unknown key under `KnownFields`, even when it is one of several type errors.
+- `CategorySyntax`, `CategoryEncoding` and `CategoryDuplicateKey` name the values of `SyntaxError.Category`. A duplicate-key error sets `SyntaxError.Key`, `FirstLine` and `FirstColumn` to the key and the position where it first appeared.
+
+### Changed
+
+- **Breaking:** decoding goes on past a value that does not fit its target. `Unmarshal`, `Decoder.Decode`, `Document.Decode` and `Document.Get` skip such a value and read the rest of the document. The target of a skipped value keeps what it held: an element of a slice is left zero, and a map entry is not added. One `*TypeError` then describes the first mismatch, holds up to 99 more in `More`, and lists them all in its message. Syntax errors, limit errors and errors from your own hooks still stop the read at once. Code that checks `err` before it uses the target needs no change. Code that relied on fields after the first bad value staying untouched must not rely on that any more. See the [`TypeError` reference](https://pkg.go.dev/oneyaml.dev/go#TypeError).
+- **Breaking:** `Node.HeadComment` and `Node.LineComment` return trimmed text, as yaml.v3 does: each line starts at its `#`, without indentation or trailing blanks, and there is no final line break. They also read the comments of the root and the comment after the colon or dash of a block collection, which used to read as `""`. If you compared or wrote back the raw text, compare with the trimmed form, or use `SetHeadComment` and `SetLineComment` to change a comment. See [Comments](docs/editing.md#comments).
+- **Breaking:** read into a generic value, two keys that are different numbers but round to the same `float64` (`1e-400` and `2e-400`) are a `*TypeError` that says so. They used to be a duplicate-key `*SyntaxError`. Keys that are the same number written differently (`1.0` and `1.00`) are still a duplicate key.
+- Syntax error messages say what to fix, for example `expected ',' or ']' after a flow sequence entry (is a closing ']' missing?)`. A duplicate-key message names the key and where it first appeared. Messages are written for people and may change again; match errors by type, category and kind.
+
+### Fixed
+
+- A plain number passed to an `UnmarshalJSON` method keeps its digits as written. `12345678901234567890.5` used to arrive rounded to `12345678901234567000`. Inside a mapping or sequence passed to `UnmarshalJSON`, integers keep every digit and floats are still rounded to `float64`.
+- `compat/yamlv3`: a duplicate-key error names the key and the line of its first occurrence, as yaml.v3 words it (`mapping key "a" already defined at line 1`).
+
 ## [0.1.1] - 2026-10-16
 
 ### Fixed

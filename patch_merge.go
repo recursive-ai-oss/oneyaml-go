@@ -11,7 +11,7 @@ import (
 )
 
 // ApplyMergePatch applies an RFC 7396 JSON Merge Patch, given as JSON text, to
-// the document. A member of the patch that is null deletes the member of the same
+// the document. Unlike ApplyPatch it does not read YAML. A member of the patch that is null deletes the member of the same
 // name; an object member is merged into the mapping it meets; any other value
 // replaces what is there, and a sequence replaces the whole sequence. A patch
 // that is not an object replaces the whole document.

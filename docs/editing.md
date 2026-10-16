@@ -2,7 +2,7 @@
 
 How `Document` changes a YAML file and what it promises to leave alone. For the API reference see [pkg.go.dev](https://pkg.go.dev/oneyaml.dev/go#Document); for patches see [Patches](patches.md).
 
-`Parse` returns a `Document` that holds the whole input. Until you edit it, `Bytes` returns exactly the bytes you gave it, including comments, blank lines, quoting, indentation and line endings. An edit changes only the value you set, in its own style; comments and formatting elsewhere are kept byte for byte.
+`Parse` returns a `Document` that holds the whole input. Until you edit it, `Bytes` returns exactly the bytes you gave it, including comments, blank lines, quoting, indentation and line endings. An edit changes only the value you set, in its own style; comments and formatting elsewhere are kept byte for byte. The same holds for the edits that change a key ([Renaming a key](#renaming-a-key)) or a comment ([Comments](#comments)). `fmt.Print(doc)` prints the document as it stands, because `Document` and `Node` have a `String` method.
 
 You address a value with an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) pointer: `/replicas`, `/tags/0`, `/tags/-` for the end of a sequence. A pointer token matches a mapping key by its text, so `/1` finds the key `1`.
 
@@ -156,9 +156,129 @@ fmt.Print(string(doc.Bytes()))
 
 Removing the root is refused.
 
+## Renaming a key
+
+`Rename(ptr, newKey)` changes the key of the entry at `ptr` where it stands. The value, the entry's place in its mapping, its comments, and an anchor or tag on the key stay as they are. The new key keeps the old key's style (plain, single- or double-quoted) when that style can hold it. Otherwise it gets the nearest style that can: single quotes for a plain key that needs quoting, double quotes for one with a line break or an unprintable character. The new key is always a string, so renaming the key `1` to `"2"` writes `'2'`.
+
+<!-- example: ExampleDocument_Rename -->
+```go
+doc, err := oneyaml.Parse([]byte(`# chart values
+image: nginx
+replicas: 2 # scaled by the autoscaler
+port: 80
+`))
+if err != nil {
+	log.Fatal(err)
+}
+if err := doc.Rename("/replicas", "replicaCount"); err != nil {
+	log.Fatal(err)
+}
+fmt.Print(doc)
+
+err = doc.Rename("/port", "image")
+fmt.Println(errors.Is(err, oneyaml.ErrKeyExists))
+// Output:
+// # chart values
+// image: nginx
+// replicaCount: 2 # scaled by the autoscaler
+// port: 80
+// true
+```
+
+`Rename` refuses, and leaves the document unchanged, when:
+
+- the mapping already has the new key (`ErrKeyExists`);
+- the pointer is the root or an item of a sequence (`ErrNotAnEntry`);
+- the pointer leads through an alias (`ErrAliasWrite`). Renaming an entry whose value is an alias is allowed;
+- the key is empty, a collection, an alias or a block scalar, or is the merge key `<<`; the new key is longer than 1000 bytes or is not valid UTF-8; or a tag on the key does not fit the new key (`ErrUnsupportedEdit`).
+
+A rename parses the whole document again, so many renames in a very large document cost more than the same number of `Set` calls.
+
 ## Comments
 
-Comments outside the edited value are never touched. Comments inside a value you replace or remove go with it, because they described the old value. `Node.HeadComment` and `Node.LineComment` read comments as raw text; there is no API to edit them.
+Comments outside the edited value are never touched. Comments inside a value you replace or remove go with it, because they described the old value.
+
+`Node.HeadComment` returns the comment lines directly above an entry or item, and `Node.LineComment` the comment after a value on its line. Both return trimmed text, as yaml.v3 does: each line starts with its `#`, without indentation or trailing blanks, and the lines are joined by line feeds. The line comment of an entry whose value is a block collection or empty is the one after its colon or dash. `Node.Source` still gives the exact text of a value.
+
+`SetHeadComment(ptr, text)` replaces the comment lines above the entry or item at `ptr`, and an empty text removes them. A line without a leading `#` gets `# ` in front, a blank line inside the text becomes a bare `#`, and the lines are written at the entry's indentation. The root pointer `""` sets the comment above the first content line of the document, below a `---` marker line.
+
+<!-- example: ExampleDocument_SetHeadComment -->
+```go
+doc, err := oneyaml.Parse([]byte(`service:
+  # old note
+  port: 80
+  host: example.org
+`))
+if err != nil {
+	log.Fatal(err)
+}
+if err := doc.SetHeadComment("/service/port", "the public port"); err != nil {
+	log.Fatal(err)
+}
+if err := doc.SetHeadComment("/service/host", "first line\nsecond line"); err != nil {
+	log.Fatal(err)
+}
+fmt.Print(doc)
+
+if err := doc.SetHeadComment("/service/host", ""); err != nil {
+	log.Fatal(err)
+}
+fmt.Print(doc)
+// Output:
+// service:
+//   # the public port
+//   port: 80
+//   # first line
+//   # second line
+//   host: example.org
+// service:
+//   # the public port
+//   port: 80
+//   host: example.org
+```
+
+`SetLineComment(ptr, text)` replaces the comment after the value at `ptr`, and an empty text removes it. The comment goes after a scalar, after the closing bracket of a flow collection, after the header of a block scalar, or after the colon or dash of an entry whose value is a block collection or empty:
+
+<!-- example: ExampleDocument_SetLineComment -->
+```go
+doc, err := oneyaml.Parse([]byte(`replicas: 2
+script: |
+  make build
+env:
+  mode: prod
+`))
+if err != nil {
+	log.Fatal(err)
+}
+for ptr, text := range map[string]string{
+	"/replicas": "scaled by the autoscaler",
+	"/script":   "run by CI",
+	"/env":      "per environment",
+} {
+	if err := doc.SetLineComment(ptr, text); err != nil {
+		log.Fatal(err)
+	}
+}
+fmt.Print(doc)
+
+replicas, _ := doc.Root().Lookup("replicas")
+fmt.Println(replicas.LineComment())
+// Output:
+// replicas: 2 # scaled by the autoscaler
+// script: | # run by CI
+//   make build
+// env: # per environment
+//   mode: prod
+// # scaled by the autoscaler
+```
+
+Some places cannot hold a comment, and the setters refuse them with `ErrUnsupportedEdit`:
+
+- anything inside a flow collection;
+- a head comment for an entry that shares its line with another, such as the first key of a mapping written after `- `;
+- a line comment for the root block collection, or for a value that something else follows on its line.
+
+Text that is not valid UTF-8, that holds a control character or a line separator other than the line feed, or, for a line comment, that holds a line break, is refused with `ErrInvalidComment`. In every case the document reads back with the same values, and only the comment lines change.
 
 ## Anchors, aliases and tags
 
@@ -196,6 +316,8 @@ fmt.Print(string(doc.Bytes()))
 // b: 9
 // t: !custom bar
 ```
+
+A pointer addresses the keys written in the file. With `MergeKeys()`, a key that a `<<` merge brings into a mapping has no pointer of its own: in `use: {<<: *base, z: 3}`, `Get("/use/x")` fails with `ErrNotFound` even when `base` has `x`. `Get("/use/<<")` reads the merged source. `Set("/use/x", v)` adds an explicit `x` to `use`, which takes precedence over the merged one. Writing through the merge key, as in `/use/<</x`, is a write below an alias and is refused.
 
 Two edits are refused because they would change a value you did not address:
 
@@ -240,7 +362,7 @@ fmt.Print(string(doc.Bytes()))
 
 ## Errors
 
-An edit that cannot be made leaves the document unchanged and returns an `*EditError`. It names the operation and the pointer, and `errors.Is` matches its kind against `ErrNotFound`, `ErrAliasWrite`, `ErrAmbiguousKey`, `ErrAnchorInUse`, `ErrUnsupportedEdit` and the other sentinel errors.
+An edit that cannot be made leaves the document unchanged and returns an `*EditError`. It names the operation and the pointer, and `errors.Is` matches its kind against `ErrNotFound`, `ErrAliasWrite`, `ErrAmbiguousKey`, `ErrAnchorInUse`, `ErrUnsupportedEdit`, `ErrKeyExists`, `ErrNotAnEntry`, `ErrInvalidComment` and the other sentinel errors.
 
 <!-- example: ExampleEditError -->
 ```go
@@ -411,4 +533,4 @@ fmt.Print(string(doc.Bytes()))
 // replicas: 3
 ```
 
-More in [Migrating from yaml.v3](migrate-yaml-v3.md).
+Renaming a key and changing a comment work the same way: where yaml.v3 code changes a key node's `Value` or a node's `HeadComment` and encodes the tree again, call [`Rename`](#renaming-a-key) or [`SetHeadComment` and `SetLineComment`](#comments). More in [Migrating from yaml.v3](migrate-yaml-v3.md).

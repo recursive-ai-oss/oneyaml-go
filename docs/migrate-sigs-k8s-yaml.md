@@ -87,7 +87,7 @@ It differs where sigs.k8s.io/yaml loses or changes data: a merge key never overr
 | sigs.k8s.io/yaml | oneyaml |
 |---|---|
 | `yaml.Unmarshal(y, &obj)` | `oneyaml.Unmarshal(y, &obj)` |
-| `yaml.UnmarshalStrict(y, &obj)` | `oneyaml.Unmarshal(y, &obj, oneyaml.KnownFields())`; duplicate keys are always an error |
+| `yaml.UnmarshalStrict(y, &obj)` | `oneyaml.Unmarshal(y, &obj, oneyaml.KnownFields())`; `errors.Is(err, oneyaml.ErrUnknownField)` matches an unknown field, and duplicate keys are always an error |
 | `yaml.Marshal(obj)` | `oneyaml.Marshal(obj)` |
 | `yaml.YAMLToJSON(y)` | `oneyaml.Unmarshal` into `any`, then `json.Marshal` |
 | `yaml.JSONToYAML(j)` | `oneyaml.Unmarshal(j, &v)`, then `oneyaml.Marshal(v)` |
@@ -147,9 +147,10 @@ if errors.As(err, &te) {
 // Output: /debug 1 8
 ```
 
+- **Every type error is reported.** sigs.k8s.io/yaml binds through `encoding/json`, which skips a value that does not fit and reports only the earliest. The `oneyaml` package also skips it and reads the rest, but its `*TypeError` lists every mismatch, up to 100, in `More` and `All()`. A syntax error, a limit error or an error from your own hook stops the read at once.
 - **Merge keys are off** unless you pass `MergeKeys()`. See [Migrating from yaml.v3](migrate-yaml-v3.md) for the other 1.1 forms.
 - **Keys keep their type.** Into `any`, a mapping with a non-string key is a `map[any]any`; sigs.k8s.io/yaml turns every key into a string.
-- **JSON methods are used, after the YAML and text ones.** A type with `UnmarshalJSON` or `MarshalJSON` and no YAML or text method is read and written through them, with the value passed as JSON text, so types written for `encoding/json`, such as Kubernetes API types, need no change. A value that JSON cannot hold, such as a mapping with a key that is not a string, or `.nan`, is a `*TypeError` for such a type. The order differs from `encoding/json`: a YAML method (`UnmarshalYAML`, `MarshalYAML`) ranks first, and for a scalar `UnmarshalText` and `MarshalText` rank above the JSON methods, where sigs.k8s.io/yaml calls the JSON methods first. `Level` here has only `UnmarshalJSON` and `MarshalJSON`:
+- **JSON methods are used, after the YAML and text ones.** A type with `UnmarshalJSON` or `MarshalJSON` and no YAML or text method is read and written through them, with the value passed as JSON text, so types written for `encoding/json`, such as Kubernetes API types, need no change. A value that JSON cannot hold, such as a mapping with a key that is not a string, or `.nan`, is a `*TypeError` for such a type. A plain number arrives with its digits as written, so a quantity such as `12345678901234567890.5` is not rounded; inside a mapping or sequence passed to `UnmarshalJSON`, integers keep every digit and floats are rounded to `float64`. The order differs from `encoding/json`: a YAML method (`UnmarshalYAML`, `MarshalYAML`) ranks first, and for a scalar `UnmarshalText` and `MarshalText` rank above the JSON methods, where sigs.k8s.io/yaml calls the JSON methods first. `Level` here has only `UnmarshalJSON` and `MarshalJSON`:
 
 <!-- example: ExampleUnmarshal_jsonHook -->
 ```go

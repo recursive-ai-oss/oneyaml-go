@@ -14,7 +14,7 @@ Benchmark results will come in a later update, measured with the [oneyaml-kit](h
 <!-- end generated -->
 
 - **Spec-correct YAML 1.2 by default.** Plain scalars follow the Core schema, so `yes` is a string and `0755` is the integer 755. YAML 1.1 forms come only from the [compat packages](#compatibility-adapters-for-yamlv3-and-sigsk8sioyaml). Results against the yaml-test-suite are under [Correctness](#correctness).
-- **Minimal-diff edits.** `Document.Set` rewrites one value in its own style and falls back to the nearest style that can hold the new value. Reading it back always gives exactly the value you set. See [Editing](docs/editing.md).
+- **Minimal-diff edits.** `Document.Set` rewrites one value in its own style and falls back to the nearest style that can hold the new value. Reading it back always gives exactly the value you set. `Rename` changes a key in place, and `SetHeadComment` and `SetLineComment` write comments. See [Editing](docs/editing.md).
 - **Patches.** RFC 6902 JSON Patch, with `test` comparing values by the YAML data model (so `1` and `1.0` [differ](docs/patches.md#the-test-operation)), RFC 6901 pointers and RFC 7396 merge patch apply to a YAML file atomically and keep its layout. See [Patches](docs/patches.md).
 - **Bounded by default.** Nesting depth, alias expansion, the digits of a number and the work of a patch are bounded unless you pass `NoLimits()`. Input size, documents per stream and scalar length are bounded only with `Untrusted()`; select it, and size it with `Limits`, for input you do not control. Your own hooks run outside these bounds, and the compat packages have no `Untrusted()` mode. A panic caused by input is treated as a [security bug](SECURITY.md). No `unsafe` and no cgo. See [Limits](docs/limits.md).
 - **Compatibility adapters for yaml.v3 and sigs.k8s.io/yaml.** One import change keeps your call sites; the [known differences](#compatibility-adapters-for-yamlv3-and-sigsk8sioyaml) are listed. See [Migrating from yaml.v3](docs/migrate-yaml-v3.md) and [from sigs.k8s.io/yaml](docs/migrate-sigs-k8s-yaml.md).
@@ -91,7 +91,7 @@ Use it when you need to change a YAML file that people also edit by hand, apply 
 
 Think twice when:
 
-- You need to edit comments. A `Node` reads comments, but there is no API to change them yet.
+- You need comments in any place. The comment setters write a comment above an entry or after a value, and refuse places such as the inside of a flow collection ([Comments](docs/editing.md#comments)).
 - You need to stream events. The parser is not exposed; `Parse` and `NewDecoder` read a whole document.
 - You hold very large files in memory. A `Document` keeps the text and an index of it, which is an order of magnitude larger than the text for dense input. Set `MaxInputBytes`, or use `Untrusted()`, for input from outside.
 - Your data uses a collection as a mapping key and you read it into `any`. A Go map cannot hold it; a `Document` can.
@@ -139,7 +139,7 @@ Each package's documentation lists every difference ([yamlv3](https://pkg.go.dev
 | You want to | Read |
 |---|---|
 | Look up a function or type | [pkg.go.dev](https://pkg.go.dev/oneyaml.dev/go) |
-| Change a value and keep the file's style | [Editing](docs/editing.md) |
+| Change a value, rename a key or write a comment, and keep the file's style | [Editing](docs/editing.md) |
 | Apply a JSON Patch or merge patch | [Patches](docs/patches.md) |
 | Read input you do not control | [Limits](docs/limits.md), [Security](SECURITY.md) |
 | Know what is and is not conformant | [Conformance](docs/conformance.md) |

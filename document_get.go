@@ -12,6 +12,10 @@ import (
 // expanding them is charged to the alias limits. A *TypeError's Path is the
 // pointer ptr followed by the path inside the value.
 //
+// The pointer addresses keys as they are written. With MergeKeys, a key that a
+// "<<" merge brings in is not found (ErrNotFound); the pointer to the merge key
+// itself reads the merged source.
+//
 // If v is a *Node it receives the node itself, and the alias at the end of the
 // pointer, if there is one, is not followed.
 func (d *Document) Get(ptr string, v any) error {

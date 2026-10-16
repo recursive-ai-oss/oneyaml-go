@@ -76,9 +76,11 @@ func (s *session) release() {
 // text, so types written for encoding/json (Kubernetes quantities, say) need no
 // YAML code; a value JSON cannot hold, such as a mapping with a key that is not a
 // string or .nan, is a *TypeError. A plain number is passed with the digits as
-// written, so 12345678901234567890.5 reaches UnmarshalJSON unrounded. A type with an UnmarshalYAML method of any
-// other form, yaml.v3's UnmarshalYAML(*yaml.Node) error for one, is a *TypeError
-// and is not filled by its fields. A null value clears a pointer target without
+// written, so 12345678901234567890.5 reaches UnmarshalJSON unrounded; inside a
+// mapping or sequence, integers keep every digit and floats are rounded to
+// float64. A type with an UnmarshalYAML method of any other form, yaml.v3's
+// UnmarshalYAML(*yaml.Node) error for one, is a *TypeError and is not filled by
+// its fields. A null value clears a pointer target without
 // calling any hook; of the other targets, only an Unmarshaler is called for a
 // null value.
 // time.Time reads a timestamp, time.Duration its String form, *big.Int any
@@ -88,8 +90,11 @@ func (s *session) release() {
 // *TypeError. Read it with Document.Get(pointer, &node).
 //
 // A mapping key that occurs twice is an error, judged after resolution, so 1 and
-// 0x1 clash. Merge keys are ordinary keys unless the MergeKeys option is given.
-// Unknown struct keys are skipped unless KnownFields is given.
+// 0x1 clash. Read into a generic value, two keys that are different numbers but
+// round to the same float64 (1e-400 and 2e-400) are a *TypeError that says so,
+// since a map cannot hold them apart. Merge keys are ordinary keys unless the
+// MergeKeys option is given. Unknown struct keys are skipped unless KnownFields
+// is given.
 //
 // Aliases are decoded by replaying the anchored node; the alias limits bound
 // how much that may produce. If data holds more than one document only the
@@ -99,10 +104,11 @@ func (s *session) release() {
 // do not fit their targets and a *LimitError when a limit is exceeded. A value
 // that does not fit is skipped and its target keeps what it held, and the rest
 // of the document is still read; the *TypeError describes the first mismatch and
-// lists the others in its More field, up to 100. A syntax error, a limit error
-// or an error from a hook of your own stops the read at once. UTF-16 and UTF-32 input, with or without a byte order mark, is
-// converted to UTF-8 first; the offsets of errors in such input index the UTF-8
-// form.
+// lists the others in its More field. At most 100 mismatches are collected; the
+// read stops at the 100th. A syntax error, a limit error or an error from a hook
+// of your own stops the read at once. UTF-16 and UTF-32 input, with or without a
+// byte order mark, is converted to UTF-8 first; the offsets of errors in such
+// input index the UTF-8 form.
 func Unmarshal(data []byte, v any, opts ...Option) error {
 	cfg := newConfig(opts)
 	rv := reflect.ValueOf(v)

@@ -139,7 +139,9 @@ func applyOptions(opts []Option) config {
 func Indent(n int) Option { return func(c *config) { c.indent = n } }
 
 // KnownFields makes reading into a struct fail on a mapping key that matches no
-// field. It applies to reads and is ignored when writing.
+// field. The key is reported as a *TypeError that errors.Is matches with
+// ErrUnknownField, and the rest of the document is still read. It applies to
+// reads and is ignored when writing.
 func KnownFields() Option { return func(c *config) { c.knownFields = true } }
 
 // MergeKeys makes reading treat the "<<" key as a YAML merge key instead of an
