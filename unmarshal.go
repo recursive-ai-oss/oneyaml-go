@@ -90,13 +90,13 @@ func (s *session) release() {
 // *TypeError. Read it with Document.Get(pointer, &node).
 //
 // A mapping key that occurs twice is an error, judged after resolution, so 1 and
-// 0x1 clash, and so do 1e400 and 10e399, which are the same number. Two keys
-// that are different numbers but round to the same float64 (1e-400 and 2e-400,
-// or 1e400 and .inf) are a *TypeError that says so, since a map cannot hold
-// them apart; a key repeated after an entry that did not fit is still a
-// duplicate. Merge keys are ordinary keys unless the
-// MergeKeys option is given. Unknown struct keys are skipped unless KnownFields
-// is given.
+// 0x1 clash, and so do 1e400 and 10e399, or 1e5 and 1e00005, which are the same
+// number. Two keys that are different numbers but round to the same float64
+// (1e-400 and 2e-400, or 1e400 and .inf) are a *TypeError that says so, since a
+// map cannot hold them apart. A key is a duplicate even when one of its entries
+// did not fit its target, so a: 1 followed by a: x is a duplicate-key error.
+// Merge keys are ordinary keys unless the MergeKeys option is given. Unknown
+// struct keys are skipped unless KnownFields is given.
 //
 // Aliases are decoded by replaying the anchored node; the alias limits bound
 // how much that may produce. If data holds more than one document only the
@@ -108,11 +108,12 @@ func (s *session) release() {
 // of the document is still read; the *TypeError describes the first mismatch and
 // lists the others in its More field. A nil pointer target stays nil when its
 // value does not fit. At most 100 mismatches are collected; the read stops at
-// the 100th. A syntax error, a limit error or an error from a hook of your own
+// the 100th, and fewer are reported when their paths are very long (see
+// TypeError). A syntax error, a limit error or an error from a hook of your own
 // stops the read at once, and the error returned is that error alone: the
-// mismatches collected before it are dropped. UTF-16 and UTF-32 input, with or without a
-// byte order mark, is converted to UTF-8 first; the offsets of errors in such
-// input index the UTF-8 form.
+// mismatches collected before it are dropped. UTF-16 and UTF-32 input, with or
+// without a byte order mark, is converted to UTF-8 first; the offsets of errors
+// in such input index the UTF-8 form.
 func Unmarshal(data []byte, v any, opts ...Option) error {
 	cfg := newConfig(opts)
 	rv := reflect.ValueOf(v)

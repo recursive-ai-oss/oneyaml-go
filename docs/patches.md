@@ -139,13 +139,15 @@ fmt.Print(doc)
 //   tier: web
 ```
 
-The first significant byte decides how the text is read. Text that starts with `[` or `{` is JSON, and only JSON, so its errors are JSON errors. A flow-style YAML patch such as `[{op: add, path: /a, value: 1}]` is therefore refused, because its keys are not quoted. All other text is read as YAML.
+The first significant byte decides how the text is read. Text that starts with `[` or `{` is JSON, and only JSON, so its errors are JSON errors. A flow-style YAML patch such as `[{op: add, path: /a, value: 1}]` is therefore refused, because its keys are not quoted. All other text is read as YAML. The non-specific tag `!` is allowed and makes a scalar a string, so `value: ! 12` writes the string `"12"`.
 
 A YAML patch fails with `ErrInvalidPatch` when it:
 
 - holds more than one document, or is not a list;
-- uses an alias, a local tag such as `!foo`, a collection as a key, or the same key twice in a mapping, none of which JSON can express;
-- has a scalar that cannot be read, such as a double-quoted escape that is not a Unicode character.
+- uses an alias, a tag outside the core schema such as `!foo`, or a collection as a key, none of which JSON can express;
+- names a key twice in a mapping, judged by value as the decoder judges it, so `{1: a, 0x1: b}` and `{null: 1, ~: 2}` are refused;
+- has a scalar that cannot be read, such as a double-quoted escape that is not a Unicode character;
+- is not valid YAML. The error gives the line and column.
 
 A YAML patch nested deeper than the depth limit fails with a `*LimitError`. `ApplyMergePatch` reads JSON only.
 
