@@ -4,6 +4,16 @@ All notable changes are listed here, newest first. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-15
+
+### Fixed
+
+- A comment on a `---` marker that also carries a tag or anchor, as in `--- !!null # note`, now stays on the marker line when `Set` or `ApplyMergePatch` gives the empty document content. It used to move below the new content.
+- Replacing an empty sequence item that has a comment after its dash (`- # note`) with a mapping or sequence now keeps the comment on the dash line and writes the new collection on the lines below, lined up with the text of the sibling items. The comment used to move to the end of the collection's last line.
+- Removing an entry that follows a block scalar no longer returns an `*EditError` when lines of only spaces, indented deeper than the scalar's text, sit below the removed entry. Those lines are removed with the entry, because once it is gone they would become part of the scalar's text.
+- `compat/yamlv3`: the comments of a document that has a `---` marker and no content, such as `--- # note`, become the document node's `FootComment`, as yaml.v3 reads them. They used to be lost.
+- `compat/yamlv3`: a comment after a dash with no value (`- # note`) becomes the `HeadComment` of the next item, as yaml.v3 reads it, so writing the `Node` back keeps it, on its own line above that item. It used to be lost.
+
 ## [0.1.0] - 2026-10-15
 
 The first release. It has no benchmark results; those come in a later update.
@@ -24,5 +34,6 @@ The first release. It has no benchmark results; those come in a later update.
 - Conformance: the tests that run the [oneyaml-kit](https://github.com/recursive-ai-oss/oneyaml-kit) cases run in CI against a pinned kit revision. See [Conformance](docs/conformance.md).
 - Documentation: [Editing](docs/editing.md), [Patches](docs/patches.md), [Limits](docs/limits.md), [Conformance](docs/conformance.md), [Comparison](docs/comparison.md) and the two migration guides.
 
-[Unreleased]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/recursive-ai-oss/oneyaml-go/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/recursive-ai-oss/oneyaml-go/releases/tag/v0.1.0
