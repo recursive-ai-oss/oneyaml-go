@@ -173,10 +173,13 @@ func (s *docStream) checkEditSize(repls []edit.Repl) error {
 	if s.batch {
 		return nil
 	}
-	grow := 0
+	// int64: on a 32-bit build the sum of many replacements could wrap an int.
+	var g64 int64
 	for _, r := range repls {
-		grow += len(r.Text) - (r.End - r.Start)
+		g64 += int64(len(r.Text) - (r.End - r.Start))
 	}
+	g64 = max(min(g64, math.MaxInt32), -math.MaxInt32)
+	grow := int(g64)
 	if err := fixedSizeErr(len(s.src), grow); err != nil {
 		return err
 	}
@@ -186,16 +189,17 @@ func (s *docStream) checkEditSize(repls []edit.Repl) error {
 	}
 	de, ok := s.docEncoding()
 	if !ok {
-		if grow > 0 && len(s.src)+grow > max {
+		if grow > 0 && addSat(len(s.src), grow) > max {
 			return limitErr(LimitMaxInputBytes, "edit output size", max, "")
 		}
 		return nil
 	}
-	if de.factor()*(len(s.src)+grow)+de.markLen() <= max {
+	if addSat(mulSat(de.factor(), len(s.src)+grow), de.markLen()) <= max {
 		return nil
 	}
-	// Near the limit: count what is written, exactly.
-	cur := de.writtenLen(s.src) + de.markLen()
+	// Near the limit: count what is written, exactly. The count of the text now is
+	// kept from edit to edit, so this costs the size of the edit, not of the text.
+	cur := s.writtenSrc(de) + de.markLen()
 	n := cur
 	for _, r := range repls {
 		n += de.writtenLen(r.Text) - de.writtenLen(s.src[r.Start:r.End])
@@ -209,7 +213,7 @@ func (s *docStream) checkEditSize(repls []edit.Repl) error {
 // fixedSizeErr refuses a change of grow bytes to a text of cur bytes that would
 // pass maxStreamBytes. An edit that does not grow the text is never refused.
 func fixedSizeErr(cur, grow int) error {
-	if grow > 0 && cur+grow > maxStreamBytes {
+	if grow > 0 && cur > maxStreamBytes-grow {
 		return fixedLimitErr(LimitMaxInputBytes, "input size", maxStreamBytes)
 	}
 	return nil
@@ -222,12 +226,12 @@ func fixedSizeErr(cur, grow int) error {
 func (s *docStream) overInput(extra, max int) bool {
 	de, ok := s.docEncoding()
 	if !ok {
-		return len(s.src)+extra > max
+		return addSat(len(s.src), extra) > max
 	}
-	if de.factor()*(len(s.src)+extra)+de.markLen() <= max {
+	if addSat(mulSat(de.factor(), addSat(len(s.src), extra)), de.markLen()) <= max {
 		return false
 	}
-	return de.writtenLen(s.src)+de.markLen()+de.minLen(extra) > max
+	return addSat(addSat(s.writtenSrc(de), de.markLen()), de.minLen(extra)) > max
 }
 
 // outputErr refuses out, the whole text an edit would leave, if it is longer than
@@ -248,12 +252,44 @@ func (s *docStream) outputErr(out []byte) error {
 		}
 		return nil
 	}
-	if de.factor()*len(out)+de.markLen() <= max {
+	if addSat(mulSat(de.factor(), len(out)), de.markLen()) <= max {
 		return nil
 	}
-	n, cur := de.writtenLen(out)+de.markLen(), de.writtenLen(s.src)+de.markLen()
+	n, cur := de.writtenLen(out)+de.markLen(), s.writtenSrc(de)+de.markLen()
 	if n > max && n > cur {
 		return limitErr(LimitMaxInputBytes, "edit output size", max, "")
 	}
 	return nil
+}
+
+// writtenSrc is the size of the text now, written in the Document's encoding and
+// without a mark. It is counted once and then kept up to date by the changes that
+// replace part of the text, so a size check after each step of a patch costs the
+// step and not the document. Any change that is not tracked forgets the count and
+// the next check counts again.
+func (s *docStream) writtenSrc(de docEncoding) int {
+	e := s.es()
+	if !e.wlOK {
+		e.wl, e.wlOK = de.writtenLen(s.src), true
+		e.wlScans++
+	}
+	return e.wl
+}
+
+// forgetWritten drops the kept count of writtenSrc.
+func (s *docStream) forgetWritten() {
+	if s.ed != nil {
+		s.ed.wlOK = false
+	}
+}
+
+// replacedWritten updates the kept count for old, a range of the text, being
+// replaced by text.
+func (s *docStream) replacedWritten(old, text []byte) {
+	if s.ed == nil || !s.ed.wlOK {
+		return
+	}
+	if de, ok := s.docEncoding(); ok {
+		s.ed.wl += de.writtenLen(text) - de.writtenLen(old)
+	}
 }

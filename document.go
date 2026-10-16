@@ -121,6 +121,13 @@ type editState struct {
 	// see lose.
 	lost bool
 
+	// wl is the size of the text written in the Document's encoding while wlOK; see
+	// writtenSrc. wlScans counts the times it was counted from the whole text, for
+	// tests.
+	wl      int
+	wlOK    bool
+	wlScans int
+
 	// cache holds the indexes of the anchors and of the keys of large mappings.
 	cache edit.Cache
 
@@ -1003,6 +1010,7 @@ func (s *docStream) restore(sn docSnapshot) error {
 		s.tree, s.shared = nt, false
 	}
 	s.src, s.dirty, s.owned = sn.src, sn.dirty, false
+	s.forgetWritten()
 	// The text, and with it the tree, is what it was when the snapshot was taken
 	// (a parse of the same text gives the same nodes), so Nodes read then are
 	// valid again.
@@ -1021,6 +1029,7 @@ func (s *docStream) rollback(sn docSnapshot) error {
 	err := s.restore(sn)
 	if err != nil {
 		s.src, s.dirty, s.owned = sn.src, sn.dirty, false
+		s.forgetWritten()
 		s.lose()
 		return err
 	}
@@ -1056,6 +1065,7 @@ func (s *docStream) setSrc(out []byte) {
 	}
 	s.owned = true
 	s.src = out
+	s.forgetWritten()
 }
 
 // takeSpare returns a tree to parse into: the slices of an earlier tree if one is
@@ -1112,6 +1122,7 @@ func (s *docStream) firstDocument(v *edit.Value, fail func(error) error) error {
 			continue
 		}
 		s.src, s.tree, s.dirty, s.shared = out, nt, true, false
+		s.forgetWritten()
 		s.gen++
 		return nil
 	}
@@ -1212,6 +1223,7 @@ func (s *docStream) patchScalar(n int32, repls []edit.Repl, v *edit.Value) bool 
 	var out []byte
 	if newLen := len(s.src) + int(delta); s.owned && cap(s.src) >= newLen {
 		// Edit the stream's own buffer in place.
+		s.replacedWritten(s.src[r.Start:r.End], text)
 		out = s.src[:newLen]
 		if delta > 0 {
 			copy(out[r.End+int(delta):], s.src[r.End:])

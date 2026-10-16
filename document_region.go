@@ -642,6 +642,7 @@ func isLineBreak(b byte) bool { return b == '\n' || b == '\r' }
 // spliceText replaces src[from:to] with text. A buffer the stream owns is edited
 // in place; otherwise the new text goes in a new buffer with a little room.
 func (s *docStream) spliceText(from, to int, text []byte) {
+	s.replacedWritten(s.src[from:to], text)
 	old := len(s.src)
 	n := old - (to - from) + len(text)
 	if s.owned && cap(s.src) >= n {

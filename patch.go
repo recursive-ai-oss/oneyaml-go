@@ -674,7 +674,7 @@ func (b *patchBudget) chargeCopy(s *docStream, st *patchStep, n int) error {
 			return s.fail(st, limitErr(LimitMaxAliasBytes, "patch copy bytes", b.maxCopy, st.path))
 		}
 	}
-	if len(s.src)+n > maxStreamBytes {
+	if n > maxStreamBytes-len(s.src) {
 		return s.fail(st, fixedLimitErr(LimitMaxInputBytes, "input size", maxStreamBytes))
 	}
 	if b.maxDoc > 0 && s.overInput(n, b.maxDoc) {

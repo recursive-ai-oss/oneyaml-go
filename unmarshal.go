@@ -283,12 +283,6 @@ func quoteKey(k string) string {
 // values reports as many of them as fit and always reports the first.
 const pathBudgetMin = 1 << 20
 
-// eagerPath is the longest path joined at once for the error of a decode made
-// inside a hook. A longer one is kept as a list of parts and joined when the
-// outermost read ends, so that hooks nested inside each other do not copy it at
-// every level.
-const eagerPath = 4 << 10
-
 // pathLink is a part of a path that has not been joined yet. A chain starts at
 // the outermost part; n is the length of this part and all after it.
 type pathLink struct {
@@ -383,6 +377,10 @@ func typeErrorList(out []*TypeError, e *bind.Error, path string, src []byte, lin
 	inner, ok := e.Err.(*TypeError)
 	if !ok || !e.Own {
 		te := typeError(e, path, src, lineBase)
+		if le, isLimit := e.Err.(*LimitError); isLimit && le.rel {
+			abs := absoluteLimit(le, path+e.Rel, bud.inner)
+			te.Err, te.Msg = abs, unprefix(abs.Error())
+		}
 		if len(out) > 0 && !bud.take(len(te.Path)) {
 			return out
 		}
@@ -406,7 +404,10 @@ func typeErrorList(out []*TypeError, e *bind.Error, path string, src []byte, lin
 		}
 		c := *x
 		c.More, c.sc, c.from = nil, nil, 0
-		if x.pre == nil && n <= eagerPath {
+		if le, isLimit := c.Err.(*LimitError); isLimit && le.rel {
+			c.Err = absoluteLimit(le, prefix, bud.inner)
+		}
+		if x.pre == nil && !bud.inner {
 			c.Path = prefix + x.Path
 		} else {
 			c.pre = &pathLink{seg: prefix, next: x.pre, n: n - len(x.Path)}
@@ -417,6 +418,16 @@ func typeErrorList(out []*TypeError, e *bind.Error, path string, src []byte, lin
 		out = append(out, &c)
 	}
 	return out
+}
+
+// absoluteLimit returns a copy of le, an error of a decode made in a hook, with
+// prefix, the path of the decoded node, in front of its path. Inside another
+// hook the result is still relative to that hook's node, so it stays marked.
+func absoluteLimit(le *LimitError, prefix string, inner bool) *LimitError {
+	c := *le
+	c.Path = prefix + le.Path
+	c.rel, c.sc, c.from = inner, nil, 0
+	return &c
 }
 
 func typeError(e *bind.Error, path string, src []byte, lineBase int) *TypeError {

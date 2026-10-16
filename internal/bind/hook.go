@@ -157,7 +157,7 @@ func (b *Binder) hook(v reflect.Value, ev *parse.Event) (bool, error) {
 		return true, err
 	}
 	ref.Cfg, ref.Cache = b.nestedConfig(), &b.hookCache
-	ref.Scope = &Scope{spend: ref.Cfg.Spend, Cfg: ref.Cfg}
+	ref.Scope = &Scope{b: b}
 	b.hooks++
 	herr := call(v.Addr().Interface(), ref)
 	ref.Scope.Close()
@@ -359,7 +359,7 @@ func (b *Binder) hookV3(v reflect.Value, ev *parse.Event) (bool, error) {
 		return true, err
 	}
 	ref.Cfg, ref.Root, ref.DocStart, ref.Cache = b.nestedConfig(), root, b.docStart.Start, &b.hookCache
-	ref.Scope = &Scope{spend: ref.Cfg.Spend, Cfg: ref.Cfg}
+	ref.Scope = &Scope{b: b}
 	b.hooks++
 	herr := v3Call(v.Addr().Interface(), ref)
 	ref.Scope.Close()

@@ -89,11 +89,12 @@ func (s *AliasSpend) PathBudget(initial int) *int {
 // made from one of its Nodes spends that budget. Once the call has returned the
 // scope is closed, so a Node the type kept and decodes later starts a budget of
 // its own instead of carrying the old one (or keeping it alive).
+//
+// The scope names the binder of the call and reads the budget and the
+// configuration from it, so that a call costs one pointer and no copy of the
+// configuration. They are read only while the call runs.
 type Scope struct {
-	spend *AliasSpend
-	// Cfg is the configuration of the read the call was made in, with the options
-	// the caller gave it: a decode made from a Node during the call starts from it.
-	Cfg    Config
+	b      *Binder
 	closed atomic.Bool
 }
 
@@ -102,7 +103,20 @@ func (s *Scope) Spend() *AliasSpend {
 	if s == nil || s.closed.Load() {
 		return nil
 	}
-	return s.spend
+	if s.b.cfg.Spend != nil {
+		return s.b.cfg.Spend
+	}
+	return s.b.spendp
+}
+
+// Config returns the configuration of the read the call was made in, with the
+// options the caller gave it: a decode made from a Node during the call starts
+// from it. It is nil once the call has returned.
+func (s *Scope) Config() *Config {
+	if s == nil || s.closed.Load() {
+		return nil
+	}
+	return &s.b.cfg
 }
 
 // Close ends the scope.

@@ -46,7 +46,12 @@ func hookErrorProbe(err error, ref bind.NodeRef) (msg, rel string, own bool) {
 			return e.Msg, rel, true
 		}
 		return unprefix(e.Error()), "", false
-	case *SyntaxError, *LimitError:
+	case *LimitError:
+		if e.rel && e.sc != nil && e.sc == ref.Scope && e.from != ref.Node {
+			rel, _ = nodeFromRef(ref).pathBelow(e.from)
+		}
+		return unprefix(err.Error()), rel, false
+	case *SyntaxError:
 		return unprefix(err.Error()), "", false
 	}
 	return err.Error(), "", false
@@ -96,6 +101,47 @@ func (c *config) inherit(o config) {
 	c.limits.MaxScalarBytes, c.limits.MaxNumberDigits = o.limits.MaxScalarBytes, o.limits.MaxNumberDigits
 }
 
+// tighter returns the stricter of two bounds, where zero is no bound.
+func tighter(a, b int) int {
+	if a <= 0 {
+		return b
+	}
+	if b <= 0 {
+		return a
+	}
+	return min(a, b)
+}
+
+// aliasBound is the bound that limit, raised to ratio times own unless exact,
+// puts on alias expansion; zero is none.
+func aliasBound(limit, ratio int, exact bool, own int) int {
+	if limit <= 0 {
+		return 0
+	}
+	if ratio > 0 && !exact {
+		return max(limit, mulSat(ratio, own))
+	}
+	return limit
+}
+
+// tighten holds c, the configuration of a read made inside a hook with options of
+// its own, to the limits of outer, the read the hook was called from: each bound
+// is the stricter of the two, so a hook cannot lift what its caller was given.
+// The alias bounds are compared as they stand for this read (raised to a multiple
+// of the document's size) and then held fixed. ownNodes is the node count of the
+// document the outer read started from and ownBytes the size of the text c reads.
+func (c *config) tighten(outer *bind.Config, ownNodes, ownBytes int) {
+	n := tighter(aliasBound(outer.MaxAliasNodes, outer.AliasRatio, outer.ExactNodes, ownNodes),
+		aliasBound(c.limits.MaxAliasNodes, c.aliasRatio, c.exactNodes, ownNodes))
+	b := tighter(aliasBound(outer.MaxAliasBytes, outer.AliasRatio, outer.ExactBytes, outer.InputBytes),
+		aliasBound(c.limits.MaxAliasBytes, c.aliasRatio, c.exactBytes, ownBytes))
+	c.limits.MaxAliasNodes, c.limits.MaxAliasBytes = n, b
+	c.aliasRatio = 0
+	c.limits.MaxDepth = tighter(outer.MaxDepth, c.limits.MaxDepth)
+	c.limits.MaxScalarBytes = tighter(outer.MaxScalarBytes, c.limits.MaxScalarBytes)
+	c.limits.MaxNumberDigits = tighter(outer.MaxNumberDigits, c.limits.MaxNumberDigits)
+}
+
 func configFromBind(c bind.Config) config {
 	return config{
 		knownFields: c.KnownFields, mergeKeys: c.MergeKeys, aliasRatio: c.AliasRatio, exactNodes: c.ExactNodes, exactBytes: c.ExactBytes,
@@ -135,6 +181,13 @@ func (d *Document) Decode(v any, opts ...Option) error {
 // outside it. A Node made stale by an edit reports an *EditError matching
 // ErrStaleNode; the zero Node reports one matching ErrNotFound. Options apply to
 // this read only, as for Document.Decode.
+//
+// Inside an UnmarshalYAML hook, the read that called the hook is already held to
+// its limits, and options given here may only tighten them: for each bound the
+// stricter of the caller's and the option's applies, so NoLimits, or a larger
+// bound, does not lift what the caller was given. KnownFields and MergeKeys apply
+// as given. A Node used outside a hook, or kept past the call, is a read of its
+// own and takes its options in both directions, as Document.Decode does.
 func (n Node) Decode(v any, opts ...Option) error {
 	if n.nd() == nil {
 		return n.errInvalid("decode")
@@ -174,12 +227,18 @@ func (s *docStream) decode(doc int, root int32, v any, sc *bind.Scope, opts []Op
 	in.w.reset(&s.tree, root)
 	sess := sessionPool.Get().(*session)
 	cfg := s.cfg
-	if sc.Spend() != nil {
+	if outerCfg := sc.Config(); outerCfg != nil && sc.Spend() != nil {
+		sp := sc.Spend()
 		// Inside a hook: the read around it may have been given options of its
-		// own, and a decode made from the hook's Node keeps them.
-		cfg.inherit(configFromBind(sc.Cfg))
-	}
-	if len(opts) > 0 {
+		// own, and a decode made from the hook's Node keeps them. Options the hook
+		// gives may tighten the limits of that read, never loosen them.
+		outer := configFromBind(*outerCfg)
+		cfg.inherit(outer)
+		if len(opts) > 0 {
+			cfg = s.readConfig(cfg, opts)
+			cfg.tighten(outerCfg, sp.Own, len(s.src))
+		}
+	} else if len(opts) > 0 {
 		cfg = s.readConfig(cfg, opts)
 	}
 	cfg.spend = sc.Spend()
@@ -200,6 +259,11 @@ func (s *docStream) decode(doc int, root int32, v any, sc *bind.Scope, opts []Op
 	}
 	if err != nil {
 		err = convertError(err, s.src, &cfg, 0, 0)
+		if le, ok := err.(*LimitError); ok && sc.Spend() != nil {
+			// Its path is relative to this node until the read around the hook
+			// puts the hook's path in front.
+			le.rel, le.sc, le.from = true, sc, root
+		}
 		if te, ok := err.(*TypeError); ok && sc.Spend() != nil {
 			// Inside a hook: mark the errors with the call and the node, so that the
 			// read around the hook can tell them from the errors of another text

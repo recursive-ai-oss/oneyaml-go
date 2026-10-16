@@ -16,7 +16,9 @@ import "oneyaml.dev/go/internal/bind"
 // both directions: Limits, Untrusted or NoLimits given to a read replace the
 // bounds the Document was parsed with for that read, so NoLimits on a read of a
 // Document parsed with Untrusted removes its alias bounds. Pass such options
-// only for input you trust. The ones that
+// only for input you trust. Inside an UnmarshalYAML hook it is the other way:
+// options given to Node.Decode may only tighten the limits of the read that
+// called the hook, never loosen them (see Node.Decode). The ones that
 // matter to a read are KnownFields, MergeKeys, Limits, Untrusted and NoLimits.
 // Indent and YAML11Strings concern writing and are ignored by a read, and the
 // size limits that concern parsing (MaxInputBytes, MaxDocuments) have no effect
