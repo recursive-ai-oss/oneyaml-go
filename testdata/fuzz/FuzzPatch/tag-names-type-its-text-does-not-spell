@@ -1,0 +1,4 @@
+go test fuzz v1
+[]byte("!!int A")
+int64(69)
+[]byte("")

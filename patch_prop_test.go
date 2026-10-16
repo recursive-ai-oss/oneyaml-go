@@ -220,6 +220,16 @@ func jsonSafe(v edit.Value) bool {
 			return false
 		}
 	}
+	// A tag can name a type its text does not spell (`!!int A`): such a scalar
+	// has no JSON number or boolean to write.
+	if v.Kind == edit.Int || v.Kind == edit.Float || v.Kind == edit.Bool {
+		var x any
+		var b bytes.Buffer
+		writeJSON(&b, v)
+		if json.Unmarshal(b.Bytes(), &x) != nil {
+			return false
+		}
+	}
 	// Invalid UTF-8 has no JSON text: the encoder writes U+FFFD, which is a
 	// different string and can collide with another name.
 	if v.Kind == edit.String && !utf8.ValidString(v.Text) {
