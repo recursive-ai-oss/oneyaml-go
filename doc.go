@@ -1,5 +1,7 @@
-// Package oneyaml reads, writes and edits YAML. Spec-correct YAML 1.2 by
-// default, in pure Go with no dependencies outside the standard library.
+// Package oneyaml reads, writes and edits YAML. It follows YAML 1.2 with the
+// Core schema by default and is pure Go, with no dependencies outside the
+// standard library. The [conformance report] has the yaml-test-suite results and the
+// known deviations.
 //
 // The package has two halves. The first is a typed load and dump in the style of
 // [encoding/json]: [Unmarshal], [Marshal], [NewDecoder] and [NewEncoder]. The
@@ -14,9 +16,9 @@
 //
 //	go get oneyaml.dev/go@latest
 //
-// The import path is oneyaml.dev/go and the package name is oneyaml. This is a
-// v0 release: the API may change before 1.0. The supported Go versions and what
-// each release promises are in the [Stability] section of the README.
+// The import path is oneyaml.dev/go and the package name is oneyaml. What a
+// release promises, and the supported Go versions, are in the [Stability]
+// section of the README.
 //
 // # Load
 //
@@ -72,13 +74,14 @@
 //
 // # Patch
 //
-// [Document.ApplyPatch] applies JSON Patch operations (RFC 6902) with YAML
-// equality for test, written as JSON or as a YAML block list: test compares
-// values by the YAML data model, so 1 and 1.0 differ (see the
-// Document.ApplyPatch documentation). [Document.Apply] takes the same
-// operations as Go values ([PatchAdd], [PatchReplace] and the rest), and
-// [Document.ApplyMergePatch] applies an RFC 7396 merge patch. A patch is
-// atomic: if any operation fails, the document is unchanged. The edits it makes
+// [Document.ApplyPatch] applies RFC 6902 JSON Patch operations, addressed by
+// RFC 6901 pointers, to YAML with YAML's data model. The patch is written as
+// JSON or as a YAML block list. test compares YAML values, so the integer 1 and
+// the float 1.0 differ where RFC 6902 would call them equal, and a write through
+// an alias is refused (see the Document.ApplyPatch documentation).
+// [Document.Apply] takes the same operations as Go values ([PatchAdd],
+// [PatchReplace] and the rest), and [Document.ApplyMergePatch] applies an
+// RFC 7396 merge patch. A patch is atomic: if any operation fails, the document is unchanged. The edits it makes
 // follow the same rules as [Document.Set].
 //
 // # Marshal
@@ -191,4 +194,5 @@
 // Go YAML libraries.
 //
 // [Stability]: https://github.com/recursive-ai-oss/oneyaml-go#stability
+// [conformance report]: https://github.com/recursive-ai-oss/oneyaml-go/blob/main/docs/conformance.md
 package oneyaml

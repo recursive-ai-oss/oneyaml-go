@@ -3,10 +3,12 @@ package oneyaml_test
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 
 	oneyaml "oneyaml.dev/go"
+	yaml "oneyaml.dev/go/compat/k8syaml"
 )
 
 // Case A: the new value ends in a line break, so the block literal keeps its
@@ -719,4 +721,91 @@ func ExampleDocument_Get_options() {
 	// Output:
 	// true
 	// 2
+}
+
+// Four rules follow from applying RFC 6902 to YAML. Two show here: test compares
+// YAML values, and patch text that starts like JSON is read as JSON.
+func ExampleDocument_ApplyPatch_yamlRules() {
+	doc, err := oneyaml.Parse([]byte("replicas: 1\n"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	// 1 is an integer and 1.0 a float, so this test fails.
+	err = doc.ApplyPatch([]byte(`[{"op": "test", "path": "/replicas", "value": 1.0}]`))
+	fmt.Println(errors.Is(err, oneyaml.ErrTestFailed))
+
+	// Text that starts with [ is read as JSON, and these keys are not quoted.
+	err = doc.ApplyPatch([]byte(`[{op: test, path: /replicas, value: 1}]`))
+	fmt.Println(errors.Is(err, oneyaml.ErrInvalidPatch))
+
+	// The same operation as a YAML block list.
+	err = doc.ApplyPatch([]byte("- {op: test, path: /replicas, value: 1}\n"))
+	fmt.Println(err)
+	// Output:
+	// true
+	// true
+	// <nil>
+}
+
+// A Node is a view of the document as it was when it was read. After an edit,
+// look it up again; Find says why a lookup failed, where Lookup only says false.
+func ExampleNode_Find_afterEdit() {
+	doc, err := oneyaml.Parse([]byte("spec:\n  replicas: 2 # set by CI\n"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	spec, err := doc.Root().Find("spec")
+	if err != nil {
+		log.Fatal(err)
+	}
+	replicas, err := spec.Find("replicas")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(replicas.Value())
+
+	if err := doc.Set("/spec/replicas", 3); err != nil {
+		log.Fatal(err)
+	}
+
+	// spec was read before the edit, so it is stale.
+	_, err = spec.Find("replicas")
+	fmt.Println(errors.Is(err, oneyaml.ErrStaleNode))
+
+	// Look it up again from the root.
+	if spec, err = doc.Root().Find("spec"); err != nil {
+		log.Fatal(err)
+	}
+	if replicas, err = spec.Find("replicas"); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(replicas.Value(), replicas.LineComment())
+	// Output:
+	// 2
+	// true
+	// 3 # set by CI
+}
+
+// The compat packages take no options, so bound the input before you hand it
+// over. Read one byte more than the bound, so that input of exactly the bound
+// passes and longer input is refused instead of being cut short.
+func Example_compatBoundedInput() {
+	const maxBytes = 1 << 20
+	r := strings.NewReader("replicas: 3\n") // a file or a request body
+
+	data, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if len(data) > maxBytes {
+		log.Fatal("input is larger than 1 MiB")
+	}
+	var cfg struct {
+		Replicas int `json:"replicas"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(cfg.Replicas)
+	// Output: 3
 }

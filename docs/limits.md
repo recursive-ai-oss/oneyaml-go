@@ -24,6 +24,26 @@ fmt.Printf("%+v\n", oneyaml.UntrustedLimits())
 // {MaxDepth:1000 MaxAliasNodes:100000 MaxAliasBytes:8388608 MaxInputBytes:67108864 MaxScalarBytes:16777216 MaxDocuments:10000 MaxNumberDigits:4300 MaxPatchWorkRatio:32}
 ```
 
+## Which options apply where
+
+One `Option` type serves every entry point, and an option that does not concern a call is ignored, never an error. The patch methods (`ApplyPatch`, `Apply`, `ApplyMergePatch`) take no options: they use the options the `Document` was parsed with. `Untrusted()` and `NoLimits()` set every `LimitSet` field, so they reach each entry point as those fields do.
+
+| Option | `Unmarshal`, `Decoder` | `Parse` | `Get`, `Decode`, `Node.Decode` | Patches (options of `Parse`) | `Marshal`, `Encoder` |
+|---|---|---|---|---|---|
+| `KnownFields` | applies | kept for later reads | applies to this read | no effect | ignored |
+| `MergeKeys` | applies | kept for reads, pointers and edits | applies to this read | `test` and the `from` of `copy` read merged keys | ignored |
+| `YAML11Strings` | ignored | kept for edits | ignored | quotes new strings | ignored (`Marshal` always quotes them) |
+| `Indent` | ignored | ignored (edits follow the file) | ignored | ignored | applies |
+| `MaxDepth` | applies | applies, and kept | applies to this read | patch text and values | applies |
+| `MaxAliasNodes`, `MaxAliasBytes` | applies | kept: parsing expands no alias | applies to this read | copies and written-out aliases | ignored |
+| `MaxInputBytes` | applies; a `Decoder` counts the whole stream | applies, and kept for edits | no effect: the text is already parsed | patch text and the patched document | ignored |
+| `MaxScalarBytes` | applies | applies, and kept | applies to this read | not checked on the values a patch writes | ignored |
+| `MaxDocuments` | `Decoder` only: `Unmarshal` reads one document | applies | no effect: the text is already parsed | no effect | ignored |
+| `MaxNumberDigits` | applies | kept: parsing converts no number | applies to this read | not checked on patch values; a later read of them is | numbers from a `MarshalJSON` method |
+| `MaxPatchWorkRatio` | ignored | kept for patches | ignored | applies | ignored |
+
+"Kept" means the `Document` remembers the option and uses it where the next columns say. A bound given to a read replaces the document's own for that read, looser as well as tighter; inside an `UnmarshalYAML` hook it can only tighten ([Reading values back](editing.md#reading-values-back)). `Set`, `Rename` and the comment setters follow the options of `Parse` as patches do, for `MaxDepth`, `MaxInputBytes`, `MergeKeys` and `YAML11Strings`.
+
 ## Each limit
 
 | `LimitSet` field | What it bounds | If it is exceeded |
@@ -194,6 +214,32 @@ default:
 // line 3, column 11: cannot unmarshal !!str `two` into int
 // unknown field: true
 ```
+
+The compat packages take no options at all, so neither `KnownFields()` nor `Untrusted()` reaches them; `compat/k8syaml` has `UnmarshalStrict` and `compat/yamlv3` has `Decoder.KnownFields` for unknown keys. Bound the input yourself before you hand it over, with a length check or with `io.LimitReader`. Read one byte more than the bound and refuse input that reaches it, because a reader cut off at the bound can leave a shorter document that is still valid YAML:
+
+<!-- example: Example_compatBoundedInput -->
+```go
+const maxBytes = 1 << 20
+r := strings.NewReader("replicas: 3\n") // a file or a request body
+
+data, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
+if err != nil {
+	log.Fatal(err)
+}
+if len(data) > maxBytes {
+	log.Fatal("input is larger than 1 MiB")
+}
+var cfg struct {
+	Replicas int `json:"replicas"`
+}
+if err := yaml.Unmarshal(data, &cfg); err != nil {
+	log.Fatal(err)
+}
+fmt.Println(cfg.Replicas)
+// Output: 3
+```
+
+The example imports `yaml "oneyaml.dev/go/compat/k8syaml"`, `io` and `strings`. A length check bounds only the size: depth and alias expansion stay at the default limits, which the compat packages cannot tighten.
 
 `Unmarshal` reads the first document and ignores the rest, and an empty input leaves the value unchanged with a nil error. To require exactly one document, read with `NewDecoder` and check that a second `Decode` returns `io.EOF`. To refuse an empty file, check the value or the input before you use it.
 

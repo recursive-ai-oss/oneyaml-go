@@ -4,7 +4,7 @@ How oneyaml-go compares with the Go YAML libraries it is most often weighed agai
 
 **Bias.** This page is written by the authors of oneyaml-go. We chose the criteria, and they are the ones oneyaml-go was built for: YAML 1.2 behaviour, editing a file without disturbing it, and bounded handling of untrusted input. A project with other priorities would draw a different table. We tried to state each library's strengths as its own users would. Where a statement rests on a source, the source is named; library status was surveyed on 2026-09-30 (yaml/v4 on 2026-10-15) and changes.
 
-This page compares features and behaviour. Time and memory are measured on [Performance](performance.md), from a full benchmark run of v0.3.0 against these libraries. That page has the evidence, and this one does not repeat it.
+This page compares features and behaviour. Time and memory are measured on [Performance](performance.md), from a full benchmark run against these libraries; its method line names the release measured and the date. That page has the evidence, and this one does not repeat it.
 
 ## What each library is
 
@@ -29,10 +29,10 @@ Compare libraries on the job they share.
 ## Where oneyaml-go is the better fit
 
 - You change YAML files that people also edit by hand, and the diff must contain only your change. As an illustration, in the project's own checks on the two block-scalar cases of [Editing](editing.md), yaml.v3 kept the block style for both but lost the blank line before the next comment, and goccy/go-yaml kept the first case byte for byte but wrote a plain scalar for the second unless the caller supplied the style. Two cases show the approach; they do not measure it.
-- You need YAML 1.2 as the specification says, with the result checked against the yaml-test-suite ([Conformance](conformance.md)).
+- You need YAML 1.2 with the Core schema, checked against the yaml-test-suite, with the known deviations listed ([Conformance](conformance.md)).
 - You read input from outside, and want bounds on nesting, alias expansion and number size on by default, and a tighter preset in one option that also bounds input size. See [Limits](limits.md) and what they do not cover.
 - You want RFC 6902 or 7396 patches on a YAML file.
-- Time and memory matter for loading, writing or editing. In the v0.3.0 run it was ahead of the strongest competitor on every workload where one gave a correct answer; [Performance](performance.md) shows each workload, and explains why the unchanged-emit row is [not a rendering speed](performance.md#unchanged-emit).
+- Time and memory matter for loading, writing or editing. [Performance](performance.md) compares each workload with the strongest competitor that gave a correct answer, shows the verdict for each, and explains why the unchanged-emit row is [not a rendering speed](performance.md#unchanged-emit).
 
 ## Where the others are the better fit
 

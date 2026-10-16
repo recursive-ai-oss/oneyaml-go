@@ -1,6 +1,6 @@
 # Patches
 
-How to apply JSON Patch operations ([RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)) with YAML equality for `test`, and [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396) JSON Merge Patch, to a YAML file. One rule differs from the RFC on purpose: `test` compares values by the YAML data model, not as JSON values, so `1` and `1.0` are different ([the test operation](#the-test-operation)). The edits follow the rules in [Editing](editing.md): only the values a patch touches change, in their own style, and comments elsewhere are kept.
+How to apply a patch to a YAML file. The operations are those of JSON Patch ([RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)), the paths are JSON Pointers ([RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)), and merge patches follow JSON Merge Patch ([RFC 7396](https://www.rfc-editor.org/rfc/rfc7396)), but they are applied to YAML with YAML's data model, not to JSON. The edits follow the rules in [Editing](editing.md): only the values a patch touches change, in their own style, and comments elsewhere are kept.
 
 There are three entry points on `Document`:
 
@@ -9,6 +9,38 @@ There are three entry points on `Document`:
 | `ApplyPatch(rfc6902 []byte)` | an RFC 6902 patch as JSON text, or as a YAML sequence of operations ([details](#patches-written-in-yaml)) |
 | `Apply(ops ...PatchOp)` | the same operations as Go values: `PatchAdd`, `PatchRemove`, `PatchReplace`, `PatchMove`, `PatchCopy`, `PatchTest` |
 | `ApplyMergePatch(rfc7396 []byte)` | an RFC 7396 merge patch as JSON text, or as YAML ([details](#patches-written-in-yaml)) |
+
+## YAML rules at a glance
+
+Four rules follow from applying the RFCs to YAML:
+
+- **`test` compares YAML values.** The integer `1` and the float `1.0` are different values, so a `test` of one against the other fails, where RFC 6902 would call them equal as JSON numbers ([the test operation](#the-test-operation)).
+- **A pointer token matches a key by its scalar text.** `/1` finds the integer key `1` as well as the string key `"1"` ([Pointers](#pointers)).
+- **A write through an alias is refused** with `ErrAliasWrite`, because it would change every place that shares the anchored node. Patch the anchored node instead ([Aliases](#aliases)).
+- **Text that starts like JSON is JSON.** When the first significant byte of the patch is `[` or `{`, the patch is read as JSON and only JSON, so a flow-style YAML patch such as `[{op: test, path: /a, value: 1}]` is refused because its keys are not quoted. Write it as JSON, or as a YAML block list ([Patches written in YAML](#patches-written-in-yaml)).
+
+<!-- example: ExampleDocument_ApplyPatch_yamlRules -->
+```go
+doc, err := oneyaml.Parse([]byte("replicas: 1\n"))
+if err != nil {
+	log.Fatal(err)
+}
+// 1 is an integer and 1.0 a float, so this test fails.
+err = doc.ApplyPatch([]byte(`[{"op": "test", "path": "/replicas", "value": 1.0}]`))
+fmt.Println(errors.Is(err, oneyaml.ErrTestFailed))
+
+// Text that starts with [ is read as JSON, and these keys are not quoted.
+err = doc.ApplyPatch([]byte(`[{op: test, path: /replicas, value: 1}]`))
+fmt.Println(errors.Is(err, oneyaml.ErrInvalidPatch))
+
+// The same operation as a YAML block list.
+err = doc.ApplyPatch([]byte("- {op: test, path: /replicas, value: 1}\n"))
+fmt.Println(err)
+// Output:
+// true
+// true
+// <nil>
+```
 
 ## A patch is atomic
 
@@ -141,7 +173,7 @@ fmt.Print(doc)
 //   tier: web
 ```
 
-The first significant byte decides how the text is read. Text that starts with `[` or `{` is JSON, and only JSON, so its errors are JSON errors. A flow-style YAML patch such as `[{op: add, path: /a, value: 1}]` is therefore refused, because its keys are not quoted. All other text is read as YAML. The non-specific tag `!` is allowed and makes a scalar a string, so `value: ! 12` writes the string `"12"`.
+The first significant byte, after white space and a byte order mark, decides how the text is read. Text that starts with `[` or `{` is JSON, and only JSON, so its errors are JSON errors. A flow-style YAML patch such as `[{op: add, path: /a, value: 1}]` is therefore refused, because its keys are not quoted; write it as JSON. All other text is read as YAML, so a block list whose items are flow mappings (`- {op: add, path: /a, value: 1}`) is read. The non-specific tag `!` is allowed and makes a scalar a string, so `value: ! 12` writes the string `"12"`.
 
 A YAML patch fails with `ErrInvalidPatch` when it:
 

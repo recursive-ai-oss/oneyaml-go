@@ -1,6 +1,17 @@
 # Migrating from yaml.v3
 
-Two ways to move from `gopkg.in/yaml.v3` (or `go.yaml.in/yaml/v3`): keep your code and swap the import to the `compat/yamlv3` adapter, or move to the `oneyaml` API. The first keeps your call sites, and the [checklist](#check-after-the-swap) below covers where its behaviour can differ. The second reads YAML 1.2 as the specification says and gives you minimal-diff edits.
+Two ways to move from `gopkg.in/yaml.v3` (or `go.yaml.in/yaml/v3`): keep your code and swap the import to the `compat/yamlv3` adapter, or move to the `oneyaml` API. The first keeps your call sites, and the [checklist](#check-after-the-swap) below covers where its behaviour can differ. The second reads YAML 1.2 with the Core schema and gives you minimal-diff edits.
+
+## Migration audit
+
+Search your code and your data for these before you move. Each item links to its details.
+
+- **Hooks and fields that use gopkg.in/yaml.v3's own `Node`.** An `UnmarshalYAML(*yaml.Node) error` that takes the original package's node, often in a module you do not own, and a field of the original `yaml.Node` type are refused with an error naming the type, by `compat/yamlv3` and by the `oneyaml` package alike. Read such a type through a wrapper type of your own whose hook the adapter can call, or keep yaml.v3 for it ([hooks you do not own](#check-after-the-swap)).
+- **YAML 1.1 numbers and booleans.** The `oneyaml` package reads `yes`, `no`, `on` and `off` as strings and `0755` as the integer 755; yaml.v3 and `compat/yamlv3` read the 1.1 forms ([behaviour that differs](#behaviour-that-differs)).
+- **Merge keys.** `<<` is an ordinary key in the `oneyaml` package unless you pass `MergeKeys()`; yaml.v3 and `compat/yamlv3` always merge ([behaviour that differs](#behaviour-that-differs)).
+- **`json` tags.** The `oneyaml` package names a field without a `yaml` tag by its `json` tag, where yaml.v3 uses the lower-cased Go name, so a field that has only a `json` tag reads a different key ([the API table](#move-to-the-oneyaml-api)).
+- **Hook precedence.** The `oneyaml` package tries a type's methods in a fixed order and ends with `UnmarshalJSON` and `MarshalJSON`, which yaml.v3 ignores, so a type that yaml.v3 filled field by field may now read or write itself through its JSON methods ([Hooks](#hooks)). `compat/yamlv3` ignores them, as yaml.v3 does.
+- **Programs that read the file with YAML 1.1 rules.** If yaml.v3, yaml.v2 or sigs.k8s.io/yaml code also reads the files you edit, parse with `YAML11Strings()` so that a new `yes` or `0755` is quoted ([Editing](editing.md#when-the-style-cannot-hold-the-value)).
 
 ## Swap the import
 

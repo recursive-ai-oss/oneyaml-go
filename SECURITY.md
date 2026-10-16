@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes go into the latest minor release. Older minor releases are not patched; upgrade to the latest.
+Security fixes go into the latest 1.x minor release. Older minor releases are not patched; upgrade to the latest. What each release promises is under [Stability](README.md#stability).
 
 ## Reporting a vulnerability
 

@@ -7,9 +7,9 @@
 [![Go version](https://img.shields.io/badge/go-1.24%2B-00ADD8)](#stability)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
-Spec-correct YAML 1.2 by default. Edits change only the value you set, in its own style; comments and formatting elsewhere are kept byte for byte. Nesting, alias expansion, number size and patch work are bounded by default.
+YAML 1.2 with the Core schema by default; the conformance results and the known deviations are under [Correctness](#correctness). Edits change only the value you set, in its own style; comments and formatting elsewhere are kept byte for byte. Nesting, alias expansion, number size and patch work are bounded by default.
 
-Time per task for oneyaml-go v0.3.0 and for the strongest Go competitor whose answer passed the benchmark's check, on the real-world files of each task. The ratio is ours ÷ theirs, so lower is better for oneyaml-go. These figures are measured, not bounds, and the library has changed since that release. Memory is the bytes allocated per operation that Go's `testing.B` reports, not the peak size of the heap. The unchanged-emit memory figure is shown as 1 B; it measured 0 B.
+Time per task for oneyaml-go and for the strongest Go competitor whose answer passed the benchmark's check, on the real-world files of each task. The ratio is ours ÷ theirs, so lower is better for oneyaml-go. The method line under the table names the release that was measured and the date of the run; the figures are measured, not bounds, and code after that release may differ. Memory is the bytes allocated per operation that Go's `testing.B` reports, not the peak size of the heap. A memory figure of 0 B is shown here as 1 B; [Performance](docs/performance.md) has the measured value.
 
 <!-- generated:bench-hero -->
 <picture>
@@ -34,10 +34,10 @@ Method: full run of 2026-10-16T13:51:47Z, **full run**. Kit revision 38acec388e6
 
 Every workload, the memory figures, what the unchanged-emit row does and does not measure, and how to reproduce the run: [Performance](docs/performance.md).
 
-- **Measured against the other Go YAML libraries.** In a full benchmark run of v0.3.0, oneyaml-go took less time and allocated less memory than the strongest competitor on every workload where a competitor's answer passed the benchmark's check, in every task: typed and generic loads, dumps, document parsing, writing an unedited document, edits and patches. Rows where no competitor answered correctly have no comparison and are [not counted as wins](docs/performance.md#rows-with-no-rival). See [Performance](docs/performance.md).
-- **Spec-correct YAML 1.2 by default.** Plain scalars follow the Core schema, so plain `yes` is a string, plain `0755` is the integer 755, and quoted `"0755"` is a string. YAML 1.1 forms come only from the [compat packages](#compatibility-adapters-for-yamlv3-and-sigsk8sioyaml). Results against the yaml-test-suite are under [Correctness](#correctness).
+- **Measured against the other Go YAML libraries.** Typed and generic loads, dumps, document parsing, writing an unedited document, edits and patches are each timed against the strongest competitor whose answer passed the benchmark's check. The table above gives the verdict for each task, and [Performance](docs/performance.md) has every workload with its time and memory. Rows where no competitor answered correctly have no comparison and are [not counted as wins](docs/performance.md#rows-with-no-rival).
+- **YAML 1.2 Core schema by default.** Plain scalars follow the Core schema, so plain `yes` is a string, plain `0755` is the integer 755, and quoted `"0755"` is a string. YAML 1.1 forms come only from the [compat packages](#compatibility-adapters-for-yamlv3-and-sigsk8sioyaml). Results against the yaml-test-suite, and the known deviations, are under [Correctness](#correctness).
 - **Minimal-diff edits.** `Document.Set` rewrites one value in its own style and falls back to the nearest style that can hold the new value. Reading it back with this package always gives exactly the value you set. Plainness follows the Core schema, so a new plain `yes` is a string here but a boolean to a YAML 1.1 reader; pass [`YAML11Strings()`](docs/editing.md#when-the-style-cannot-hold-the-value) when such programs also read the file. `Rename` changes a key in place, and `SetHeadComment` and `SetLineComment` write comments. The benchmark checks every edit byte for byte [before it times it](docs/performance.md#the-correctness-check-before-timing). See [Editing](docs/editing.md).
-- **Patches.** JSON Patch operations (RFC 6902) with YAML equality for `test`, so `1` and `1.0` [differ](docs/patches.md#the-test-operation), plus RFC 6901 pointers and RFC 7396 merge patch. They apply to a YAML file atomically and keep its layout. See [Patches](docs/patches.md).
+- **Patches.** RFC 6902 JSON Patch operations, RFC 6901 pointers and RFC 7396 merge patches, applied to a YAML file with YAML's data model: `test` compares YAML values, so the integer `1` and the float `1.0` [differ](docs/patches.md#yaml-rules-at-a-glance) where RFC 6902 would call them equal, and a write through an alias is refused. A patch applies atomically and keeps the file's layout. See [Patches](docs/patches.md).
 - **Bounded by default.** Nesting depth, alias expansion, the digits of a number and the work of a patch are bounded unless you pass `NoLimits()`. Input size, documents per stream and scalar length are bounded only with `Untrusted()`; select it, and size it with `Limits`, for input you do not control. Your own hooks run outside these bounds, and the compat packages have no `Untrusted()` mode. A panic caused by input is treated as a [security bug](SECURITY.md). No `unsafe` and no cgo. See [Limits](docs/limits.md).
 - **Compatibility adapters for yaml.v3 and sigs.k8s.io/yaml.** For the common API listed in each migration guide, one import change keeps your call sites; the [known differences](#compatibility-adapters-for-yamlv3-and-sigsk8sioyaml) are listed. See [Migrating from yaml.v3](docs/migrate-yaml-v3.md) and [from sigs.k8s.io/yaml](docs/migrate-sigs-k8s-yaml.md).
 - **No dependencies** outside the standard library.
@@ -109,7 +109,7 @@ The package documentation on [pkg.go.dev](https://pkg.go.dev/oneyaml.dev/go) has
 
 ## When to use it, and when not to
 
-Use it when you need to change a YAML file that people also edit by hand, apply a JSON Patch to one, read YAML 1.2 as the specification says, or read input you do not control with `Untrusted()`.
+Use it when you need to change a YAML file that people also edit by hand, apply a JSON Patch to one, read YAML 1.2 with the Core schema, or read input you do not control with `Untrusted()`.
 
 Think twice when:
 
@@ -136,7 +136,7 @@ Method: kit 0.1.0 (corpus digest `df5860652381`, kit revision `6039fe1c50c3`), e
 | **yaml-test-suite · events · all 402** | 402 | 402/402 | 308/402 | 308/402 | 0 | 94 | 0 |
 <!-- end kit-report:conformance-summary -->
 
-The library is fuzzed with Go's native fuzzing, and its patch and compat packages are checked against their targets by differential tests.
+The library is fuzzed with Go's native fuzzing. The fuzz targets cover [`Unmarshal`](unmarshal_fuzz_test.go), [`Document` reads](document_decode_fuzz_test.go), [edits](document_prop_test.go) and [patches](patch_prop_test.go), and the compat packages [`compat/yamlv3`](compat/yamlv3/fuzz_test.go) and [`compat/k8syaml`](compat/k8syaml/fuzz_test.go). The patch and compat packages are also checked against their targets by differential tests.
 
 ## Compatibility adapters for yaml.v3 and sigs.k8s.io/yaml
 
@@ -156,7 +156,7 @@ They read YAML 1.1 forms the way their targets do, but they are not identical. K
 - **sigs.k8s.io/yaml:** `JSONObjectToYAMLObject` and the subpackages of sigs.k8s.io/yaml are not provided.
 - **Numbers:** in `compat/yamlv3`, a plain `3.5` read into an integer field is a type error instead of being truncated. In `compat/k8syaml`, a float read into a string field keeps its full precision, where sigs.k8s.io/yaml rounds it to 32 bits.
 - **Valid and invalid input:** both read valid YAML that their targets refuse, `compat/yamlv3` refuses invalid YAML that yaml.v3 accepts, and both return errors where their targets panic.
-- **Limits:** both always run with the default limits and have no `Untrusted()` mode.
+- **Limits:** both always run with the default limits and take no options, so there is no `Untrusted()` mode. Bound the input size yourself ([how](docs/limits.md#loading-a-configuration-file-strictly)).
 
 Each package's documentation lists every difference ([yamlv3](https://pkg.go.dev/oneyaml.dev/go/compat/yamlv3), [k8syaml](https://pkg.go.dev/oneyaml.dev/go/compat/k8syaml)), and the migration guides have a checklist. New code should use the `oneyaml` package.
 
@@ -180,16 +180,25 @@ Each package's documentation lists every difference ([yamlv3](https://pkg.go.dev
 
 ## Stability
 
-This is v0, the first series of releases. The API may still change before 1.0, but only in a minor release (0.1 to 0.2, say), never in a patch release. Every change that can break your code is listed in the [changelog](CHANGELOG.md) and marked **Breaking**, with what to write instead, so read it before you move to a new minor version.
+From 1.0.0 the module follows Go's [rules for a stable module](https://go.dev/doc/modules/version-numbers), in the spirit of the [Go 1 compatibility promise](https://go.dev/doc/go1compat). Within major version 1:
 
-The minimum Go version is 1.24 (`go 1.24` in `go.mod`). CI tests Go 1.24, 1.25, 1.26 and 1.27. Raising the minimum takes a minor release and is announced in the changelog.
+- **Your code keeps compiling and keeps its meaning.** Code that uses the exported API of `oneyaml.dev/go`, `oneyaml.dev/go/compat/yamlv3` or `oneyaml.dev/go/compat/k8syaml` builds with every later 1.x release and behaves as documented. That covers the error types, the sentinel errors you match with `errors.Is` and `errors.As`, and the `Limit` and `Category` constants.
+- **Written bytes stay the same.** The bytes that `Marshal` and an `Encoder` write with default options do not change, and neither do the bytes that an edit leaves untouched.
 
-From 1.0, the module follows Go's [rules for a stable module](https://go.dev/doc/modules/version-numbers). Within a major version:
+A minor release may still make these changes:
 
-- No change breaks code that uses the exported API of `oneyaml.dev/go`, `compat/yamlv3` or `compat/k8syaml`. That covers the error types and the sentinel errors you match with `errors.As` and `errors.Is`; the text of error messages is written for people and may change in any release.
-- The bytes that `Marshal` writes with default options do not change, and neither do the bytes that an edit leaves untouched, except to fix output that is incorrect. Such a fix is listed in the changelog.
+- **Additions:** new names, methods, struct fields and `Limit` constants. A new field breaks a struct literal without field names, so write `LimitSet`, the error types and the other structs of these packages with field names, as in `oneyaml.LimitSet{MaxDepth: 50}`, and give a `switch` on `Limit` a default case.
+- **Bug fixes**, including refusing input that the YAML 1.2 specification calls invalid, and writing text that reads back as the value written where the output did not. Each such fix is listed in the [changelog](CHANGELOG.md).
+- **Error messages:** their text is written for people and may change. Match errors by type, sentinel and constant.
+- **The compat packages:** where `compat/yamlv3` or `compat/k8syaml` places comments or lays out output differently from yaml.v3 or sigs.k8s.io/yaml, a minor release may bring it closer to its target.
 
-A change that would break these promises means a new major version with its own module path, `oneyaml.dev/go/v2`.
+Patch releases only fix bugs. Security fixes go into the latest minor release ([security policy](SECURITY.md)).
+
+Any other change that breaks code needs a new major version with its own module path, `oneyaml.dev/go/v2`, so code that imports `oneyaml.dev/go` keeps building against 1.x.
+
+Releases before 1.0 could break code in a minor release. The [changelog](CHANGELOG.md) marks each such change, with what to write instead.
+
+**Go versions.** The minimum is Go 1.24 (`go 1.24` in `go.mod`), and CI tests Go 1.24, 1.25, 1.26 and 1.27. Raising the minimum takes a minor release and a note in the changelog. Go itself supports only its two newest major releases ([release policy](https://go.dev/doc/devel/release#policy)), so the minimum reaches back past the releases that still get fixes from Go.
 
 This is the only place this policy is stated; other pages link here.
 

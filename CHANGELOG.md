@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes are listed here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). Breaking changes are listed first, under Breaking, each with what to change in your code (releases up to 0.3.0 mark them **Breaking** instead). A new major version has a new module path (`oneyaml.dev/go/v2`), and the entry says so. What a v0 release promises, and the supported Go versions, are under [Stability](README.md#stability).
+All notable changes are listed here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). Breaking changes are listed first, under Breaking, each with what to change in your code (releases up to 0.3.0 mark them **Breaking** instead). A new major version has a new module path (`oneyaml.dev/go/v2`), and the entry says so. What a release promises, and the supported Go versions, are under [Stability](README.md#stability).
 
 ## [Unreleased]
 

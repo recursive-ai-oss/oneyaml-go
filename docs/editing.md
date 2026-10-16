@@ -4,6 +4,11 @@ How `Document` changes a YAML file and what it promises to leave alone. For the 
 
 `Parse` returns a `Document` that holds the whole input. Until you edit it, `Bytes` returns exactly the bytes you gave it, including comments, blank lines, quoting, indentation and line endings. An edit changes only the value you set, in its own style; comments and formatting elsewhere are kept byte for byte. The same holds for the edits that change a key ([Renaming a key](#renaming-a-key)) or a comment ([Comments](#comments)). `fmt.Print(doc)` prints the document as it stands, because `Document` and `Node` have a `String` method.
 
+Two rules about what you share with a `Document`:
+
+- **One goroutine at a time.** A `Document` is not safe for concurrent use, reads included: a read can finish internal work that an earlier edit left for later. Guard it with a mutex, or give each goroutine its own `Document`.
+- **`Bytes` is read-only.** `Parse` copies its input, so you may reuse the slice you passed it. The slice `Bytes` returns belongs to the document and must not be modified. Edits build new text rather than changing it, so the slice stays valid after later edits; to change the bytes, copy them first with `bytes.Clone`.
+
 You address a value with an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) pointer: `/replicas`, `/tags/0`, `/tags/-` for the end of a sequence. A pointer token matches a mapping key by its text, so `/1` finds the key `1`.
 
 In a pointer, `~` is written `~0` and `/` is written `~1`, so the key `app.kubernetes.io/name` is the token `app.kubernetes.io~1name`. When a key comes from data, build the pointer with `oneyaml.Pointer` rather than with `"/" + key`, so that each token is escaped. `Node.Pointer` returns the same form for a node you have read.
@@ -26,6 +31,50 @@ fmt.Print(doc)
 //   labels:
 //     app.kubernetes.io/name: api
 ```
+
+## Nodes after an edit
+
+`Document.Root`, `Node.Find` and `Document.Get` give you a `Node`, a read-only view of the document as it was when you read it. An edit makes every `Node` read before it stale, so read, edit, then look the node up again. Use `Find`, which returns an error saying why there is no value, where a failure matters; `Lookup` reports every failure as `false`.
+
+<!-- example: ExampleNode_Find_afterEdit -->
+```go
+doc, err := oneyaml.Parse([]byte("spec:\n  replicas: 2 # set by CI\n"))
+if err != nil {
+	log.Fatal(err)
+}
+spec, err := doc.Root().Find("spec")
+if err != nil {
+	log.Fatal(err)
+}
+replicas, err := spec.Find("replicas")
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(replicas.Value())
+
+if err := doc.Set("/spec/replicas", 3); err != nil {
+	log.Fatal(err)
+}
+
+// spec was read before the edit, so it is stale.
+_, err = spec.Find("replicas")
+fmt.Println(errors.Is(err, oneyaml.ErrStaleNode))
+
+// Look it up again from the root.
+if spec, err = doc.Root().Find("spec"); err != nil {
+	log.Fatal(err)
+}
+if replicas, err = spec.Find("replicas"); err != nil {
+	log.Fatal(err)
+}
+fmt.Println(replicas.Value(), replicas.LineComment())
+// Output:
+// 2
+// true
+// 3 # set by CI
+```
+
+[Reading while you edit](#reading-while-you-edit) has the rest: how to tell a stale node from an empty value, loops that edit as they go, and collecting pointers first.
 
 ## Two block-scalar cases
 
