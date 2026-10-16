@@ -29,14 +29,44 @@ func (x *wrapInner) UnmarshalYAML(n Node) error {
 	return nil
 }
 
+// wrapOuterChild makes wrapOuter decode only the child "in" of its Node, so the
+// path from its Node to where the inner limit was hit has a step the inner
+// hook cannot know. wrapOuterJoin wraps with errors.Join instead of %w.
+var wrapOuterChild, wrapOuterJoin bool
+
 type wrapOuter struct{ In struct{ Y wrapInner } }
 
 func (x *wrapOuter) UnmarshalYAML(n Node) error {
 	var tmp struct{ In struct{ Y wrapInner } }
-	err := n.Decode(&tmp)
+	var err error
+	if wrapOuterChild {
+		var in Node
+		if in, err = n.Find("in"); err == nil {
+			err = in.Decode(&tmp.In)
+		}
+	} else {
+		err = n.Decode(&tmp)
+	}
 	x.In = tmp.In
 	if err != nil {
+		if wrapOuterJoin {
+			return errors.Join(errors.New("outer"), err)
+		}
 		return fmt.Errorf("outer: %w", err)
+	}
+	return nil
+}
+
+// wrapDeep adds a third level: it decodes its child "in" into a wrapOuter.
+type wrapDeep struct{ In wrapOuter }
+
+func (x *wrapDeep) UnmarshalYAML(n Node) error {
+	in, err := n.Find("in")
+	if err == nil {
+		err = in.Decode(&x.In)
+	}
+	if err != nil {
+		return fmt.Errorf("deep: %w", err)
 	}
 	return nil
 }
@@ -45,6 +75,7 @@ type wrapTop struct {
 	A int
 	B []struct{ Y wrapInner }
 	C []wrapOuter
+	D []wrapDeep
 }
 
 func TestWrappedHookLimitErrorPathIsAbsolute(t *testing.T) {
@@ -52,10 +83,13 @@ func TestWrappedHookLimitErrorPathIsAbsolute(t *testing.T) {
 		{"a: 1\nb:\n  - y: [1, 2]\n  - y: [1, 12.5678]\n", "/b/1/y/1"},
 		{"a: 1\nc:\n  - in: {y: [1, 2]}\n  - in: {y: [1, 12.5678]}\n", "/c/1/in/y/1"},
 		{"z: &z [1, 12.5678]\nb:\n  - y: *z\n", "/b/0/y/1"},
+		{"a: 1\nd:\n  - in: {in: {y: [1, 2]}}\n  - in: {in: {y: [1, 12.5678]}}\n", "/d/1/in/in/y/1"},
 	}
+	defer func() { wrapHookSub, wrapOuterChild, wrapOuterJoin = false, false, false }()
 	for _, c := range cases {
-		for _, sub := range []bool{false, true} {
-			wrapHookSub = sub
+		for mode := 0; mode < 8; mode++ {
+			sub, child, join := mode&1 != 0, mode&2 != 0, mode&4 != 0
+			wrapHookSub, wrapOuterChild, wrapOuterJoin = sub, child, join
 			src := []byte(c.src)
 			errs := map[string]error{}
 			var v1, v2, v3, v4 wrapTop
@@ -70,16 +104,15 @@ func TestWrappedHookLimitErrorPathIsAbsolute(t *testing.T) {
 			for name, err := range errs {
 				var le *LimitError
 				if !errors.As(err, &le) {
-					t.Errorf("%q sub=%v %s: got %v, want a limit error", c.src[:12], sub, name, err)
+					t.Errorf("%q sub=%v child=%v join=%v %s: got %v, want a limit error", c.src[:12], sub, child, join, name, err)
 					continue
 				}
 				if le.Path != c.path {
-					t.Errorf("%q sub=%v %s: Path %q, want %q", c.src[:12], sub, name, le.Path, c.path)
+					t.Errorf("%q sub=%v child=%v join=%v %s: Path %q, want %q", c.src[:12], sub, child, join, name, le.Path, c.path)
 				}
 			}
 		}
 	}
-	wrapHookSub = false
 }
 
 // A hook may only tighten the limits of the read that called it. These run the

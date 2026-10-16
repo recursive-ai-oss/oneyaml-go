@@ -180,7 +180,7 @@ func SetHookErrorProbe(f func(err error, ref NodeRef) (msg, rel string, own bool
 
 // hookError is the error for a hook that returned herr.
 func hookError(ev *parse.Event, t reflect.Type, herr error, ref NodeRef) *Error {
-	e := &Error{Kind: KindType, Offset: ev.Start, GoType: t, Err: herr}
+	e := &Error{Kind: KindType, Offset: ev.Start, GoType: t, Err: herr, Scope: ref.Scope}
 	if hookErrProbe != nil {
 		e.Msg, e.Rel, e.Own = hookErrProbe(herr, ref)
 	} else {

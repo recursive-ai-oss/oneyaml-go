@@ -378,8 +378,9 @@ func typeErrorList(out []*TypeError, e *bind.Error, path string, src []byte, lin
 	inner, ok := e.Err.(*TypeError)
 	if !ok || !e.Own {
 		te := typeError(e, path, src, lineBase)
-		if absoluteLimit(e.Err, path+e.Rel, bud.inner) {
-			te.Msg = unprefix(e.Err.Error())
+		if w := absoluteLimit(e.Err, path+e.Rel, bud.inner, e.Scope); w != nil {
+			te.Err = w
+			te.Msg = unprefix(w.Error())
 		}
 		if len(out) > 0 && !bud.take(len(te.Path)) {
 			return out
@@ -404,8 +405,9 @@ func typeErrorList(out []*TypeError, e *bind.Error, path string, src []byte, lin
 		}
 		c := *x
 		c.More, c.sc, c.from = nil, nil, 0
-		if absoluteLimit(c.Err, prefix, bud.inner) {
-			c.Msg = unprefix(c.Err.Error())
+		if w := absoluteLimit(c.Err, prefix, bud.inner, e.Scope); w != nil {
+			c.Err = w
+			c.Msg = unprefix(w.Error())
 		}
 		if x.pre == nil && !bud.inner {
 			c.Path = prefix + x.Path
@@ -421,20 +423,57 @@ func typeErrorList(out []*TypeError, e *bind.Error, path string, src []byte, lin
 }
 
 // absoluteLimit finds the *LimitError that err is or wraps, if it is the error
-// of a decode made in a hook and still relative to that decode's node, and puts
-// prefix, the path of the decoded node, in front of its path. It changes the
-// error in place because a hook that wraps the error (fmt.Errorf with %w) hands
-// back a chain that cannot be copied. Inside another hook the path is still
-// relative to that hook's node, so the error stays marked when inner is set.
-// It reports whether it rewrote a path.
-func absoluteLimit(err error, prefix string, inner bool) bool {
+// of a decode made in the hook call sc and still relative to that decode's node,
+// and returns err wrapped so that a search for the *LimitError finds a copy with
+// prefix, the path of the decoded node, in front of its path. It returns nil
+// when there is nothing to rewrite. The error the hook returned is never
+// changed: a hook may hand the same error to reads on several goroutines, and a
+// wrapped chain cannot be copied anyway. Inside another hook the path is still
+// relative to that hook's node, so the copy stays marked when inner is set.
+func absoluteLimit(err error, prefix string, inner bool, sc *bind.Scope) error {
 	var le *LimitError
-	if !errors.As(err, &le) || !le.rel {
-		return false
+	if sc == nil || !errors.As(err, &le) || !le.rel || le.sc != sc {
+		return nil
 	}
-	le.Path = prefix + le.Path
-	le.rel, le.sc, le.from = inner, nil, 0
-	return true
+	c := *le
+	c.Path = prefix + le.Path
+	c.rel, c.sc, c.from = inner, nil, 0
+	return &limitPath{err: err, le: &c}
+}
+
+// limitPath wraps the error a hook returned and answers errors.As for a
+// *LimitError with a copy whose path has been made whole. Everything else about
+// the chain is the hook's own.
+type limitPath struct {
+	err error
+	le  *LimitError
+}
+
+// Error is the text of the hook's error, except that a limit error returned as
+// it is says its new path; a wrapper made by the hook keeps the hook's wording.
+func (p *limitPath) Error() string {
+	if _, ok := p.err.(*LimitError); ok {
+		return p.le.Error()
+	}
+	return p.err.Error()
+}
+func (p *limitPath) Unwrap() error { return p.err }
+func (p *limitPath) As(target any) bool {
+	if t, ok := target.(**LimitError); ok {
+		*t = p.le
+		return true
+	}
+	return false
+}
+
+// markLimit marks the limit error inside err, one that absoluteLimit has just
+// rewritten for a decode made inside a hook, as relative to the node the decode
+// started from, so that the hook around that decode can put its own path in front.
+func markLimit(err error, sc *bind.Scope, root int32) {
+	var le *LimitError
+	if err != nil && errors.As(err, &le) && le.rel && le.sc == nil {
+		le.sc, le.from = sc, root
+	}
 }
 
 func typeError(e *bind.Error, path string, src []byte, lineBase int) *TypeError {

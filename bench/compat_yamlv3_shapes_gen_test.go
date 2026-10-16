@@ -3,6 +3,7 @@ package bench
 import (
 	"fmt"
 	"math/rand"
+	"sort"
 	"strings"
 	"testing"
 
@@ -309,7 +310,12 @@ func TestCompatV3CommentsKeepEveryLine(t *testing.T) {
 	for _, e := range ex {
 		t.Logf("example: %s", e)
 	}
-	if !testing.Short() && (twice > numberedTwiceCeiling || dropped > numberedDroppedCeiling || textDep > numberedTextCeiling) {
+	// Text-dependence has a ceiling of zero, which holds at any sample size, so it
+	// is checked in the short run too.
+	if textDep > numberedTextCeiling {
+		t.Errorf("numbered comments: %d inputs read other comment lines from their original words than from numbered ones (max %d)", textDep, numberedTextCeiling)
+	}
+	if !testing.Short() && (twice > numberedTwiceCeiling || dropped > numberedDroppedCeiling) {
 		t.Errorf("numbered comments: read twice %d (max %d), dropped %d (max %d), text-dependent %d (max %d)", twice, numberedTwiceCeiling, dropped, numberedDroppedCeiling, textDep, numberedTextCeiling)
 	}
 }
@@ -342,6 +348,41 @@ func TestCompatV3RepeatedCommentTextKeepsEveryLine(t *testing.T) {
 		}
 		if string(yb) != string(cb) {
 			t.Errorf("%q: write differs:\nyaml.v3: %q\nshim:    %q", in, yb, cb)
+		}
+	}
+}
+
+// TestCompatV3WrittenCommentsReadBackOnce writes numbered comments and reads
+// them again. Each comment line must come back exactly once: a line that a
+// sibling's foot and the next entry's head both claim in the writer would be
+// read twice.
+func TestCompatV3WrittenCommentsReadBackOnce(t *testing.T) {
+	for _, in := range []string{
+		"# n1\n\n# n2\n- v\n# n3\n\n- # n4\n  # n5\n  # n6\n  - \n\n    # n7\n\n    k0: [a, b]\n    k1: >\n      text\n    \n      more\n  - | # n8\n    text\n- k: v\n  j: w\n\n",
+		"# n1\n? k0\n: # n2\n\n  # n3\n  - v # n4\n  - # n5\n\n# n6\n    - # n7\n      # n8\n# n9\n      - v\n    # n10\n# n11\n    - k: v\n      j: w\n\n  - k: v\n    j: w\n\nk1:\n  # n12\n  k0: v\n\n  # n13\n  k1: v # n14\nk2: |\n  text\n  more\n",
+		"k0:\n\n  - v # n1\n\n  - # n2\n\n# n3\n    - # n4\n      # n5\n      k0: v\n\n      # n6\n      k1: v\n    - v\n    - v\n  - v\nk1: v\n# n7\n\n",
+		"# n1\n\n# n2\n# n3\n- v\n- \n  # n4\n# n5\n\n  # n6\n  - # n7\n    ? k0\n    : v # n8\n# n9\n\n    k1: v\n  # n10\n\n  - # n11\n    # n12\n    # n13\n# n14\n    k0:\n\n      # n15\n      k0: v\n      k1: v\n      k2: v\n# n16\n\n    k1:\n      k0: v\n    k2: [a, b]\n",
+	} {
+		var c compat.Node
+		if err := compat.Unmarshal([]byte(in), &c); err != nil {
+			t.Fatal(err)
+		}
+		var first []int
+		commentIDs(&c, &first)
+		out, err := compat.Marshal(&c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var again compat.Node
+		if err := compat.Unmarshal(out, &again); err != nil {
+			t.Fatalf("%q: the written text does not read back: %v\n%s", in, err, out)
+		}
+		var second []int
+		commentIDs(&again, &second)
+		sort.Ints(first)
+		sort.Ints(second)
+		if fmt.Sprint(first) != fmt.Sprint(second) {
+			t.Errorf("%q: comments read %v, after writing and reading again %v\n%s", in, first, second, out)
 		}
 	}
 }

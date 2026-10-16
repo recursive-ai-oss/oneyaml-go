@@ -17,16 +17,20 @@ import (
 //
 // The Node is read-only. Node.Decode on it decodes the subtree into any target,
 // with the same rules as Unmarshal. When the value comes from Unmarshal or a
-// Decoder there is no Document, so the Node covers only that subtree and is
-// valid only during the call; aliases inside it still resolve. A null value
-// leaves a pointer target nil without calling the method. An error the method
-// returns comes back from the decode as a *TypeError whose Unwrap gives it.
+// Decoder there is no Document, so the Node covers only that subtree; aliases
+// inside it still resolve. A null value leaves a pointer target nil without
+// calling the method. An error the method returns comes back from the decode as
+// a *TypeError whose Unwrap gives it.
 //
 // A Node the method keeps past its return may be used later, one goroutine at a
-// time, and then decodes under the settings it was given. It must not be used
-// at the moment the method returns, from another goroutine: the read that made
-// the call reuses its state for the next one, and a use at that instant may see
-// it.
+// time, and then decodes under the settings it was given. From Unmarshal or a
+// Decoder it goes on reading its own subtree whatever is read next; one from
+// Unmarshal reads the slice that was passed in, so leave that slice unchanged
+// while the Node is kept. One from Document.Decode or Node.Decode reads the
+// Document and becomes stale when the Document is edited. A kept Node must not
+// be used at the moment the method returns, from another goroutine: the read
+// that made the call reuses its state for the next one, and a use at that
+// instant may see it.
 type Unmarshaler interface {
 	UnmarshalYAML(node Node) error
 }
@@ -289,8 +293,10 @@ func (s *docStream) decode(doc int, root int32, v any, sc *bind.Scope, opts []Op
 			// read around the hook can tell them from the errors of another text
 			// and say where they are in the hook's value.
 			te.sc, te.from = sc, root
+			markLimit(te.Err, sc, root)
 			for _, m := range te.More {
 				m.sc, m.from = sc, root
+				markLimit(m.Err, sc, root)
 			}
 		}
 	}

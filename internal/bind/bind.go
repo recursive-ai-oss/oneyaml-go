@@ -195,6 +195,10 @@ type Error struct {
 	// decoded, empty when it decoded the hook's node itself.
 	Own bool
 	Rel string
+	// Scope is the scope of the hook call that returned the error, so that the
+	// read around it can tell the limit errors of that call's own decodes from
+	// an error the hook kept from another read.
+	Scope *Scope
 	// Fixed marks a KindLimit error whose bound no option changes.
 	Fixed bool
 }
