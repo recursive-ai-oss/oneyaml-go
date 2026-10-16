@@ -205,6 +205,11 @@ func plainKeyValue(src []byte, ev *parse.Event) (any, bool) {
 
 // sameKeyValue compares two generic key values, big integers by value.
 func sameKeyValue(a, b any) bool {
+	if x, ok := a.(float64); ok {
+		// Every .nan is the same key, though a NaN is not equal to itself.
+		y, ok := b.(float64)
+		return ok && (x == y || x != x && y != y)
+	}
 	if x, ok := a.(*big.Int); ok {
 		y, ok := b.(*big.Int)
 		return ok && x.Cmp(y) == 0

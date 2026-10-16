@@ -40,6 +40,9 @@ func (b *Binder) generic(first *parse.Event) (any, error) {
 	base := len(b.frames)
 	ev := *first
 	var err error
+	// aliasKey is where the alias that stands for the pending key was written.
+	// An error about the key points there, not at the anchored node it replays.
+	aliasKey := -1
 	for {
 		var top *anyFrame
 		if len(b.frames) > base {
@@ -49,6 +52,9 @@ func (b *Binder) generic(first *parse.Event) (any, error) {
 		var val any
 		switch ev.Kind {
 		case parse.Alias:
+			if keyPos && aliasKey < 0 {
+				aliasKey = ev.Start
+			}
 			b.expand(&ev)
 			if ev, err = b.next(); err != nil {
 				return nil, b.unwind(base, err)
@@ -58,6 +64,10 @@ func (b *Binder) generic(first *parse.Event) (any, error) {
 			if keyPos {
 				if err = b.genericKey(top, &ev); err != nil {
 					return nil, b.unwind(base, err)
+				}
+				if aliasKey >= 0 {
+					top.key.off = aliasKey
+					aliasKey = -1
 				}
 				if ev, err = b.next(); err != nil {
 					return nil, b.unwind(base, err)
@@ -224,10 +234,19 @@ func (b *Binder) finishMap(f *anyFrame) (any, error) {
 		}
 	} else {
 		m := make(map[any]any, len(ps))
+		nanSeen := false
 		for i := range ps {
 			k := ps[i].ka
 			if ps[i].str {
 				k = ps[i].ks
+			}
+			// A Go map never finds a NaN key again, so two .nan keys would both be
+			// kept. They are the same YAML value, so the second is a duplicate.
+			if fl, ok := k.(float64); ok && fl != fl && b.cfg.Dialect == DialectCore {
+				if nanSeen {
+					return nil, b.dropPairs(f, b.dupKey(ps[i].off))
+				}
+				nanSeen = true
 			}
 			n := len(m)
 			m[k] = ps[i].val

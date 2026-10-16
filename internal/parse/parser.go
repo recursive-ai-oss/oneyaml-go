@@ -9,6 +9,7 @@ package parse
 
 import (
 	"io"
+	"strconv"
 
 	"oneyaml.dev/go/internal/scan"
 )
@@ -183,6 +184,48 @@ func (p *Parser) expectedKeyMsg(tok int) string {
 		}
 	}
 	return "did not find the expected key; check the indentation of this line"
+}
+
+// flowCloseMsg words the error for a flow collection whose entry is followed by
+// something other than ',' or its closing bracket. It says where the collection
+// was opened, which is what the reader has to find. The opening bracket is looked
+// up by reading the source again: this runs once, on the error path, so the
+// parser keeps no record of open brackets while it works.
+func (p *Parser) flowCloseMsg(off int, kind string, closer byte) string {
+	msg := "expected ',' or '" + string(closer) + "' after a flow " + kind + " entry (is a closing '" + string(closer) + "' missing?)"
+	if open, ok := p.flowOpener(off); ok {
+		e := scan.NewError(p.src, open, Syntax, "")
+		return "expected ',' or '" + string(closer) + "' after an entry of the flow " + kind + " opened at line " +
+			strconv.Itoa(e.Line) + ", column " + strconv.Itoa(e.Column) + " (is its closing '" + string(closer) + "' missing?)"
+	}
+	return msg
+}
+
+// flowOpener returns the offset of the innermost flow collection that is still
+// open at offset off.
+func (p *Parser) flowOpener(off int) (int, bool) {
+	var sc scan.Scanner
+	sc.Reset(p.src, -1)
+	var opens []int
+	for {
+		t, err := sc.Peek()
+		if err != nil || t.Start >= off || t.Kind == scan.StreamEnd {
+			break
+		}
+		switch t.Kind {
+		case scan.FlowSequenceStart, scan.FlowMappingStart:
+			opens = append(opens, t.Start)
+		case scan.FlowSequenceEnd, scan.FlowMappingEnd:
+			if len(opens) > 0 {
+				opens = opens[:len(opens)-1]
+			}
+		}
+		sc.Skip()
+	}
+	if len(opens) == 0 {
+		return 0, false
+	}
+	return opens[len(opens)-1], true
 }
 
 func (p *Parser) errAt(off int, msg string) error {
@@ -531,7 +574,7 @@ func (p *Parser) step() (Event, error) {
 			if t.Kind != scan.FlowSequenceEnd {
 				if !first {
 					if t.Kind != scan.FlowEntry {
-						return Event{}, p.errAt(t.Start, "expected ',' or ']' after a flow sequence entry (is a closing ']' missing?)")
+						return Event{}, p.errAt(t.Start, p.flowCloseMsg(t.Start, "sequence", ']'))
 					}
 					p.sc.Skip()
 					if t, err = p.peek(); err != nil {
@@ -611,7 +654,7 @@ func (p *Parser) step() (Event, error) {
 			if t.Kind != scan.FlowMappingEnd {
 				if !first {
 					if t.Kind != scan.FlowEntry {
-						return Event{}, p.errAt(t.Start, "expected ',' or '}' after a flow mapping entry (is a closing '}' missing?)")
+						return Event{}, p.errAt(t.Start, p.flowCloseMsg(t.Start, "mapping", '}'))
 					}
 					p.sc.Skip()
 					if t, err = p.peek(); err != nil {

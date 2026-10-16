@@ -266,8 +266,8 @@ func (s *Scanner) flowIndentMsg() string {
 		if s.src[off] == '{' {
 			kind, close = "mapping", "}"
 		}
-		return "the flow " + kind + " opened at " + s.where(off) + " is not closed: add the missing '" + close +
-			"' or indent this line past its parent"
+		return "the flow " + kind + " opened at " + s.where(off) + " is not closed: expected ',' or '" + close +
+			"' before this line; add the missing '" + close + "' or indent this line past its parent"
 	}
 	return "flow content is not indented enough"
 }
@@ -1237,10 +1237,19 @@ func (s *Scanner) fetchQuoted(double bool, col int) error {
 			default:
 				return s.errAt(p+1, Syntax, "invalid escape sequence in double-quoted scalar")
 			}
+			var v uint32
 			for i := 0; i < n; i++ {
 				if p+2+i >= len(b) || !isHex(b[p+2+i]) {
 					return s.errAt(min(p+2+i, len(b)), Syntax, "invalid hexadecimal escape in double-quoted scalar")
 				}
+				v = v<<4 | uint32(hexVal(b[p+2+i]))
+			}
+			// A lone surrogate or a value past U+10FFFF names no character. Refuse it
+			// here, where the quoted scalar is read, so every consumer of the tokens
+			// (the document tree included) rejects it and none has to decode the
+			// scalar to find out.
+			if v > utf8.MaxRune || v >= 0xD800 && v <= 0xDFFF {
+				return s.errAt(p, Syntax, "escape is not a Unicode scalar value")
 			}
 			p += 2 + n
 		case isBreak(c):
@@ -1278,6 +1287,17 @@ func isHex(c byte) bool {
 	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
 }
 
+// hexVal is the value of the hexadecimal digit c; the caller has checked isHex.
+func hexVal(c byte) byte {
+	switch {
+	case c <= '9':
+		return c - '0'
+	case c <= 'F':
+		return c - 'A' + 10
+	}
+	return c - 'a' + 10
+}
+
 // quotedBreak handles a line break inside a quoted scalar at *pp: it moves past
 // the break and the next line's indentation, and checks the continuation line
 // is indented enough and does not start with a document marker.
@@ -1307,7 +1327,7 @@ func (s *Scanner) quotedBreak(pp *int) error {
 			sp++
 		}
 		if q < len(b) && s.indent >= 0 && sp <= s.indent {
-			return s.errAt(q, Syntax, "the quoted scalar that starts at "+s.where(s.quoteStart)+" is not closed, or this line is not indented past its parent")
+			return s.errAt(q, Syntax, "the quoted scalar that starts at "+s.where(s.quoteStart)+" is never closed: add the closing "+string(b[s.quoteStart])+" before this line, or indent this line past its parent")
 		}
 		p = q
 		break

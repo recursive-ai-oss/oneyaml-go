@@ -95,7 +95,11 @@ func (s *session) release() {
 // number. Two keys that are different numbers but round to the same float64
 // (1e-400 and 2e-400, or 1e400 and .inf) are a *TypeError that says so, since a
 // map cannot hold them apart. A key is a duplicate even when one of its entries
-// did not fit its target, so a: 1 followed by a: x is a duplicate-key error.
+// did not fit its target, so a: 1 followed by a: x is a duplicate-key error. All
+// .nan keys are one key. A key that no field of a struct target has counts too,
+// as do the keys inside a value the target ignores, so a: 1 twice is refused
+// even when the struct has no field a. A key written as an alias is reported at
+// the alias.
 // Merge keys are ordinary keys unless the MergeKeys option is given. Unknown
 // struct keys are skipped unless KnownFields is given.
 //
@@ -112,7 +116,8 @@ func (s *session) release() {
 // the 100th, and fewer are reported when their paths are very long (see
 // TypeError). A syntax error, a limit error or an error from a hook of your own
 // stops the read at once, and the error returned is that error alone: the
-// mismatches collected before it are dropped. UTF-16 and UTF-32 input, with or
+// mismatches collected before it are dropped. A syntax error after the value,
+// such as a stray closing bracket, is reported even when the value did not fit. UTF-16 and UTF-32 input, with or
 // without a byte order mark, is converted to UTF-8 first; the offsets of errors
 // in such input index the UTF-8 form.
 func Unmarshal(data []byte, v any, opts ...Option) error {
@@ -221,12 +226,30 @@ func syntaxFromBind(e *bind.Error, src []byte, lineBase, offBase int) *SyntaxErr
 		return se
 	}
 	se.Msg = "a mapping key is repeated: it equals an earlier key once converted to the target type"
+	if e.Offset >= 0 && e.Offset < len(src) && src[e.Offset] == '*' {
+		// The key is an alias; the error is at the alias, not at the node it names.
+		end := e.Offset + 1
+		for end < len(src) && !isAliasEnd(src[end]) {
+			end++
+		}
+		se.Msg = "the alias " + quoteKey(string(src[e.Offset:end])) + " used as a mapping key repeats an earlier key"
+		return se
+	}
 	if key, first, ok := bind.FirstKey(src, e.Offset); ok {
 		fp := scan.NewError(src, first, scan.Syntax, "")
 		se.Key, se.FirstLine, se.FirstColumn = key, fp.Line+lineBase, fp.Column
 		se.Msg = fmt.Sprintf("mapping key %s already defined at line %d, column %d", quoteKey(key), se.FirstLine, se.FirstColumn)
 	}
 	return se
+}
+
+// isAliasEnd reports whether c ends the name of an alias.
+func isAliasEnd(c byte) bool {
+	switch c {
+	case ' ', '\t', '\n', '\r', ',', '[', ']', '{', '}':
+		return true
+	}
+	return false
 }
 
 // quoteKey quotes a key for a message, shortening a long one.

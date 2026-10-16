@@ -453,6 +453,7 @@ func (b *Binder) mapInto(v reflect.Value, ev *parse.Event) error {
 			}
 			var st structState
 			err := b.structPairs(v, dp, &st, false)
+			b.putSet(st.unk)
 			if err != nil && !resumable(err) {
 				return err
 			}
@@ -476,11 +477,25 @@ func (b *Binder) mapInto(v reflect.Value, ev *parse.Event) error {
 // nextKey reads a key event, following aliases.
 func (b *Binder) nextKey() (parse.Event, error) {
 	ke, err := b.next()
+	b.keyAlias = -1
 	for err == nil && ke.Kind == parse.Alias {
+		if b.keyAlias < 0 {
+			b.keyAlias = ke.Start
+		}
 		b.expand(&ke)
 		ke, err = b.next()
 	}
 	return ke, err
+}
+
+// keyPos is the offset an error about the key ke just read by nextKey points
+// at: the alias that was written there, or the key itself. Read it before the
+// key's value is decoded, which reads keys of its own.
+func (b *Binder) keyPos(ke *parse.Event) int {
+	if b.keyAlias >= 0 {
+		return b.keyAlias
+	}
+	return ke.Start
 }
 
 func (b *Binder) isMergeKey(ke *parse.Event) bool {
@@ -514,6 +529,9 @@ type structState struct {
 	merged     bool
 	// failed holds the keys of the inline map whose value did not fit.
 	failed map[string]struct{}
+	// unk holds the keys that no field has, to catch a repeat. It is taken from
+	// the binder when the first such key comes, and given back by mapInto.
+	unk *keySet
 }
 
 // structPairs reads the pairs of a mapping, whose start event is consumed, into
@@ -532,6 +550,7 @@ func (b *Binder) structPairs(v reflect.Value, dp *dplan, st *structState, weak b
 		if ke.Kind != parse.Scalar {
 			return b.typeErr(&ke, v.Type(), "mapping keys must be scalars to decode into "+v.Type().String())
 		}
+		kpos := b.keyPos(&ke)
 		merge := b.isMergeKey(&ke)
 		var kb []byte
 		if !merge {
@@ -546,7 +565,7 @@ func (b *Binder) structPairs(v reflect.Value, dp *dplan, st *structState, weak b
 		if merge {
 			if !weak {
 				if st.merged {
-					return b.dupKey(ke.Start)
+					return b.dupKey(kpos)
 				}
 				st.merged = true
 			}
@@ -562,7 +581,7 @@ func (b *Binder) structPairs(v reflect.Value, dp *dplan, st *structState, weak b
 		}
 		idx := dp.lookup(kb)
 		if idx < 0 {
-			if err := b.structExtra(v, dp, st, &ke, kb, &ve, weak); err != nil {
+			if err := b.structExtra(v, dp, st, &ke, kpos, kb, &ve, weak); err != nil {
 				if !resumable(err) {
 					return err
 				}
@@ -584,7 +603,7 @@ func (b *Binder) structPairs(v reflect.Value, dp *dplan, st *structState, weak b
 			st.weak.set(idx)
 		} else {
 			if st.seen.has(idx) {
-				return withSeg(b.dupKey(ke.Start), f.Name)
+				return withSeg(b.dupKey(kpos), f.Name)
 			}
 			st.seen.set(idx)
 			if st.weak.has(idx) {
@@ -671,7 +690,7 @@ func (b *Binder) mergeStruct(v reflect.Value, dp *dplan, st *structState, ve *pa
 
 // structExtra handles a key that names no field: it goes to the inline map, is
 // an error under KnownFields, or is skipped.
-func (b *Binder) structExtra(v reflect.Value, dp *dplan, st *structState, ke *parse.Event, kb []byte, ve *parse.Event, weak bool) error {
+func (b *Binder) structExtra(v reflect.Value, dp *dplan, st *structState, ke *parse.Event, kpos int, kb []byte, ve *parse.Event, weak bool) error {
 	if im := dp.inline; im != nil {
 		mv, ok := fieldByIndexAlloc(v, im.Index)
 		if ok {
@@ -687,10 +706,10 @@ func (b *Binder) structExtra(v reflect.Value, dp *dplan, st *structState, ke *pa
 				if weak {
 					return b.skip(ve)
 				}
-				return withSeg(b.dupKey(ke.Start), key.String())
+				return withSeg(b.dupKey(kpos), key.String())
 			}
 			if _, ok := st.failed[key.String()]; ok && !weak {
-				return withSeg(b.dupKey(ke.Start), key.String())
+				return withSeg(b.dupKey(kpos), key.String())
 			}
 			el := reflect.New(mt.Elem()).Elem()
 			if err := b.value(el, ve); err != nil {
@@ -706,6 +725,17 @@ func (b *Binder) structExtra(v reflect.Value, dp *dplan, st *structState, ke *pa
 			return nil
 		}
 	}
+	// The key names no field, so nothing else will look at it: a repeat of an
+	// earlier such key is refused here, as a repeat is anywhere else.
+	if !weak {
+		b.idbuf = b.identity(b.idbuf[:0], ke, kb)
+		if st.unk == nil {
+			st.unk = b.getSet()
+		}
+		if st.unk.add(b.idbuf) {
+			return withSeg(b.dupKey(kpos), string(kb))
+		}
+	}
 	if b.cfg.KnownFields {
 		if b.cfg.Dialect == DialectV3 {
 			b.terrs = append(b.terrs, b.typeErr(ke, v.Type(), "field "+string(kb)+" not found in type "+v.Type().String()).(*Error))
@@ -713,13 +743,23 @@ func (b *Binder) structExtra(v reflect.Value, dp *dplan, st *structState, ke *pa
 		}
 		e := b.typeErr(ke, v.Type(), "field "+strconv.Quote(string(kb))+" not found in type "+v.Type().String()).(*Error)
 		e.Unknown = true
-		if err := b.skip(ve); err != nil {
+		if err := b.skipIgnored(ve, weak); err != nil {
 			return err
 		}
 		e.Resume = true
 		return withSeg(e, string(kb))
 	}
-	return b.skip(ve)
+	return b.skipIgnored(ve, weak)
+}
+
+// skipIgnored consumes the value of a key the target ignores. The primary rules
+// also look inside it for a repeated key; the yaml.v3 rules do not decode it and
+// so, like yaml.v3, do not look.
+func (b *Binder) skipIgnored(ve *parse.Event, weak bool) error {
+	if weak || b.cfg.Dialect != DialectCore {
+		return b.skip(ve)
+	}
+	return b.skipChecked(ve)
 }
 
 func fieldByIndexAlloc(v reflect.Value, idx []int) (reflect.Value, bool) {
@@ -746,8 +786,34 @@ type mapState struct {
 	// a later repeat of one would otherwise pass as a new key.
 	failed      map[any]struct{}
 	track       bool
+	nanSeen     bool
 	merged      bool
 	keyIsString bool
+}
+
+// nanKey stands for every NaN in a set of keys, since a NaN is not equal to
+// itself and would never be found again.
+type nanKey struct{}
+
+// isNaNKey reports whether the key value kv, a float or an interface holding
+// one, is NaN.
+func isNaNKey(kv reflect.Value) bool {
+	if kv.Kind() == reflect.Interface {
+		kv = kv.Elem()
+	}
+	if k := kv.Kind(); k != reflect.Float64 && k != reflect.Float32 {
+		return false
+	}
+	f := kv.Float()
+	return f != f
+}
+
+// canonKey is the key kv as a value that compares equal to itself.
+func canonKey(kv reflect.Value) any {
+	if isNaNKey(kv) {
+		return nanKey{}
+	}
+	return kv.Interface()
 }
 
 func (b *Binder) mapTyped(v reflect.Value) error {
@@ -777,6 +843,7 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 		if ke.Kind != parse.Scalar {
 			return b.typeErr(&ke, v.Type().Key(), "mapping keys must be scalars to decode into "+v.Type().String())
 		}
+		kpos := b.keyPos(&ke)
 		merge := b.isMergeKey(&ke)
 		var ki any
 		if !merge {
@@ -818,7 +885,7 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 				return err
 			}
 			if st.track || st.failed != nil {
-				ki = st.kv.Interface()
+				ki = canonKey(st.kv)
 			}
 		}
 		ve, err := b.next()
@@ -828,7 +895,7 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 		if merge {
 			if !weak {
 				if st.merged {
-					return b.dupKey(ke.Start)
+					return b.dupKey(kpos)
 				}
 				st.merged = true
 			}
@@ -862,7 +929,7 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 				st.weak[ki] = struct{}{}
 			} else {
 				if _, ok := st.seen[ki]; ok {
-					return withSeg(b.dupKey(ke.Start), b.keyLabel(&ke))
+					return withSeg(b.dupKey(kpos), b.keyLabel(&ke))
 				}
 				if st.seen == nil {
 					st.seen = map[any]struct{}{}
@@ -873,8 +940,17 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 		}
 		if st.failed != nil && !weak && !merge {
 			if _, ok := st.failed[ki]; ok {
-				return withSeg(b.dupKey(ke.Start), b.keyLabel(&ke))
+				return withSeg(b.dupKey(kpos), b.keyLabel(&ke))
 			}
+		}
+		// A map never finds a NaN key again, so two .nan keys would both be kept.
+		// They are one YAML value; the second is a duplicate. Under tracking the
+		// canonical key above already catches it.
+		if !st.track && !st.keyIsString && !merge && b.cfg.Dialect == DialectCore && isNaNKey(st.kv) {
+			if st.nanSeen {
+				return withSeg(b.dupKey(kpos), b.keyLabel(&ke))
+			}
+			st.nanSeen = true
 		}
 		st.ev.SetZero()
 		if err := b.value(st.ev, &ve); err != nil {
@@ -884,13 +960,13 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 			// The entry is not added, but its key is remembered. An earlier entry
 			// of the same key was added: then this is a repeat, not a mismatch.
 			if !st.track && !weak && v.MapIndex(st.kv).IsValid() {
-				return withSeg(b.dupKey(ke.Start), b.keyLabel(&ke))
+				return withSeg(b.dupKey(kpos), b.keyLabel(&ke))
 			}
 			if !weak {
 				if st.failed == nil {
 					st.failed = map[any]struct{}{}
 				}
-				st.failed[st.kv.Interface()] = struct{}{}
+				st.failed[canonKey(st.kv)] = struct{}{}
 			}
 			if pend.add(err) {
 				return pend.result()
@@ -904,7 +980,7 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 		n := v.Len()
 		v.SetMapIndex(st.kv, st.ev)
 		if v.Len() == n {
-			return withSeg(b.dupKey(ke.Start), b.keyLabel(&ke))
+			return withSeg(b.dupKey(kpos), b.keyLabel(&ke))
 		}
 	}
 }

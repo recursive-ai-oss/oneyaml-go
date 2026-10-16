@@ -400,6 +400,17 @@ type Binder struct {
 	started bool
 	inDoc   bool
 
+	// sets are keySets given back by finished struct mappings; skipFrames and
+	// idbuf are scratch for skipChecked.
+	sets       []*keySet
+	kev        parse.Event
+	skipFrames []skipFrame
+	idbuf      []byte
+
+	// keyAlias is the offset of the alias nextKey followed to reach the key it
+	// returned, or -1 when the key was written out.
+	keyAlias int
+
 	// DialectV3: type errors collected so far in this document, and whether the
 	// document root has been handed out yet (a node hook needs to know).
 	terrs    []*Error
@@ -445,6 +456,13 @@ func (b *Binder) Release() {
 	// neither a big buffer nor the old bytes.
 	if b.jsonBuf != nil {
 		b.releaseJSON()
+	}
+	// The key sets hold keys of the document just read.
+	clear(b.sets)
+	b.sets = b.sets[:0]
+	if cap(b.skipFrames) > 0 {
+		clear(b.skipFrames[:cap(b.skipFrames)])
+		b.skipFrames = b.skipFrames[:0]
 	}
 	if len(b.intern) > 1024 {
 		clear(b.intern)
@@ -559,6 +577,14 @@ func (b *Binder) Decode(v reflect.Value) error {
 	}
 	if err := b.value(v, &ev); err != nil {
 		b.inDoc = false
+		if resumable(err) {
+			// The value was read whole, so the rest of the document can still be
+			// checked. A syntax or limit error after it is the one to report: the
+			// document is not valid, whatever the target is.
+			if eerr := b.endDocument(); eerr != nil {
+				return eerr
+			}
+		}
 		return err
 	}
 	return b.endDocument()
