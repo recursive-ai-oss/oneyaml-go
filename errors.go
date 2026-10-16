@@ -307,9 +307,12 @@ type LimitError struct {
 	// merge sources, and the size of the text that an edit or a merge patch would
 	// leave. A limit hit by a decode inside an UnmarshalYAML hook comes back as
 	// the error the hook returned, wrapped in a [*TypeError] at the hook's value,
-	// and its Path is the pointer in the whole document, as in a [*TypeError].
-	// The text of such an error, if the hook wrapped it, keeps the hook's own
-	// wording, which may name a position inside the hook's value.
+	// and errors.As on it finds a copy whose Path is the pointer in the whole
+	// document, as in a [*TypeError]. The read does not change the error the hook
+	// holds: inside the hook, and if the hook keeps it and returns it from a later
+	// read, its Path is relative to the Node the hook decoded. The text of such an
+	// error, if the hook wrapped it, keeps the hook's own wording, which may name
+	// a position inside the hook's value.
 	Path string
 
 	// rel, sc and from are set on the error of a decode made from the Node a hook

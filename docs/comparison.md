@@ -4,7 +4,7 @@ How oneyaml-go compares with the Go YAML libraries it is most often weighed agai
 
 **Bias.** This page is written by the authors of oneyaml-go. We chose the criteria, and they are the ones oneyaml-go was built for: YAML 1.2 behaviour, editing a file without disturbing it, and bounded handling of untrusted input. A project with other priorities would draw a different table. We tried to state each library's strengths as its own users would. Where a statement rests on a source, the source is named; library status was surveyed on 2026-09-30 (yaml/v4 on 2026-10-15) and changes.
 
-This page compares features and behaviour. Time and memory are measured on [Performance](performance.md), from a full benchmark run against these libraries; its method line names the release measured and the date. That page has the evidence, and this one does not repeat it.
+This page compares features and behaviour. Time and memory are measured on [Performance](performance.md), from a full benchmark run against these libraries; its method line names the library commit measured and the date, and the page says which release that commit is. That page has the evidence, and this one does not repeat it.
 
 ## What each library is
 
