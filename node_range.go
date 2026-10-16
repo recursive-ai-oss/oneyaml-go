@@ -78,25 +78,31 @@ func (s *docStream) watch(n Node, kind cst.Kind) uint64 {
 	s.rngID++
 	id := s.rngID | 1<<31
 	m := rangeMore{rangeSlot: rangeSlot{id: id, epoch: n.gen, i: n.i, doc: n.doc, kind: kind}}
-	for i := range s.more {
-		if s.more[i].id == 0 {
-			s.more[i] = m
+	es := s.es()
+	for i := range es.rngMore {
+		if es.rngMore[i].id == 0 {
+			es.rngMore[i] = m
 			return uint64(rangeSlots+i+1)<<32 | uint64(id)
 		}
 	}
-	s.more = append(s.more, m)
-	return uint64(rangeSlots+len(s.more))<<32 | uint64(id)
+	es.rngMore = append(es.rngMore, m)
+	return uint64(rangeSlots+len(es.rngMore))<<32 | uint64(id)
 }
 
 // nslots is the number of slots, taken or free.
-func (s *docStream) nslots() int { return rangeSlots + len(s.more) }
+func (s *docStream) nslots() int {
+	if s.ed == nil {
+		return rangeSlots
+	}
+	return rangeSlots + len(s.ed.rngMore)
+}
 
 // slotAt returns slot i, counting the fixed ones first.
 func (s *docStream) slotAt(i int) *rangeSlot {
 	if i < rangeSlots {
 		return &s.rng[i]
 	}
-	return &s.more[i-rangeSlots].rangeSlot
+	return &s.ed.rngMore[i-rangeSlots].rangeSlot
 }
 
 // pathAt returns where slot i notes the place of its collection.
@@ -104,7 +110,7 @@ func (s *docStream) pathAt(i int) *rangePath {
 	if i < rangeSlots {
 		return &s.es().rngPath[i]
 	}
-	return &s.more[i-rangeSlots].path
+	return &s.ed.rngMore[i-rangeSlots].path
 }
 
 // slot returns the slot a handle names, or nil if the loop no longer has it.
@@ -128,9 +134,10 @@ func (s *docStream) unwatch(h uint64) {
 	}
 	s.slotAt(i).id = 0
 	if i >= rangeSlots {
-		s.more[i-rangeSlots].path = rangePath{}
-		for n := len(s.more); n > 0 && s.more[n-1].id == 0; n-- {
-			s.more = s.more[:n-1]
+		m := &s.ed.rngMore
+		(*m)[i-rangeSlots].path = rangePath{}
+		for n := len(*m); n > 0 && (*m)[n-1].id == 0; n-- {
+			*m = (*m)[:n-1]
 		}
 	}
 }
@@ -191,7 +198,7 @@ func (s *docStream) refind(h uint64) (coll int32, ok bool) {
 
 // ranging reports whether any loop over a collection is running.
 func (s *docStream) ranging() bool {
-	return s.rng[0].id|s.rng[1].id|s.rng[2].id != 0 || len(s.more) > 0
+	return s.rng[0].id|s.rng[1].id|s.rng[2].id != 0 || s.ed != nil && len(s.ed.rngMore) > 0
 }
 
 // noteEdit follows a successful edit with the places of the running loops. The

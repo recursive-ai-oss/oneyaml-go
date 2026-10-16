@@ -427,7 +427,9 @@ func (n Node) Entry(i int) (key, value Node) {
 // items of a sequence on the way to this one moves the pointer with it. The loop
 // ends if the sequence is replaced or removed, is no longer a sequence, or has no
 // pointer (see Node.Pointer). Any number of loops over one Document may run and
-// edit at once, and a loop that a panic leaves does not affect the others.
+// edit at once, and a loop that a panic leaves does not affect the others. A
+// loop stepped through iter.Pull and never stopped keeps its place, and the edits
+// made on that Document afterwards get slower; call the stop function.
 //
 // Items appended during the loop are yielded, so a body that appends on every
 // pass never ends. Items inserted or removed before the current one may make the
@@ -472,7 +474,9 @@ func (n Node) Items() iter.Seq[Node] {
 // a sequence on the way to this mapping moves the pointer with it. The loop ends
 // if the mapping is replaced or removed, is no longer a mapping, or has no
 // pointer (see Node.Pointer). Any number of loops over one Document may run and
-// edit at once, and a loop that a panic leaves does not affect the others.
+// edit at once, and a loop that a panic leaves does not affect the others. A
+// loop stepped through iter.Pull and never stopped keeps its place, and the edits
+// made on that Document afterwards get slower; call the stop function.
 //
 // Entries added at the end during the loop are yielded, so a body that adds an
 // entry on every pass never ends. Entries added or removed before the current one

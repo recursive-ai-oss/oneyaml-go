@@ -78,9 +78,9 @@ type docStream struct {
 	dec decodeState // see document_decode.go
 	// rng holds the loops over Items and Entries that are running (see node.go),
 	// and rngID numbers them. The first live in the stream, in a few fixed slots,
-	// so that a loop that does not edit costs no allocation; more takes the rest.
+	// so that a loop that does not edit costs no allocation; the rest are in the edit
+	// state (rngMore), which only a fourth running loop makes.
 	rng   [rangeSlots]rangeSlot
-	more  []rangeMore
 	rngID uint32
 
 	// ed is made by the first edit: a stream that is only read does not carry it.
@@ -96,6 +96,10 @@ type editState struct {
 	// rngPath is where the collection of each running loop is, noted before an
 	// edit; see rangeSlot.
 	rngPath [rangeSlots]rangePath
+
+	// rngMore holds the loops past the fixed slots; see node_range.go. It is here
+	// so that a Document that never runs four loops at once does not carry it.
+	rngMore []rangeMore
 
 	// spareSrc is the previous text during a patch, ready to be reused.
 	spareSrc []byte

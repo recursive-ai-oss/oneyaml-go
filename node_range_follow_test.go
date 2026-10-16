@@ -493,3 +493,75 @@ func TestPointerAndRangeDeeperThanSixtyFour(t *testing.T) {
 		t.Errorf("loop yields %v, want [1 2 3]", got)
 	}
 }
+
+// Five nested loops use the fixed slots and two more. The innermost makes a patch
+// that fails and is rolled back, then an edit that shifts the place of every loop:
+// all of them must go on, with the places they had before the failed patch.
+func TestRangeOverflowLoopsSurviveRollbackAndShift(t *testing.T) {
+	d := parseDoc(t, "x: [0, [1, [2, [3, [4, 5, 6]]]]]\nk: [p, q]\n")
+	var got []string
+	step := 0
+	var nest func(level int, seq Node)
+	nest = func(level int, seq Node) {
+		for it := range seq.Items() {
+			got = append(got, string(rune('A'+level))+":"+it.Value())
+			if it.Kind() == SequenceNode {
+				nest(level+1, it)
+				continue
+			}
+			if level == 4 {
+				if step++; step == 1 {
+					patch := `[{"op":"remove","path":"/x/0"},{"op":"test","path":"/k/0","value":"nope"}]`
+					if err := d.ApplyPatch([]byte(patch)); err == nil {
+						t.Error("the patch should have failed")
+					}
+					if err := d.Remove("/x/0"); err != nil {
+						t.Error(err)
+					}
+				}
+			}
+		}
+	}
+	nest(0, items(t, d, "/x"))
+	want := "A:0 A: B:1 B: C:2 C: D:3 D: E:4 E:5 E:6"
+	if s := strings.Join(got, " "); s != want {
+		t.Errorf("loops saw\n %s\nwant\n %s", s, want)
+	}
+	if s := string(d.Bytes()); s != "x: [[1, [2, [3, [4, 5, 6]]]]]\nk: [p, q]\n" {
+		t.Errorf("document %q", s)
+	}
+	if n := slotsInUse(d); n != 0 {
+		t.Errorf("%d slots taken", n)
+	}
+}
+
+// A loop in an overflow slot follows an edit that shifts the list it is in.
+func TestRangeOverflowLoopFollowsRemove(t *testing.T) {
+	d := parseDoc(t, "p: [0]\nq: [0]\ns: [[1, 2, 3], [4, 5, 6]]\n")
+	var got []string
+	started := false
+	for range d.Root().Entries() {
+		if started {
+			continue
+		}
+		started = true
+		for range items(t, d, "/p").Items() {
+			for range items(t, d, "/q").Items() {
+				for it := range items(t, d, "/s/1").Items() { // the fourth loop
+					got = append(got, it.Value())
+					if len(got) == 1 {
+						if err := d.Remove("/s/0"); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			}
+		}
+	}
+	if s := strings.Join(got, " "); s != "4 5 6" {
+		t.Errorf("the fourth loop saw %q", s)
+	}
+	if s := string(d.Bytes()); s != "p: [0]\nq: [0]\ns: [[4, 5, 6]]\n" {
+		t.Errorf("document %q", s)
+	}
+}
