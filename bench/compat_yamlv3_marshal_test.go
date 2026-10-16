@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -18,6 +19,30 @@ import (
 // ---- writing: values decoded from the corpus ----
 
 var indicatorRE = regexp.MustCompile(`[|>][0-9]`)
+
+// nodeShape lists a Node tree's kinds, values, anchors and alias targets in
+// order, so two reads can be compared without positions or comments.
+func nodeShape(n *compat.Node) []string {
+	var out []string
+	var walk func(n *compat.Node)
+	walk = func(n *compat.Node) {
+		if n == nil {
+			return
+		}
+		out = append(out, fmt.Sprint(n.Kind, "|", n.Value, "|", n.Anchor))
+		if n.Alias != nil {
+			out = append(out, "->"+n.Alias.Anchor)
+		}
+		for _, c := range n.Content {
+			walk(c)
+		}
+	}
+	walk(n)
+	return out
+}
+
+// aliasKeyGapRE matches an alias key followed by a space and its colon.
+var aliasKeyGapRE = regexp.MustCompile(`(\*[^\s,\[\]{}]+) :`)
 
 // writeDifference names the reason the shim's output may differ from yaml.v3's.
 // A difference is intended only when yaml.v3's output is the wrong one:
@@ -35,6 +60,15 @@ func writeDifference(v any, ybytes, cbytes []byte, yerr, cerr error) string {
 	}
 	if yerr != nil || cerr != nil {
 		return ""
+	}
+	if aliasKeyGapRE.ReplaceAllString(string(cbytes), "$1:") == string(ybytes) && string(cbytes) != string(ybytes) {
+		// yaml.v3 writes an alias key right against its colon (`*a:`). A YAML 1.2
+		// reader takes the colon as part of the alias name, so the shim writes `*a :`.
+		// Read both with the shim's Node reader, which takes keys of any kind.
+		var spec, ours compat.Node
+		if compat.Unmarshal(cbytes, &ours) == nil && (compat.Unmarshal(ybytes, &spec) != nil || !reflect.DeepEqual(nodeShape(&spec), nodeShape(&ours))) {
+			return "yaml.v3 writes an alias key against its colon, which a YAML 1.2 reader takes as part of the alias name; the shim writes a space before the colon"
+		}
 	}
 	if strings.Contains(string(cbytes), "'<<'") && strings.ReplaceAll(string(cbytes), "'<<'", "<<") == string(ybytes) {
 		return "yaml.v3 writes the key << unquoted, so it reads back as a merge key (or fails)"
