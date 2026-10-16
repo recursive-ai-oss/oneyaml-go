@@ -147,7 +147,6 @@ func (b *Binder) unwind(base int, err error) error {
 // framePath is the RFC 6901 pointer of the pending position in the frames above
 // base. It is only used for errors, so it favours clarity over speed.
 func (b *Binder) framePath(base int) string {
-	var e Error
 	var segs []string
 	for i := base; i < len(b.frames); i++ {
 		f := &b.frames[i]
@@ -168,10 +167,7 @@ func (b *Binder) framePath(base int) string {
 			segs = append(segs, "<<")
 		}
 	}
-	for i := len(segs) - 1; i >= 0; i-- {
-		e.prepend(segs[i])
-	}
-	return e.Path
+	return joinPath(segs)
 }
 
 func (b *Binder) finishSeq(f *anyFrame) any {

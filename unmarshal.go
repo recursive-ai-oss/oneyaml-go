@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
-	"strings"
 	"sync"
 	"unicode/utf8"
 
@@ -164,19 +163,34 @@ func convertError(err error, src []byte, cfg *config, lineBase, offBase int) err
 		case bind.KindLimit:
 			return &LimitError{Limit: e.Limit, Max: e.Max, Option: e.Option, Path: e.Path}
 		case bind.KindSyntax:
+			if e.Category == CategoryDuplicateKey {
+				// Keys written differently that read as one float are not duplicates.
+				if _, _, ok := bind.FirstKey(src, e.Offset); !ok {
+					if first, ok := bind.EarlierRounding(src, e.Offset); ok {
+						return floatKeyError(&bind.Error{Kind: bind.KindType, Offset: e.Offset, First: first, GoType: "float64", Category: "float-key"}, src, lineBase, offBase)
+					}
+				}
+			}
 			return syntaxFromBind(e, src, lineBase, offBase)
 		}
 		if e.Category == "float-key" {
-			earlier, ok1 := bind.KeyText(src, e.First)
-			later, ok2 := bind.KeyText(src, e.Offset)
-			if !ok1 || !ok2 || sameDecimal(earlier, later) {
-				// The same number, however spelled: an ordinary duplicate.
-				return sameValueKeys(e, earlier, later, src, lineBase, offBase)
-			}
+			return floatKeyError(e, src, lineBase, offBase)
 		}
 		return typeErrors(e, src, lineBase)
 	}
 	return err
+}
+
+// floatKeyError reports two keys that read as the same float64. Written as the
+// same number they are an ordinary duplicate; as different numbers they are a
+// conversion limit of the target.
+func floatKeyError(e *bind.Error, src []byte, lineBase, offBase int) error {
+	earlier, ok1 := bind.KeyText(src, e.First)
+	later, ok2 := bind.KeyText(src, e.Offset)
+	if !ok1 || !ok2 || sameDecimal(earlier, later) {
+		return sameValueKeys(e, earlier, later, src, lineBase, offBase)
+	}
+	return typeErrors(e, src, lineBase)
 }
 
 // syntaxFromBind builds the SyntaxError for a binding failure. A duplicate key
@@ -214,25 +228,26 @@ func quoteKey(k string) string {
 // TypeError for the first mismatch with the rest in More.
 func typeErrors(e *bind.Error, src []byte, lineBase int) *TypeError {
 	if e.Multi == nil {
-		return typeError(e, src, lineBase)
+		return typeError(e, e.FullPath(), src, lineBase)
 	}
-	out := typeError(e.Multi[0], src, lineBase)
-	for _, m := range e.Multi[1:] {
-		out.More = append(out.More, typeError(m, src, lineBase))
+	all := e.Flatten()
+	out := typeError(all[0].Err, all[0].Path, src, lineBase)
+	for _, m := range all[1:] {
+		out.More = append(out.More, typeError(m.Err, m.Path, src, lineBase))
 	}
 	return out
 }
 
-func typeError(e *bind.Error, src []byte, lineBase int) *TypeError {
+func typeError(e *bind.Error, path string, src []byte, lineBase int) *TypeError {
 	pos := scan.NewError(src, e.Offset, scan.Syntax, "")
-	te := &TypeError{Path: e.Path, Line: pos.Line + lineBase, Column: pos.Column, GoType: e.GoType, Msg: e.Msg, Err: e.Err}
+	te := &TypeError{Path: path, Line: pos.Line + lineBase, Column: pos.Column, GoType: e.GoType, Msg: e.Msg, Err: e.Err}
 	if e.Unknown {
 		te.Kind = ErrUnknownField
 	}
 	if inner, ok := e.Err.(*TypeError); ok {
 		// A hook returned the error of a decode it made itself: report that
 		// error once, at the position of the value the hook was given.
-		te.Path, te.GoType, te.Msg, te.Err = e.Path+inner.Path, inner.GoType, inner.Msg, inner.Err
+		te.Path, te.GoType, te.Msg, te.Err = path+inner.Path, inner.GoType, inner.Msg, inner.Err
 	}
 	if e.Category == "float-key" {
 		fp := scan.NewError(src, e.First, scan.Syntax, "")
@@ -252,72 +267,4 @@ func sameValueKeys(e *bind.Error, earlier, later string, src []byte, lineBase, o
 	se.Msg = fmt.Sprintf("mapping key %s has the same value as the key %s at line %d, column %d",
 		quoteKey(later), quoteKey(earlier), se.FirstLine, se.FirstColumn)
 	return se
-}
-
-// sameDecimal reports whether the float texts a and b stand for the same number
-// when read exactly. Texts that are not decimal numbers (.inf, .nan) are taken
-// to be the same, because they only differ in spelling.
-func sameDecimal(a, b string) bool {
-	ca, ok1 := canonDecimal(a)
-	cb, ok2 := canonDecimal(b)
-	return !ok1 || !ok2 || ca == cb
-}
-
-// canonDecimal returns sign, significant digits without trailing zeros and a
-// decimal exponent for a decimal number, so equal values give equal strings. It
-// works on the digits, so an exponent like e999999999 costs nothing.
-func canonDecimal(s string) (string, bool) {
-	neg := false
-	if s != "" && (s[0] == '+' || s[0] == '-') {
-		neg = s[0] == '-'
-		s = s[1:]
-	}
-	var digits []byte
-	point := -1
-	i := 0
-	for ; i < len(s); i++ {
-		c := s[i]
-		if c == '.' && point < 0 {
-			point = len(digits)
-		} else if c >= '0' && c <= '9' {
-			digits = append(digits, c)
-		} else {
-			break
-		}
-	}
-	if len(digits) == 0 {
-		return "", false
-	}
-	if point < 0 {
-		point = len(digits)
-	}
-	var exp int64
-	if i < len(s) {
-		if s[i] != 'e' && s[i] != 'E' {
-			return "", false
-		}
-		n, err := strconv.ParseInt(strings.TrimPrefix(s[i+1:], "+"), 10, 64)
-		if err != nil {
-			return "", false
-		}
-		exp = n
-	}
-	// Drop leading zeros (they move the point) and trailing zeros.
-	lead := 0
-	for lead < len(digits) && digits[lead] == '0' {
-		lead++
-	}
-	digits = digits[lead:]
-	point -= lead
-	for len(digits) > 0 && digits[len(digits)-1] == '0' {
-		digits = digits[:len(digits)-1]
-	}
-	if len(digits) == 0 {
-		return "0", true // zero, signed or not
-	}
-	sign := ""
-	if neg {
-		sign = "-"
-	}
-	return sign + string(digits) + "e" + strconv.FormatInt(exp+int64(point), 10), true
 }

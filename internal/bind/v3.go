@@ -318,7 +318,8 @@ func (b *Binder) collMismatch(ev *parse.Event, t reflect.Type, name string) erro
 		return serr
 	}
 	if b.cfg.Dialect != DialectV3 {
-		err.(*Error).Resume = true
+		be := err.(*Error)
+		be.Resume, be.Direct = true, true
 		return err
 	}
 	b.terrs = append(b.terrs, err.(*Error))

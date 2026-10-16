@@ -125,7 +125,9 @@ const (
 type Error struct {
 	Kind   Kind
 	Offset int
-	// Path is the RFC 6901 pointer of the value, built while the error unwinds.
+	// Path is the part of the RFC 6901 pointer found inside generic values; the
+	// segments added by the enclosing typed collections are in segs. Read the
+	// whole with FullPath or Flatten.
 	Path   string
 	GoType string
 	Msg    string
@@ -142,8 +144,14 @@ type Error struct {
 	// receives one keeps the error, goes on with its next entry and reports the
 	// errors together when it ends.
 	Resume bool
-	// Multi holds the errors of an aggregate; the other fields describe the first.
+	// Multi holds the errors of an aggregate, in input order. The other fields
+	// of an aggregate are not used.
 	Multi []*Error
+	n     int      // mismatches under an aggregate
+	segs  []string // path segments added while unwinding, innermost first
+	// Direct marks a mismatch between the value and its own target, as opposed
+	// to one found deeper inside it.
+	Direct bool
 	// First is the offset of the earlier key of a "float-key" error.
 	First int
 	// Unknown marks a key that no field of the target struct has.
@@ -155,26 +163,73 @@ func (e *Error) Error() string { return e.Msg }
 // Unwrap returns the hook error, if any.
 func (e *Error) Unwrap() error { return e.Err }
 
-func (e *Error) prepend(seg string) {
-	if e.Multi != nil {
-		for _, m := range e.Multi {
-			m.prepend(seg)
-		}
-		return
-	}
-	var esc []byte
-	esc = append(esc, '/')
+// prepend adds the path segment of an enclosing collection. Segments are kept
+// innermost first and joined once, when the path is read: joining as the error
+// unwinds would copy the whole path at every level. An aggregate keeps one list
+// for all the errors under it, so a level costs the same however many there are.
+func (e *Error) prepend(seg string) { e.segs = append(e.segs, seg) }
+
+// appendSeg appends one escaped path segment, with its leading slash.
+func appendSeg(dst []byte, seg string) []byte {
+	dst = append(dst, '/')
 	for i := 0; i < len(seg); i++ {
 		switch seg[i] {
 		case '~':
-			esc = append(esc, '~', '0')
+			dst = append(dst, '~', '0')
 		case '/':
-			esc = append(esc, '~', '1')
+			dst = append(dst, '~', '1')
 		default:
-			esc = append(esc, seg[i])
+			dst = append(dst, seg[i])
 		}
 	}
-	e.Path = string(esc) + e.Path
+	return dst
+}
+
+// joinPath joins segments, outermost first, into an RFC 6901 pointer.
+func joinPath(segs []string) string {
+	var b []byte
+	for _, s := range segs {
+		b = appendSeg(b, s)
+	}
+	return string(b)
+}
+
+// FullPath is the RFC 6901 pointer of a single error's value.
+func (e *Error) FullPath() string {
+	var b []byte
+	for i := len(e.segs) - 1; i >= 0; i-- {
+		b = appendSeg(b, e.segs[i])
+	}
+	return string(b) + e.Path
+}
+
+// Located is one mismatch of an aggregate with its complete path.
+type Located struct {
+	Err  *Error
+	Path string
+}
+
+// Flatten returns the mismatches of e in input order, each with its complete
+// path. For an error that is not an aggregate it returns e alone. The work is the
+// sum of the path lengths: the segments shared by several mismatches are walked
+// once per mismatch, and there are at most maxCollected of those.
+func (e *Error) Flatten() []Located {
+	var out []Located
+	var walk func(n *Error, prefix []byte)
+	walk = func(n *Error, prefix []byte) {
+		for i := len(n.segs) - 1; i >= 0; i-- {
+			prefix = appendSeg(prefix, n.segs[i])
+		}
+		if n.Multi == nil {
+			out = append(out, Located{Err: n, Path: string(prefix) + n.Path})
+			return
+		}
+		for _, c := range n.Multi {
+			walk(c, prefix)
+		}
+	}
+	walk(e, nil)
+	return out
 }
 
 // withSeg adds a path segment to a binding error as it unwinds; other errors
@@ -208,27 +263,60 @@ func resumable(err error) bool {
 	return ok && be.Resume
 }
 
-// collect adds the resumable error err to pend.
-func collect(pend []*Error, err error) []*Error {
-	be := err.(*Error)
-	if be.Multi != nil {
-		return append(pend, be.Multi...)
+// leaves is the number of mismatches in e.
+func (e *Error) leaves() int {
+	if e.Multi == nil {
+		return 1
 	}
-	return append(pend, be)
+	return e.n
 }
 
-// pending turns the errors a collection gathered into the error it returns when
-// it ends. Past the bound the error is no longer resumable, so decoding stops.
-func pending(pend []*Error) error {
-	switch len(pend) {
-	case 0:
-		return nil
-	case 1:
-		return pend[0]
+// trim returns e cut to its first k mismatches. e is not changed.
+func (e *Error) trim(k int) *Error {
+	if e.leaves() <= k {
+		return e
 	}
-	f := pend[0]
-	agg := &Error{Kind: KindType, Offset: f.Offset, Path: f.Path, GoType: f.GoType, Msg: f.Msg, Resume: len(pend) < maxCollected, Multi: pend}
-	return agg
+	c := *e
+	c.Multi, c.n = nil, 0
+	for _, m := range e.Multi {
+		if k == 0 {
+			break
+		}
+		t := m.trim(k)
+		k -= t.leaves()
+		c.n += t.leaves()
+		c.Multi = append(c.Multi, t)
+	}
+	return &c
+}
+
+// collected gathers the mismatches one collection met. The elements are leaves
+// or aggregates, kept as a tree so that nothing is copied when it is passed up.
+type collected struct {
+	errs []*Error
+	n    int
+}
+
+// add keeps the resumable error err. It reports true when the bound is reached,
+// which ends the read.
+func (c *collected) add(err error) bool {
+	be := err.(*Error).trim(maxCollected - c.n)
+	c.errs = append(c.errs, be)
+	c.n += be.leaves()
+	return c.n >= maxCollected
+}
+
+// result is the error a collection returns when it ends. At the bound it is no
+// longer resumable, so decoding stops.
+func (c *collected) result() error {
+	if c.n == 0 {
+		return nil
+	}
+	if len(c.errs) == 1 && c.n < maxCollected {
+		return c.errs[0]
+	}
+	f := c.errs[0]
+	return &Error{Kind: KindType, Offset: f.Offset, GoType: f.GoType, Msg: f.Msg, Resume: c.n < maxCollected, Multi: c.errs, n: c.n}
 }
 
 type logRange struct{ start, end int }

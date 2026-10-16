@@ -115,7 +115,7 @@ func (e *TypeError) line() string {
 		loc = fmt.Sprintf("line %d, column %d: ", e.Line, e.Column)
 	}
 	if e.Path != "" {
-		return fmt.Sprintf("%s%s: %s", loc, e.Path, e.Msg)
+		return fmt.Sprintf("%s%s: %s", loc, shortPath(e.Path), e.Msg)
 	}
 	return loc + e.Msg
 }
@@ -225,3 +225,14 @@ func unprefix(s string) string {
 
 // Unwrap lets errors.Is match Kind.
 func (e *EditError) Unwrap() error { return e.Kind }
+
+// shortPath keeps the start and end of a very long path for a message, so that
+// a deeply nested value does not make an error text as long as the nesting. The
+// Path field always holds the whole pointer.
+func shortPath(p string) string {
+	const keep = 256
+	if len(p) <= 2*keep {
+		return p
+	}
+	return p[:keep] + "..." + p[len(p)-keep:]
+}

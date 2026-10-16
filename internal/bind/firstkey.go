@@ -2,6 +2,10 @@ package bind
 
 import (
 	"bytes"
+	"errors"
+	"math"
+	"strconv"
+	"strings"
 
 	"oneyaml.dev/go/internal/parse"
 )
@@ -101,4 +105,46 @@ func earlierKey(src []byte, off, mapStart int, text []byte) (first int, ok bool)
 func KeyText(src []byte, off int) (string, bool) {
 	text, _, ok := keyAt(src, off)
 	return string(text), ok
+}
+
+// EarlierRounding finds, for a duplicate key at offset off, an earlier key of the
+// same mapping that reads as the same float64 though it is written differently.
+func EarlierRounding(src []byte, off int) (first int, ok bool) {
+	text, mapStart, found := keyAt(src, off)
+	if !found {
+		return 0, false
+	}
+	later, ok := floatOf(text)
+	if !ok {
+		return 0, false
+	}
+	var buf []byte
+	walkKeys(src, off, func(ev *parse.Event, isKey bool, ms int) bool {
+		if !isKey || ms != mapStart || ev.Start >= off {
+			return true
+		}
+		buf, _ = parse.AppendScalar(buf[:0], src, ev)
+		if f, isF := floatOf(buf); isF && f == later {
+			first, ok = ev.Start, true
+			return false
+		}
+		return true
+	})
+	return first, ok
+}
+
+// floatOf reads a Core schema float, .inf included.
+func floatOf(text []byte) (float64, bool) {
+	t := string(text)
+	switch strings.ToLower(strings.TrimPrefix(t, "+")) {
+	case ".inf":
+		return math.Inf(1), true
+	case "-.inf":
+		return math.Inf(-1), true
+	}
+	f, err := strconv.ParseFloat(t, 64)
+	if err != nil && !errors.Is(err, strconv.ErrRange) {
+		return 0, false
+	}
+	return f, f == f
 }

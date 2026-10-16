@@ -63,6 +63,22 @@ func deref(v reflect.Value) reflect.Value {
 
 // value decodes the node that starts with ev into v, which must be settable.
 func (b *Binder) value(v reflect.Value, ev *parse.Event) error {
+	// A nil pointer is allocated on the way to its target; if the value then
+	// does not fit, the pointer goes back to nil, so a mismatch changes nothing.
+	nilPtr := v.Kind() == reflect.Pointer && v.IsNil()
+	err := b.valueInto(v, ev)
+	if be, ok := err.(*Error); ok && be.Direct {
+		if nilPtr && be.Resume {
+			v.SetZero()
+		}
+		// The mismatch is about this value only; the levels above must not take it
+		// for their own.
+		be.Direct = false
+	}
+	return err
+}
+
+func (b *Binder) valueInto(v reflect.Value, ev *parse.Event) error {
 	for ev.Kind == parse.Alias {
 		b.expand(ev)
 		e, err := b.next()
@@ -84,7 +100,7 @@ func (b *Binder) value(v reflect.Value, ev *parse.Event) error {
 				}
 			} else if be, ok := err.(*Error); ok && be.Kind == KindType && be.Err == nil && be.Category == "" {
 				// The scalar is consumed and the target is untouched.
-				be.Resume = true
+				be.Resume, be.Direct = true, true
 			}
 		}
 		return err
@@ -326,7 +342,7 @@ func (b *Binder) seqInto(v reflect.Value, ev *parse.Event) error {
 			return err
 		}
 		n := 0
-		var pend []*Error
+		var pend collected
 		v.SetLen(0)
 		for {
 			e, err := b.next()
@@ -346,8 +362,8 @@ func (b *Binder) seqInto(v reflect.Value, ev *parse.Event) error {
 				if err = withIdx(err, n); !resumable(err) {
 					return err
 				}
-				if pend = collect(pend, err); len(pend) >= maxCollected {
-					return pending(pend)
+				if pend.add(err) {
+					return pend.result()
 				}
 			}
 			n++
@@ -356,13 +372,13 @@ func (b *Binder) seqInto(v reflect.Value, ev *parse.Event) error {
 		if v.IsNil() {
 			v.Set(reflect.MakeSlice(t, 0, 0))
 		}
-		return pending(pend)
+		return pend.result()
 	case reflect.Array:
 		if err := b.enter(ev); err != nil {
 			return err
 		}
 		i := 0
-		var pend []*Error
+		var pend collected
 		for {
 			e, err := b.next()
 			if err != nil {
@@ -378,8 +394,8 @@ func (b *Binder) seqInto(v reflect.Value, ev *parse.Event) error {
 					if err = withIdx(err, i); !resumable(err) {
 						return err
 					}
-					if pend = collect(pend, err); len(pend) >= maxCollected {
-						return pending(pend)
+					if pend.add(err) {
+						return pend.result()
 					}
 				}
 			} else if err := b.skip(&e); err != nil {
@@ -395,7 +411,7 @@ func (b *Binder) seqInto(v reflect.Value, ev *parse.Event) error {
 				Msg: "invalid array: want " + strconv.Itoa(v.Len()) + " elements but got " + strconv.Itoa(i)}
 		}
 		b.tdepth--
-		return pending(pend)
+		return pend.result()
 	}
 	return b.collMismatch(ev, t, "!!seq")
 }
@@ -496,20 +512,22 @@ func (b *Binder) keyLabel(ke *parse.Event) string {
 type structState struct {
 	seen, weak bits
 	merged     bool
+	// failed holds the keys of the inline map whose value did not fit.
+	failed map[string]struct{}
 }
 
 // structPairs reads the pairs of a mapping, whose start event is consumed, into
 // the struct v until the mapping ends. With weak set the pairs come from a merge
 // source: they fill only fields no explicit key sets.
 func (b *Binder) structPairs(v reflect.Value, dp *dplan, st *structState, weak bool) error {
-	var pend []*Error
+	var pend collected
 	for {
 		ke, err := b.nextKey()
 		if err != nil {
 			return err
 		}
 		if ke.Kind == parse.MappingEnd {
-			return pending(pend)
+			return pend.result()
 		}
 		if ke.Kind != parse.Scalar {
 			return b.typeErr(&ke, v.Type(), "mapping keys must be scalars to decode into "+v.Type().String())
@@ -536,20 +554,20 @@ func (b *Binder) structPairs(v reflect.Value, dp *dplan, st *structState, weak b
 				if err = withSeg(err, "<<"); !resumable(err) {
 					return err
 				}
-				if pend = collect(pend, err); len(pend) >= maxCollected {
-					return pending(pend)
+				if pend.add(err) {
+					return pend.result()
 				}
 			}
 			continue
 		}
 		idx := dp.lookup(kb)
 		if idx < 0 {
-			if err := b.structExtra(v, dp, &ke, kb, &ve, weak); err != nil {
+			if err := b.structExtra(v, dp, st, &ke, kb, &ve, weak); err != nil {
 				if !resumable(err) {
 					return err
 				}
-				if pend = collect(pend, err); len(pend) >= maxCollected {
-					return pending(pend)
+				if pend.add(err) {
+					return pend.result()
 				}
 			}
 			continue
@@ -588,8 +606,8 @@ func (b *Binder) structPairs(v reflect.Value, dp *dplan, st *structState, weak b
 			if err = withSeg(err, f.Name); !resumable(err) {
 				return err
 			}
-			if pend = collect(pend, err); len(pend) >= maxCollected {
-				return pending(pend)
+			if pend.add(err) {
+				return pend.result()
 			}
 		}
 	}
@@ -631,21 +649,21 @@ func (b *Binder) mergeStruct(v reflect.Value, dp *dplan, st *structState, ve *pa
 	if e.Kind != parse.SequenceStart {
 		return one(&e)
 	}
-	var pend []*Error
+	var pend collected
 	for {
 		el, err := b.next()
 		if err != nil {
 			return err
 		}
 		if el.Kind == parse.SequenceEnd {
-			return pending(pend)
+			return pend.result()
 		}
 		if err := one(&el); err != nil {
 			if !resumable(err) {
 				return err
 			}
-			if pend = collect(pend, err); len(pend) >= maxCollected {
-				return pending(pend)
+			if pend.add(err) {
+				return pend.result()
 			}
 		}
 	}
@@ -653,7 +671,7 @@ func (b *Binder) mergeStruct(v reflect.Value, dp *dplan, st *structState, ve *pa
 
 // structExtra handles a key that names no field: it goes to the inline map, is
 // an error under KnownFields, or is skipped.
-func (b *Binder) structExtra(v reflect.Value, dp *dplan, ke *parse.Event, kb []byte, ve *parse.Event, weak bool) error {
+func (b *Binder) structExtra(v reflect.Value, dp *dplan, st *structState, ke *parse.Event, kb []byte, ve *parse.Event, weak bool) error {
 	if im := dp.inline; im != nil {
 		mv, ok := fieldByIndexAlloc(v, im.Index)
 		if ok {
@@ -671,8 +689,17 @@ func (b *Binder) structExtra(v reflect.Value, dp *dplan, ke *parse.Event, kb []b
 				}
 				return withSeg(b.dupKey(ke.Start), key.String())
 			}
+			if _, ok := st.failed[key.String()]; ok && !weak {
+				return withSeg(b.dupKey(ke.Start), key.String())
+			}
 			el := reflect.New(mt.Elem()).Elem()
 			if err := b.value(el, ve); err != nil {
+				if resumable(err) && !weak {
+					if st.failed == nil {
+						st.failed = map[string]struct{}{}
+					}
+					st.failed[key.String()] = struct{}{}
+				}
 				return withSeg(err, key.String())
 			}
 			mv.SetMapIndex(key, el)
@@ -712,9 +739,12 @@ func fieldByIndexAlloc(v reflect.Value, idx []int) (reflect.Value, bool) {
 }
 
 type mapState struct {
-	kv, ev      reflect.Value
-	fresh       bool
-	seen, weak  map[any]struct{}
+	kv, ev     reflect.Value
+	fresh      bool
+	seen, weak map[any]struct{}
+	// failed holds the keys whose value did not fit. They are not in the map, so
+	// a later repeat of one would otherwise pass as a new key.
+	failed      map[any]struct{}
 	track       bool
 	merged      bool
 	keyIsString bool
@@ -735,14 +765,14 @@ func (b *Binder) mapTyped(v reflect.Value) error {
 }
 
 func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
-	var pend []*Error
+	var pend collected
 	for {
 		ke, err := b.nextKey()
 		if err != nil {
 			return err
 		}
 		if ke.Kind == parse.MappingEnd {
-			return pending(pend)
+			return pend.result()
 		}
 		if ke.Kind != parse.Scalar {
 			return b.typeErr(&ke, v.Type().Key(), "mapping keys must be scalars to decode into "+v.Type().String())
@@ -771,7 +801,7 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 				}
 				return err
 			}
-			if st.track {
+			if st.track || st.failed != nil {
 				ki = st.kv.Interface()
 			}
 		}
@@ -790,8 +820,8 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 				if err = withSeg(err, "<<"); !resumable(err) {
 					return err
 				}
-				if pend = collect(pend, err); len(pend) >= maxCollected {
-					return pending(pend)
+				if pend.add(err) {
+					return pend.result()
 				}
 			}
 			continue
@@ -825,14 +855,25 @@ func (b *Binder) mapPairs(v reflect.Value, st *mapState, weak bool) error {
 				delete(st.weak, ki)
 			}
 		}
+		if st.failed != nil && !weak && !merge {
+			if _, ok := st.failed[ki]; ok {
+				return withSeg(b.dupKey(ke.Start), b.keyLabel(&ke))
+			}
+		}
 		st.ev.SetZero()
 		if err := b.value(st.ev, &ve); err != nil {
 			if err = withSeg(err, b.keyLabel(&ke)); !resumable(err) {
 				return err
 			}
-			// The entry is not added.
-			if pend = collect(pend, err); len(pend) >= maxCollected {
-				return pending(pend)
+			// The entry is not added, but its key is remembered.
+			if !weak {
+				if st.failed == nil {
+					st.failed = map[any]struct{}{}
+				}
+				st.failed[st.kv.Interface()] = struct{}{}
+			}
+			if pend.add(err) {
+				return pend.result()
 			}
 			continue
 		}
@@ -882,21 +923,21 @@ func (b *Binder) mergeMap(v reflect.Value, st *mapState, ve *parse.Event) error 
 	if e.Kind != parse.SequenceStart {
 		return one(&e)
 	}
-	var pend []*Error
+	var pend collected
 	for {
 		el, err := b.next()
 		if err != nil {
 			return err
 		}
 		if el.Kind == parse.SequenceEnd {
-			return pending(pend)
+			return pend.result()
 		}
 		if err := one(&el); err != nil {
 			if !resumable(err) {
 				return err
 			}
-			if pend = collect(pend, err); len(pend) >= maxCollected {
-				return pending(pend)
+			if pend.add(err) {
+				return pend.result()
 			}
 		}
 	}
