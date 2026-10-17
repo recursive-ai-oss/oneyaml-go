@@ -86,14 +86,11 @@ func TestKitBoundedBothPaths(t *testing.T) {
 				// on peak resident memory, which is measured by the caller.
 				allocMB := float64(ms1.TotalAlloc-ms0.TotalAlloc) / (1 << 20)
 				t.Logf("%s: %v, %.0f MB allocated, err=%v", p.name, elapsed.Round(time.Millisecond), allocMB, err != nil)
-				// The race detector slows everything several times over, so the time
-				// bound is stretched under it.
-				bound := c.Expect.TimeSeconds
-				if raceEnabled {
-					bound *= 8
-				}
-				if elapsed.Seconds() > bound {
-					t.Errorf("%s took %v, bound %vs", p.name, elapsed, bound)
+				// The case's time limit is a hang guard, not a speed check: it sits far
+				// above any reader that finishes, so only a stuck read trips it. Speed
+				// is measured by the benchmarks; the memory bound below is the real check.
+				if elapsed.Seconds() > c.Expect.TimeSeconds {
+					t.Errorf("%s took %v, hang guard %vs", p.name, elapsed, c.Expect.TimeSeconds)
 				}
 				if allocMB > c.Expect.MemoryMB {
 					t.Errorf("%s allocated %.0f MB, bound %v MB", p.name, allocMB, c.Expect.MemoryMB)

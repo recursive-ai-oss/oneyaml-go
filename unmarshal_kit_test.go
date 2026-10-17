@@ -211,8 +211,9 @@ func TestKitSchemaAndSafety(t *testing.T) {
 			}
 		case "bounded":
 			events := c.Operation.Type == "events"
+			// The time limit is a hang guard, not a speed check; memory is the real bound.
 			if elapsed.Seconds() > c.Expect.TimeSeconds {
-				problem = fmt.Sprintf("took %v, bound %vs", elapsed, c.Expect.TimeSeconds)
+				problem = fmt.Sprintf("took %v, hang guard %vs", elapsed, c.Expect.TimeSeconds)
 			} else if allocMB > c.Expect.MemoryMB {
 				problem = fmt.Sprintf("allocated %.0f MB, bound %v MB", allocMB, c.Expect.MemoryMB)
 			} else if events {
