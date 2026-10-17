@@ -173,6 +173,25 @@ func (c *lineCursor) pos(off int) (line, col int) {
 	if stepCount != nil {
 		stepCount.Add(int64(off - c.off))
 	}
+	if c.marks == nil && off > c.off {
+		if seg := c.src[c.off:off]; bytes.IndexByte(seg, '\r') < 0 {
+			// No carriage return in the stretch: count line breaks and the
+			// characters after the last one with byte-search primitives, which
+			// beat a per-byte switch on the long runs between two nodes.
+			if n := bytes.Count(seg, []byte{'\n'}); n > 0 {
+				c.line += n
+				c.col = 1
+				seg = seg[bytes.LastIndexByte(seg, '\n')+1:]
+			}
+			for _, b := range seg {
+				if b&0xC0 != 0x80 {
+					c.col++
+				}
+			}
+			c.off = off
+			return c.line, c.col
+		}
+	}
 	for c.off < off {
 		if c.marks != nil && c.off%markStride == 0 {
 			c.mark()

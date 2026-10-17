@@ -147,17 +147,20 @@ func (b *builder) insideScalar(off int) bool {
 }
 
 func lineStart(src []byte, i int) int {
-	for i > 0 && src[i-1] != '\n' {
-		i--
+	if i <= 0 {
+		return i
 	}
-	return i
+	return bytes.LastIndexByte(src[:min(i, len(src))], '\n') + 1
 }
 
 func lineEnd(src []byte, i int) int {
-	for i < len(src) && src[i] != '\n' {
-		i++
+	if i >= len(src) {
+		return i
 	}
-	return i
+	if j := bytes.IndexByte(src[i:], '\n'); j >= 0 {
+		return i + j
+	}
+	return len(src)
 }
 
 // lineComment returns the comment that starts on the line of offset i after
