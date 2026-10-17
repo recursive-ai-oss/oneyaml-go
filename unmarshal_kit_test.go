@@ -31,15 +31,13 @@ type kitCase struct {
 	} `json:"operation"`
 	kitcase.Meta
 	Expect struct {
-		Kind     string          `json:"kind"`
-		Value    json.RawMessage `json:"value"`
-		File     string          `json:"file"`
-		Category any             `json:"category"`
-		Error    any             `json:"error"`
+		Kind string `json:"kind"`
+		kitcase.Source
+		Category any `json:"category"`
+		Error    any `json:"error"`
 		Accept   *struct {
-			Kind  string          `json:"kind"`
-			Value json.RawMessage `json:"value"`
-			File  string          `json:"file"`
+			Kind string `json:"kind"`
+			kitcase.Source
 		} `json:"accept"`
 		TimeSeconds float64 `json:"time_seconds"`
 		MemoryMB    float64 `json:"memory_mb"`
@@ -84,7 +82,10 @@ func decodeKitValues(raw []byte) ([]any, error) {
 	if err := dec.Decode(&v); err != nil {
 		return nil, err
 	}
-	docs, _ := v.([]any)
+	docs, ok := v.([]any)
+	if !ok {
+		return nil, fmt.Errorf("expected value is not a list of documents")
+	}
 	return docs, nil
 }
 
@@ -200,7 +201,7 @@ func TestKitSchemaAndSafety(t *testing.T) {
 				skipped++
 				continue
 			}
-			problem = checkKitValue(c.dir, c.Expect.Value, c.Expect.File, docs, gotErr)
+			problem = checkKitValue(c.dir, c.Expect.Source, docs, gotErr)
 		case "error":
 			switch {
 			case gotErr == nil:
@@ -231,7 +232,7 @@ func TestKitSchemaAndSafety(t *testing.T) {
 			case c.Expect.Accept == nil:
 				problem = "answered, but only an error is allowed"
 			default:
-				problem = checkKitValue(c.dir, c.Expect.Accept.Value, c.Expect.Accept.File, docs, nil)
+				problem = checkKitValue(c.dir, c.Expect.Accept.Source, docs, nil)
 			}
 		default:
 			skipped++
@@ -250,17 +251,13 @@ func TestKitSchemaAndSafety(t *testing.T) {
 	}
 }
 
-func checkKitValue(dir string, inline json.RawMessage, file string, got []any, gotErr error) string {
+func checkKitValue(dir string, src kitcase.Source, got []any, gotErr error) string {
 	if gotErr != nil {
 		return "error: " + gotErr.Error()
 	}
-	raw := []byte(inline)
-	if file != "" {
-		var err error
-		if raw, err = os.ReadFile(filepath.Join(dir, file)); err != nil {
-			return err.Error()
-		}
-		// A file holds the documents as a list or as one document per case.
+	raw, err := src.Read(dir, true)
+	if err != nil {
+		return "bad expectation: " + err.Error()
 	}
 	want, err := decodeKitValues(raw)
 	if err != nil {

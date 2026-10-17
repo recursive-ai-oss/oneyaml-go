@@ -38,8 +38,8 @@ type kitCase struct {
 		Document    int             `json:"document"`
 	} `json:"operation"`
 	Expect struct {
-		Kind      string `json:"kind"`
-		File      string `json:"file"`
+		Kind string `json:"kind"`
+		kitcase.Source
 		Category  string `json:"category"`
 		Unchanged bool   `json:"unchanged"`
 	} `json:"expect"`
@@ -223,8 +223,10 @@ func TestKitEditCases(t *testing.T) {
 		var problem string
 		switch kc.Expect.Kind {
 		case "bytes":
-			want, _ := os.ReadFile(filepath.Join(dir, kc.Expect.File))
+			want, wantErr := kc.Expect.Source.Read(dir, false)
 			switch {
+			case wantErr != nil:
+				problem = "bad expectation: " + wantErr.Error()
 			case opErr != nil:
 				problem = "unexpected error: " + opErr.Error()
 			case !bytes.Equal(d.Bytes(), want):
