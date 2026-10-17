@@ -1,85 +1,36 @@
 # Performance
 
-This page compares the time and memory of oneyaml-go with those of the other Go YAML libraries. Every library runs the same tasks on the same inputs, through the benchmark of [oneyaml-kit](https://github.com/recursive-ai-oss/oneyaml-kit), the kit shared by the oneyaml libraries. The tables under [Results](#results) are generated from the kit's result file, and none of their numbers is typed by hand. The summary at the top of the [README](../README.md) is generated from the same file.
+Time and memory of oneyaml-go against the other Go YAML libraries, on the same tasks and inputs, measured with the benchmark of [oneyaml-kit](https://github.com/recursive-ai-oss/oneyaml-kit). Every table on this page is generated from the kit's result file.
 
-The figures are measured, not bounds. They describe these inputs on this machine, and your files and hardware will give other numbers.
+## Results at a glance
 
-## About this run
+How many times faster oneyaml-go is than the strongest competitor on each task, over the real-world files of that task:
 
-- **Library:** oneyaml-go 1.0.0. The figures are for the code released as `v1.0.0`, at commit `eea67bb`; the tag sits on a later commit that changes no library code. This page is generated again from a new run at each release.
-- **Competitors:** `go.yaml.in/yaml/v3`, the maintained fork of yaml.v3 (`yaml-v3` in the tables), `go.yaml.in/yaml/v4` (`yaml-v4`), `gopkg.in/yaml.v2` (`yaml-v2`), `sigs.k8s.io/yaml` (`sigs-yaml`) and `github.com/goccy/go-yaml` (`goccy-go-yaml`). For patches, they are `github.com/palantir/pkg/yamlpatch` with its yaml.v3 back end (`palantir-yamlpatch`) and with its goccy/go-yaml back end (`palantir-yamlpatch-goccy`), and `github.com/evanphx/json-patch/v5` on top of sigs.k8s.io/yaml (`json-patch`). The method line under each table gives the exact versions.
-- **Machine and date:** a full run on 2026-10-16, on a shared workstation, not a reserved machine. Other work ran on it at the same time, and the method line under each table records the host's load before the run, after it and at its highest during it. The cells run one after another, so a busy moment slows only the cells measured during it, ours or a competitor's; weigh a close result with that in mind. The method line also gives the CPU, the operating system and the Go version.
-- **Kit:** revision [`0abba1d`](https://github.com/recursive-ai-oss/oneyaml-kit/tree/0abba1d8b4f2088881710b5835c24bf9eca149b9). The kit's [benchmark notes](https://github.com/recursive-ai-oss/oneyaml-kit/blob/0abba1d8b4f2088881710b5835c24bf9eca149b9/docs/benchmarks.md) at that revision describe the method in full. This page summarises them.
+<!-- generated:bench-hero -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/oneyaml-go-hero-dark.svg">
+  <img alt="Bar chart of the table below: how many times faster oneyaml-go is than the strongest competitor on each task, log scale, higher is better. 6 tasks: 6 better, 0 level, 0 mixed, 0 worse, 0 not comparable." src="img/oneyaml-go-hero-light.svg">
+</picture>
 
-## What is measured
+| Task | `oneyaml-go` time (geometric mean) | Strongest competitor | Its time (geometric mean) | Speed against it (its time ÷ ours; higher is better) | Verdict |
+|---|---|---|---|---|---|
+| typed load | 121 µs | `yaml-v2 v2.4.0` | 234 µs | 1.94× faster | ▲ win |
+| generic load | 48.1 µs | `yaml-v2 v2.4.0` (6 of 7), `yaml-v3 v3.0.5` (1 of 7) | 135 µs | 2.79× faster | ▲ win |
+| dump | 9.5 µs | `yaml-v2 v2.4.0` (5 of 6), `yaml-v4 v4.0.0-rc.6` (1 of 6) | 114 µs | 12.0× faster | ▲ win |
+| document parse | 86.3 µs | `yaml-v3 v3.0.5` (2 of 3), `yaml-v4 v4.0.0-rc.6` (1 of 3) | 415 µs | 4.81× faster | ▲ win |
+| edit script | 13.7 µs | `yaml-v3 v3.0.5` | 284 µs | 20.7× faster | ▲ win |
+| patch (RFC 6902) | 15.7 µs † (text API) | `json-patch v5.9.11` † (json-patch: text API, value-only) | 92.1 µs | 5.87× faster | ▲ win |
 
-### Tasks
+Not in a row's mean: document parse: no competitor answer: `compose-wordpress`, `gha-workflow`, `openapi-api-with-examples`, `prometheus-config`; edit script: no competitor answer: `compose-wordpress`, `gha-workflow`, `openapi-api-with-examples`, `prometheus-config`; patch (RFC 6902): no competitor answer: `gha-workflow`.
 
-Each task starts from a state that is built outside the clock, fresh for every iteration, with one exception. In unchanged emit, a write can take nanoseconds, so a library whose write of a used document allocates the same as a write of a fresh one shares one parsed document between iterations. oneyaml-go's write allocates nothing either way. The timed work is what a caller of the library does.
+Each row is the geometric mean, over the real-world workloads the task has, of our time and of the time of the strongest competitor in each workload. Speed is the competitor's time divided by ours: 2× faster means half the time, and a loss is stated as slower. Where several competitors were strongest the column names them all, with how often. A † marks a cell measured differently from the task as specified; the note beside each mark says how. A marked competitor still counts. A workload where our library has no number is listed and the row is marked as partial, never counted as a win. The verdict is never better than the per-workload verdicts allow: a row with a losing workload is marked mixed or loss, and a row with no winning workload is never marked a win. Memory and the count of better, level and worse workloads in each row are on the full page.
 
-| Task | Timed work, as oneyaml-go does it | The answer is accepted when |
-|---|---|---|
-| typed load | `Unmarshal` into Go structs | the structs, written as JSON, equal the expected value |
-| generic load | `Unmarshal` into `any`, or a `Decoder` for every document of a stream | the value, written as JSON, equals the expected value |
-| dump | `Marshal` of the library's own value tree, which was read from the input | two independent reference parsers read the text back to the expected value |
-| document parse | `Parse` into a `Document` that keeps comments, spacing and styles | the document holds the expected value and writes the input back byte for byte |
-| unchanged emit | `Document.Bytes` on a document that was not edited | the bytes equal the input |
-| edit script | a fixed list of replacements and removals with `Document.Set` and `Document.Remove`, then `Document.Bytes` | the bytes equal the expected bytes exactly: only the edited values change, each in its own style |
-| patch (RFC 6902) | `Parse`, `Document.Apply` with a JSON Patch, then `Document.Bytes` | the bytes equal the expected bytes, and a second patch with a failing step leaves the text unchanged and returns an error |
+Method: **full run** of 2026-10-16T21:48:45Z. Kit 0.1.0 (revision 0abba1d8b4f2); text generated by kit revision 11d786eb9974. `oneyaml-go eea67bb6b962`; competitors `yaml-v3 v3.0.5`, `yaml-v4 v4.0.0-rc.6`, `yaml-v2 v2.4.0`, `sigs-yaml v1.6.0`, `goccy-go-yaml v1.19.2`, `palantir-yamlpatch v1.5.0`, `palantir-yamlpatch-goccy v1.5.0`, `json-patch v5.9.11`. Runtime go1.26.0 (target linux/amd64), measured with testing.B: ns/op from testing.Benchmark at benchtime 1s. Memory: B/op and allocs/op from testing.B (ReportAllocs). AMD Ryzen 9 7950X3D 16-Core Processor (125.0 GiB), Linux 7.0.0-34-generic (x86_64), measured on a shared workstation (32 logical CPUs; load 2.67 before, 4.06 after, at most 11.23 during).
+<!-- end generated -->
 
-The competitors do the same work through their own APIs. For the document tasks that means yaml.v3's and yaml/v4's `Node` and goccy/go-yaml's AST. In the Go harness, every library's patch is timed from text to text: read the file, apply the patch, and write the text back. A library that cannot do a task at all, such as a library with no lossless document, gets an "unsupported" cell, which is not a loss.
+## All results
 
-### Workloads
-
-The inputs are real files, vendored byte for byte with their source and licence: a GitHub Actions workflow, a Compose file, Helm chart values, two OpenAPI descriptions, a multi-document Kubernetes manifest and a Prometheus configuration. Generated inputs add typed records, Compose files with anchors and merge keys, Kubernetes streams, OpenAPI and Helm-style documents and a flat wide mapping at several sizes, and stress shapes: deep nesting, long scalars of every style, flow-heavy data, anchors and aliases, Unicode, and every scalar style and chomping mode. Two small reference cases edit a block scalar. The kit's notes at the run's revision list them under [Workloads](https://github.com/recursive-ai-oss/oneyaml-kit/blob/0abba1d8b4f2088881710b5835c24bf9eca149b9/docs/benchmarks.md#workloads).
-
-The expected values do not come from any of the libraries being measured. A generated input and its value come from the same generator. A real file's value is accepted only when two independent YAML 1.2 parsers agree on it. The expected bytes after an edit are exact text substitutions on the input.
-
-### The correctness check before timing
-
-Each library's answer is checked before it is timed. A library gets a number only if its answer was right. A wrong answer is marked "differs" and a refused input is marked "rejects", and neither carries a time or a memory figure. The report of the run lists every such cell with the first difference the check found. See the [correctness guard](https://github.com/recursive-ai-oss/oneyaml-kit/blob/0abba1d8b4f2088881710b5835c24bf9eca149b9/docs/benchmarks.md#correctness-guard) in the kit's notes at the run's revision.
-
-### Time and memory
-
-The time is the ns/op that Go's `testing.Benchmark` reports, so it is a mean over the iterations of the benchmark. In a full run each cell runs for Go's standard benchtime of one second. The memory figures are the bytes and allocations per operation that `testing.B` reports with `ReportAllocs`. They count what was allocated during the timed work, not the peak size of the heap.
-
-### Reading the tables
-
-Each row compares oneyaml-go with the strongest competitor in that row: the fastest for time, and the one that allocated least for memory. The ratio is our figure divided by theirs, so below 1.0× is better for oneyaml-go. A small gap counts as a tie (the kit's [verdicts](https://github.com/recursive-ai-oss/oneyaml-kit/blob/0abba1d8b4f2088881710b5835c24bf9eca149b9/docs/benchmarks.md#verdicts) at the run's revision give the bands: under 5% for time and 2% for memory), and a loss is marked ▼.
-
-
-A note in parentheses after a time names the answer a competitor was checked against when it is not the plain one. *(merged)* means it applied `<<` merge keys while loading, a YAML 1.1 extension, and was checked against the merged value; YAML 1.2, and oneyaml-go by default, read `<<` as an ordinary key. Such a cell did different work from ours and is still compared with. *(value-only)* is explained by the † below.
-
-A † marks a cell that was not measured on exactly the task as specified, for example json-patch, which works on JSON and so cannot keep the text of the file. It is still compared with. In this Go run every patch cell carries a † for "text API", ours included: every library's patch is timed from the input text to the output text, and the palantir-yamlpatch cells passed the same byte-for-byte check as ours, so that mark does not mean less work. Only the "value-only" json-patch cells were judged more loosely. So on a patch cell in this run, a † says how the cell was measured, not that it did less work.
-
-The README summary takes, for each task, the geometric mean over the real-world files that task has. It states the ratio the other way round, as how many times faster oneyaml-go was: the competitor's time divided by ours, so higher is better there. The tables below show every workload.
-
-## Unchanged emit
-
-The unchanged-emit ratio is much further below 1.0× than that of any other row, and it does not measure how fast oneyaml-go renders YAML. A `Document` keeps the text it parsed. `Bytes` on a document that was not edited returns that text without copying it, so its cost does not grow with the size of the file. The competitors build their text again from a `Node` tree or an AST. The task measures what a caller pays to write back a file they did not change, which is a real use, but the gap comes from not rendering, not from rendering faster. For the time it takes to write YAML from values, see the dump row. For the time an edit takes, including writing the result, see the edit-script row.
-
-## Rows with no rival
-
-A row says "no rival" when oneyaml-go gave a correct answer and no competitor did. There is no comparison in such a row, so it is not a win and it is not counted as one. In this run those rows are:
-
-- **document parse, unchanged emit and edit script** on several real files and generated inputs: the competitors' documents did not write the input back byte for byte. They changed blank lines, indentation, quoting or escapes, or the layout of a flow collection. In the edit script on the `reference-b` case, goccy/go-yaml also wrote the edited block scalar as a plain scalar, so the text lost its style.
-- **dump** on the typed-records inputs: the text the competitors wrote did not read back to the expected value. For example, a float with a whole-number value came back as an integer, or a string of digits lost its quotes and came back as a number.
-- **patch** on the GitHub Actions workflow: the competitors' output differed from the expected bytes, or the patch was refused.
-
-The report of the run gives the first difference for each of these cells.
-
-## Reproducing the run
-
-From a checkout of [oneyaml-kit](https://github.com/recursive-ai-oss/oneyaml-kit) at the revision above, with `KIT_ONEYAML_GO_SRC` set to a checkout of this repository at `v1.0.0`:
-
-```sh
-bin/bench run --mode full --lang go
-bin/bench readme --results out --library oneyaml-go --readme <oneyaml-go>/README.md --docs <oneyaml-go>/docs --charts docs/img
-```
-
-The first command writes the result file, a report with every cell and charts under `out/bench`. The second writes the generated blocks of this page and of the README, and the README's charts. The blocks on this page were written by `bin/bench readme` at the run's kit revision, from that result file. A full run is a result wherever it runs, and its method line says what kind of machine it ran on and, for a local machine, the host's load. A quick run, or a run started with `--smoke`, is labelled a smoke result. It shows the layout and the rough picture but it is not a claim, and `bin/bench readme` refuses it unless you pass `--allow-smoke`, which labels every block.
-
-## Results
+Every workload, with time and then memory. Here the ratio is ours ÷ the strongest competitor's, so below 1.0× is better for oneyaml-go.
 
 <!-- generated:bench-full -->
 **Time per operation**
@@ -431,5 +382,70 @@ Cells without a number, with what the correctness guard found:
 
 Relative figures are ours ÷ the strongest competitor in that row, so below 1.0× is better for us and ▼ marks a loss. A † marks a cell measured differently from the task as specified; the note beside each mark says how. Cells without a number say why.
 
-Method: **full run** of 2026-10-16T21:48:45Z. Kit revision 0abba1d8b4f2. `oneyaml-go eea67bb6b962`; competitors `yaml-v3 v3.0.5`, `yaml-v4 v4.0.0-rc.6`, `yaml-v2 v2.4.0`, `sigs-yaml v1.6.0`, `goccy-go-yaml v1.19.2`, `palantir-yamlpatch v1.5.0`, `palantir-yamlpatch-goccy v1.5.0`, `json-patch v5.9.11`. Runtime go1.26.0 (target linux/amd64), measured with testing.B: ns/op from testing.Benchmark at benchtime 1s. Memory: B/op and allocs/op from testing.B (ReportAllocs). AMD Ryzen 9 7950X3D 16-Core Processor (125.0 GiB), Linux 7.0.0-34-generic (x86_64), measured on a shared workstation (32 logical CPUs; load 2.67 before, 4.06 after, at most 11.23 during).
+Method: **full run** of 2026-10-16T21:48:45Z. Kit 0.1.0 (revision 0abba1d8b4f2); text generated by kit revision 11d786eb9974. `oneyaml-go eea67bb6b962`; competitors `yaml-v3 v3.0.5`, `yaml-v4 v4.0.0-rc.6`, `yaml-v2 v2.4.0`, `sigs-yaml v1.6.0`, `goccy-go-yaml v1.19.2`, `palantir-yamlpatch v1.5.0`, `palantir-yamlpatch-goccy v1.5.0`, `json-patch v5.9.11`. Runtime go1.26.0 (target linux/amd64), measured with testing.B: ns/op from testing.Benchmark at benchtime 1s. Memory: B/op and allocs/op from testing.B (ReportAllocs). AMD Ryzen 9 7950X3D 16-Core Processor (125.0 GiB), Linux 7.0.0-34-generic (x86_64), measured on a shared workstation (32 logical CPUs; load 2.67 before, 4.06 after, at most 11.23 during).
 <!-- end generated -->
+
+Notes on the cells:
+
+- *(merged)*: the competitor applied `<<` merge keys while loading, a YAML 1.1 extension, and was checked against the merged value. oneyaml-go reads `<<` as an ordinary key by default.
+- †: every patch cell, ours included, is timed from input text to output text. *(value-only)* marks the json-patch cells, which work on JSON, so only the value was checked, not the text.
+
+## Unchanged emit
+
+This row is not a rendering speed. A `Document` keeps the text it parsed, and `Bytes` on an unedited document returns that text without copying it, so its cost does not grow with the file. The competitors render their tree again. For writing YAML from values see the dump row; for an edit and its write-back see the edit-script row.
+
+## Rows with no rival
+
+"No rival" means oneyaml-go answered correctly and no competitor did, so there is no comparison and the row is not counted as a win. In this run:
+
+- **document parse, unchanged emit and edit script** on several files: the competitors' documents changed blank lines, indentation, quoting, escapes or flow layout when writing the input back.
+- **dump** on the typed-records inputs: the competitors' text did not read back to the same value, for example a whole-number float came back as an integer.
+- **patch** on the GitHub Actions workflow: the competitors' output differed from the expected bytes, or the patch was refused.
+
+The numbered list under the tables gives the first difference for each such cell.
+
+## Method
+
+### About this run
+
+- **Library:** oneyaml-go 1.0.0: the code released as `v1.0.0`, at commit `eea67bb`. The tag sits on a later commit that changes no library code.
+- **Competitors:** `go.yaml.in/yaml/v3`, the maintained fork of yaml.v3 (`yaml-v3`), `go.yaml.in/yaml/v4` (`yaml-v4`), `gopkg.in/yaml.v2` (`yaml-v2`), `sigs.k8s.io/yaml` (`sigs-yaml`) and `github.com/goccy/go-yaml` (`goccy-go-yaml`). For patches: `github.com/palantir/pkg/yamlpatch` with its yaml.v3 back end (`palantir-yamlpatch`) and its goccy/go-yaml back end (`palantir-yamlpatch-goccy`), and `github.com/evanphx/json-patch/v5` on top of sigs.k8s.io/yaml (`json-patch`). The method line under each table gives the versions.
+- **Machine and date:** a full run on 2026-10-16 on a shared workstation, not a reserved machine. The method line records the CPU, the operating system, the Go version and the host's load during the run.
+- **Kit:** revision [`0abba1d`](https://github.com/recursive-ai-oss/oneyaml-kit/tree/0abba1d8b4f2088881710b5835c24bf9eca149b9). Its [benchmark notes](https://github.com/recursive-ai-oss/oneyaml-kit/blob/0abba1d8b4f2088881710b5835c24bf9eca149b9/docs/benchmarks.md) at the run's revision describe the method in full.
+
+### Tasks
+
+| Task | Timed work, as oneyaml-go does it | The answer is accepted when |
+|---|---|---|
+| typed load | `Unmarshal` into Go structs | the structs, written as JSON, equal the expected value |
+| generic load | `Unmarshal` into `any`, or a `Decoder` for every document of a stream | the value, written as JSON, equals the expected value |
+| dump | `Marshal` of the library's own value tree, read from the input | two independent reference parsers read the text back to the expected value |
+| document parse | `Parse` into a `Document` | the document holds the expected value and writes the input back byte for byte |
+| unchanged emit | `Document.Bytes` on a document that was not edited | the bytes equal the input |
+| edit script | a fixed list of `Document.Set` and `Document.Remove` calls, then `Document.Bytes` | the bytes equal the expected bytes exactly |
+| patch (RFC 6902) | `Parse`, `Document.Apply` with a JSON Patch, then `Document.Bytes` | the bytes equal the expected bytes, and a second patch with a failing step leaves the text unchanged |
+
+The competitors do the same work through their own APIs: yaml.v3's and yaml/v4's `Node` and goccy/go-yaml's AST for the document tasks. A library that cannot do a task gets an "unsupported" cell, which is not a loss. Setup happens outside the clock, fresh for every iteration; in unchanged emit, a library whose write allocates the same on a used document as on a fresh one shares one parsed document between iterations.
+
+### Workloads
+
+Real files, vendored byte for byte with their source and licence: a GitHub Actions workflow, a Compose file, Helm chart values, two OpenAPI descriptions, a multi-document Kubernetes manifest and a Prometheus configuration. Generated inputs add typed records, Compose files with merge keys, Kubernetes streams, OpenAPI and Helm-style documents and a wide mapping at several sizes, plus stress shapes: deep nesting, long scalars, flow-heavy data, anchors, Unicode and every scalar style. The kit's notes list them under [Workloads](https://github.com/recursive-ai-oss/oneyaml-kit/blob/0abba1d8b4f2088881710b5835c24bf9eca149b9/docs/benchmarks.md#workloads) at the run's revision.
+
+### The correctness check before timing
+
+Each answer is checked before it is timed, and only a correct answer gets a number. A wrong answer is marked "differs" and a refused input "rejects". The expected values come from none of the libraries measured: a generated input and its value come from one generator, a real file's value is accepted only when two independent YAML 1.2 parsers agree on it, and the expected bytes after an edit are exact text substitutions. See the [correctness guard](https://github.com/recursive-ai-oss/oneyaml-kit/blob/0abba1d8b4f2088881710b5835c24bf9eca149b9/docs/benchmarks.md#correctness-guard) at the run's revision.
+
+### Time and memory
+
+Time is the ns/op of Go's `testing.Benchmark`, a mean over the iterations, with each cell run for the standard benchtime of one second. Memory is the bytes and allocations per operation that `testing.B` reports with `ReportAllocs`: what the timed work allocated, not the peak heap. A gap under 5% for time or 2% for memory is a tie (the kit's [verdicts](https://github.com/recursive-ai-oss/oneyaml-kit/blob/0abba1d8b4f2088881710b5835c24bf9eca149b9/docs/benchmarks.md#verdicts) at the run's revision).
+
+### Reproducing the run
+
+From a checkout of [oneyaml-kit](https://github.com/recursive-ai-oss/oneyaml-kit) at the revision above, with `KIT_ONEYAML_GO_SRC` set to a checkout of this repository at `v1.0.0`:
+
+```sh
+bin/bench run --mode full --lang go
+bin/bench readme --results out --library oneyaml-go --readme <oneyaml-go>/README.md --docs <oneyaml-go>/docs --charts docs/img
+```
+
+The first command writes the result file, a report of every cell and charts under `out/bench`. The second writes the generated blocks of this page and the README, and the charts. A quick run, or one started with `--smoke`, is a smoke result: `bin/bench readme` refuses it unless you pass `--allow-smoke`, which labels every block.

@@ -12,7 +12,7 @@ By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Setup
 
-You need a supported Go version (see [Stability](README.md#stability)) and [staticcheck](https://staticcheck.dev/). Clone the repository and run:
+You need a supported Go version (see [Go versions](docs/stability.md#go-versions)) and [staticcheck](https://staticcheck.dev/). Clone the repository and run:
 
 ```sh
 go test ./...
@@ -28,7 +28,7 @@ Before you send a pull request, run the local pre-merge check:
 tools/gate
 ```
 
-It runs `gofmt`, `go vet`, `staticcheck` and `go test -short` in every module, then a text check over the files you changed against `main` (set `GATE_BASE` to compare with another branch). CI runs these checks too, with the tests on every Go version listed under [Stability](README.md#stability). Its text check also reads a pattern list that CI supplies through `PUBLICTEXT_PATTERNS`; you do not need that list to run the gate.
+It runs `gofmt`, `go vet`, `staticcheck` and `go test -short` in every module, then a text check over the files you changed against `main` (set `GATE_BASE` to compare with another branch). CI runs these checks too, with the tests on every Go version listed under [Go versions](docs/stability.md#go-versions). Its text check also reads a pattern list that CI supplies through `PUBLICTEXT_PATTERNS`; you do not need that list to run the gate.
 
 For a change to the parser, the decoder, edits or patches, also run the whole suite, `go test ./...`, and where it applies the fuzz targets, for example `go test -run '^$' -fuzz FuzzDocument -fuzztime 2m .`.
 

@@ -1,29 +1,25 @@
 # Migrating from yaml.v3
 
-Two ways to move from `gopkg.in/yaml.v3` (or `go.yaml.in/yaml/v3`): keep your code and swap the import to the `compat/yamlv3` adapter, or move to the `oneyaml` API. The first keeps your call sites, and the [checklist](#check-after-the-swap) below covers where its behaviour can differ. The second reads YAML 1.2 with the Core schema and gives you minimal-diff edits.
+How to move from `gopkg.in/yaml.v3` (or `go.yaml.in/yaml/v3`): swap the import to the `compat/yamlv3` adapter and keep your code, or move to the `oneyaml` API for YAML 1.2 and edits that keep the file.
 
 ## Migration audit
 
-Search your code and your data for these before you move. Each item links to its details.
+Search your code and data for these before you move:
 
-- **Hooks and fields that use gopkg.in/yaml.v3's own `Node`.** An `UnmarshalYAML(*yaml.Node) error` that takes the original package's node, often in a module you do not own, and a field of the original `yaml.Node` type are refused with an error naming the type, by `compat/yamlv3` and by the `oneyaml` package alike. Read such a type through a wrapper type of your own whose hook the adapter can call, or keep yaml.v3 for it ([hooks you do not own](#check-after-the-swap)).
-- **YAML 1.1 numbers and booleans.** The `oneyaml` package reads `yes`, `no`, `on` and `off` as strings and `0755` as the integer 755; yaml.v3 and `compat/yamlv3` read the 1.1 forms ([behaviour that differs](#behaviour-that-differs)).
-- **Merge keys.** `<<` is an ordinary key in the `oneyaml` package unless you pass `MergeKeys()`; yaml.v3 and `compat/yamlv3` always merge ([behaviour that differs](#behaviour-that-differs)).
-- **`json` tags.** The `oneyaml` package names a field without a `yaml` tag by its `json` tag, where yaml.v3 uses the lower-cased Go name, so a field that has only a `json` tag reads a different key ([the API table](#move-to-the-oneyaml-api)).
-- **Hook precedence.** The `oneyaml` package tries a type's methods in a fixed order and ends with `UnmarshalJSON` and `MarshalJSON`, which yaml.v3 ignores, so a type that yaml.v3 filled field by field may now read or write itself through its JSON methods ([Hooks](#hooks)). `compat/yamlv3` ignores them, as yaml.v3 does.
-- **Programs that read the file with YAML 1.1 rules.** If yaml.v3, yaml.v2 or sigs.k8s.io/yaml code also reads the files you edit, parse with `YAML11Strings()` so that a new `yes` or `0755` is quoted ([Editing](editing.md#when-the-style-cannot-hold-the-value)).
+- **Types that use gopkg.in/yaml.v3's own `Node`**, often in modules you do not own ([check after the swap](#check-after-the-swap)).
+- **YAML 1.1 values** such as `yes`, `on` and `0755`, and **`<<` merge keys**, if you move to the `oneyaml` API ([behaviour that differs](#behaviour-that-differs)).
+- **Fields with only a `json` tag**, and types with `UnmarshalJSON` or `MarshalJSON`, which the `oneyaml` API uses and yaml.v3 ignores ([hooks](#hooks)).
+- **Other programs that read the files you edit** with YAML 1.1 rules: parse with `YAML11Strings()` ([Editing](editing.md#when-the-style-cannot-hold-the-value)).
 
 ## Swap the import
 
 ```sh
 # before:  import yaml "gopkg.in/yaml.v3"
 # after:   import yaml "oneyaml.dev/go/compat/yamlv3"
-go get oneyaml.dev/go@latest
+go get oneyaml.dev/go
 ```
 
-The package is named `yaml` and has yaml.v3's API: `Unmarshal`, `Marshal`, `NewDecoder` and `NewEncoder` with their methods, `Node` with its methods and the `Kind` and `Style` constants, `Marshaler`, `Unmarshaler` and the older function-style unmarshaler, `IsZeroer` and `TypeError`, and the struct tag options `omitempty`, `flow` and `inline`. Call sites that use them compile unchanged. It is a compatibility adapter, not a copy of yaml.v3. It reproduces what yaml.v3 documents: plain scalars resolve the yaml.v3 way, so `0755` is an octal number and `yes` is accepted by a bool field, merge keys are on, and a type error does not stop decoding.
-
-The swap changes your imports only. A type from another module that reads itself with yaml.v3's `UnmarshalYAML(*yaml.Node) error` still takes the original `*yaml.Node`, and neither the adapter nor the `oneyaml` package can call that method; both report an error naming the type instead of filling it. See [hooks you do not own](#check-after-the-swap) before you rely on the swap.
+The package is named `yaml` and has yaml.v3's API: `Unmarshal`, `Marshal`, `NewDecoder`, `NewEncoder`, `Node` with its `Kind` and `Style` constants, `Marshaler`, `Unmarshaler`, the function-style unmarshaler, `IsZeroer`, `TypeError`, and the tag options `omitempty`, `flow` and `inline`. It reads scalars the yaml.v3 way: `0755` is octal, a bool field accepts `yes`, merge keys are on, and type errors are collected.
 
 <!-- example: compat/yamlv3 Example -->
 ```go
@@ -51,42 +47,18 @@ fmt.Print(string(out))
 // debug: true
 ```
 
-Type errors are collected, as in yaml.v3:
-
-<!-- example: compat/yamlv3 ExampleTypeError -->
-```go
-var v struct {
-	Port  int
-	Name  string
-	Count int
-}
-err := yaml.Unmarshal([]byte("port: eighty\nname: api\ncount: x\n"), &v)
-var te *yaml.TypeError
-if e, ok := err.(*yaml.TypeError); ok {
-	te = e
-}
-for _, msg := range te.Errors {
-	fmt.Println(msg)
-}
-fmt.Println(v.Name)
-// Output:
-// line 1: cannot unmarshal !!str `eighty` into int
-// line 3: cannot unmarshal !!str `x` into int
-// api
-```
-
-The package differs from yaml.v3 where yaml.v3 is wrong: it reads valid YAML that yaml.v3's scanner refuses, returns an error where yaml.v3 panics, never turns a comment into content, and keeps the default limits of the `oneyaml` package. The [package documentation](https://pkg.go.dev/oneyaml.dev/go/compat/yamlv3) lists each difference and each gap. Reading with `yaml.Node` and writing it back puts comments on the same nodes as yaml.v3 in the common layouts; to edit a file, see below.
+The [package documentation](https://pkg.go.dev/oneyaml.dev/go/compat/yamlv3) lists every difference from yaml.v3.
 
 ### Check after the swap
 
-Run your tests, and look at these places in particular:
+Run your tests, and look at these places:
 
-- **Hooks.** `UnmarshalYAML(*yaml.Node) error`, the older `UnmarshalYAML(func(interface{}) error) error` and `MarshalYAML() (interface{}, error)` work as in yaml.v3, with the adapter's own `yaml.Node`. A method that takes the original package's `*yaml.Node`, for example in a package of yours that still imports `gopkg.in/yaml.v3`, does not match. yaml.v3 itself skips a method of the wrong type; the adapter returns an error naming the type and the method instead, so validation is never dropped silently. Change that import too. The same holds when writing: a `MarshalYAML` method with any other signature makes `Marshal` return an error naming the type and the method, where yaml.v3 writes the value field by field.
-- **Hooks you do not own.** A type from a module you do not control, whose `UnmarshalYAML` takes `gopkg.in/yaml.v3`'s `*yaml.Node`, keeps that signature after you swap your own import. The adapter can't call the method, and reading into such a type returns an error that names the type and the method (the `oneyaml` package reports it too, as a `*TypeError`); it does not fill the type field by field, which would skip whatever the method checked or converted. (yaml.v3 would skip a method of an unknown shape without a word; the adapter refuses on purpose.) Swapping the import does not fix this. Read such a type through a wrapper type of your own: give the wrapper a hook the adapter or the `oneyaml` package calls, and build the dependency's value inside it. Or keep reading that type with yaml.v3 until its module moves. List the third-party types your configuration reads and check each one. Writing is less affected: `MarshalYAML() (interface{}, error)` has the same signature in every package, so the adapter calls those hooks. The exception is a hook that returns gopkg.in/yaml.v3's own `*yaml.Node`, or a field of that type. The adapter cannot read that node, so `Marshal` returns an error that names the type instead of writing the node's fields (`kind:`, `value:` and so on). Build the adapter's `yaml.Node` in the hook instead. Reading into yaml.v3's `Node` (or a field of that type) fails the same way: `Unmarshal` and `Decode` return an error that names the type, because the adapter cannot fill it; decode into the adapter's `yaml.Node` instead.
-- **Node and comment round trips.** Decoding into a `yaml.Node` puts head, line and foot comments on the same nodes as yaml.v3: line comments, comments directly above a key or item, foot comments and document comments, and also a comment after a `---` marker, after a lone dash, after an anchor or tag on a collection or after an explicit key (`? k # c`), and comment lines between a key and its value. Comments inside a flow collection are read and written back as yaml.v3 does, and so is the foot comment of a root scalar or root flow collection. A comment line just before the closing bracket of a flow collection (`[a, b,` then `# note` then `]`) becomes the foot comment of the last item or key, as in yaml.v3. Encoding the node again writes the comments where yaml.v3 writes them, with these exceptions. When the last value of a flow mapping is empty (`{a: ,` then `# note` then `}`), yaml.v3 puts that comment on the mapping and the adapter on the key, so the adapter writes it back inside the braces and yaml.v3 after them. Where yaml.v3 writes text that does not read back as the same values, the adapter writes text that does: after a comment inside a flow collection that sits in a block collection, yaml.v3 can start a line with the closing bracket or a comma at a column where it no longer belongs to the collection, and the adapter indents it; and a folded scalar (`>`) is always written so that it reads back as the same text, where yaml.v3's text for some values, such as one that starts with a line break or has a line followed by a more indented line, reads back with a line break lost or added. If you diff files written this way, check one. Two comment placements still differ. A comment block that stands alone above a blank line, at the start of a sequence that is the value of a key (`k:` then `# a`, a blank line, `# b` and `- x`), is read as `k`'s foot comment, where yaml.v3 keeps it above the first item; a mapping in the same place matches yaml.v3. And when a foot comment is set on a mapping or sequence that is an item of a block sequence, the adapter writes it after that item, where yaml.v3 writes it at the end of the document.
-- **Invalid and unusual input.** Valid YAML that yaml.v3 refuses is read, invalid YAML that yaml.v3 accepts is refused, and inputs that make yaml.v3 panic return an error. Tests that pin yaml.v3's behaviour on such input will change.
-- **Numeric conversions.** A plain `3.5` read into an integer field is a type error instead of being truncated to 3; a float with no fraction (`3.0`, `1e3`) is accepted. In a sequence of numbers, a null leaves a zero in its place instead of being dropped.
-- **Limits.** Reading runs under the default limits of the `oneyaml` package, which yaml.v3 does not have, and there is no `Untrusted()` mode. Very deep or alias-heavy input that yaml.v3 read may now return an error. For input you do not control, read with the `oneyaml` package and `Untrusted()`.
+- **Hooks you do not own.** A type in another module whose `UnmarshalYAML` takes gopkg.in/yaml.v3's `*yaml.Node` keeps that signature after you swap your import. The adapter cannot call it, so reading into that type returns an error naming the type and method, where yaml.v3 would skip the method silently. The same goes for a `MarshalYAML` that returns gopkg.in/yaml.v3's `*yaml.Node`, and for fields of that type. Read such a type through a wrapper type of your own with a hook the adapter can call, or keep yaml.v3 for it. In your own code, change the import and the hooks work unchanged.
+- **Hooks of any other form.** A `MarshalYAML` or `UnmarshalYAML` the adapter cannot call is an error naming the type, where yaml.v3 skips it.
+- **Comment round trips through `yaml.Node`.** Comments land on the same nodes as in yaml.v3, and are written back where yaml.v3 writes them, in the common layouts. Where yaml.v3 writes text that does not read back as the same value, the adapter writes text that does. Three layouts differ: a comment after an empty last value of a flow mapping (`{a: ,` then `# note` then `}`) is written inside the braces, not after them; a comment block above a blank line at the start of a sequence under a key (`k:`, `# a`, a blank line, `# b`, `- x`) becomes the key's foot comment; and a foot comment set on a collection that is an item of a block sequence is written after that item, not at the end of the document.
+- **Invalid and unusual input.** Valid YAML that yaml.v3 refuses is read, invalid YAML that yaml.v3 accepts is refused, and input that makes yaml.v3 panic returns an error.
+- **Numbers.** A plain `3.5` read into an integer field is a type error instead of being truncated; `3.0` and `1e3` are accepted. A null in a sequence of numbers leaves a zero instead of being dropped.
+- **Limits.** Reads run under the default limits, and there is no `Untrusted()` mode. For input you do not control, read with the `oneyaml` package ([Limits](limits.md#loading-a-configuration-file-strictly)).
 
 ## Move to the oneyaml API
 
@@ -95,68 +67,30 @@ Run your tests, and look at these places in particular:
 | `yaml.Unmarshal(data, &v)` | `oneyaml.Unmarshal(data, &v)` |
 | `yaml.Marshal(v)` | `oneyaml.Marshal(v)` |
 | `yaml.NewDecoder(r)`, `dec.Decode(&v)`, `io.EOF` at the end | `oneyaml.NewDecoder(r)`, the same |
-| `dec.KnownFields(true)` | `oneyaml.KnownFields()` passed to the call, or `oneyaml.KnownFields(b)` for a setting held in a variable; `errors.Is(err, oneyaml.ErrUnknownField)` matches a key the struct lacks |
+| `dec.KnownFields(true)` | `oneyaml.KnownFields()` passed to the call; `errors.Is(err, oneyaml.ErrUnknownField)` matches |
 | `yaml.NewEncoder(w)`, `enc.SetIndent(n)` | `oneyaml.NewEncoder(w, oneyaml.Indent(n))` |
-| `yaml.Marshaler`, `MarshalYAML() (interface{}, error)` | `oneyaml.Marshaler`, the same method |
-| `yaml.Unmarshaler`, `UnmarshalYAML(*yaml.Node) error` | `oneyaml.Unmarshaler`, `UnmarshalYAML(oneyaml.Node) error`; the old form is an error, see [Hooks](#hooks) |
-| `UnmarshalYAML(func(interface{}) error) error` | the same method, unchanged |
-| `yaml.Node` for reading | `Document.Root()` and `oneyaml.Node`, a read-only view; `HeadComment()` and `LineComment()` return comments trimmed as yaml.v3 does |
-| `yaml.Node` as a field, to keep part of a document unparsed | `Document.Get(pointer, &node)`; a `oneyaml.Node` is not a decode target |
-| `yaml.Node` to change a file | `Document.Set`, `Remove`, `Rename`, `SetHeadComment`, `SetLineComment`, `ApplyPatch`; see [Editing a file](#editing-a-file) |
-| `yaml.TypeError` with `Errors []string` | `*oneyaml.TypeError` for the first value that does not fit, with the others in `More`; `All()` returns every one, each with its path and position |
-| struct tag `omitempty` | the same: zero values, empty collections and zero structs are left out, and an `IsZero` method decides when a type has one. One difference: a struct counts as zero only when all its fields are zero, unexported ones too, where yaml.v3 looks at exported fields only |
-| struct tags `flow` and `inline` (a struct or a map) | the same |
-| no `omitzero` | `omitzero` leaves out a zero value, or one whose `IsZero` returns true, as `encoding/json` does; an empty but non-nil slice is kept |
-| a field with no `yaml` tag is named by its lower-cased Go name | a `json` tag is used first, then the lower-cased Go name |
-
-`omitempty` and `omitzero` side by side:
-
-<!-- example: ExampleMarshal_omitempty -->
-```go
-type Resources struct {
-	CPU    string `yaml:"cpu"`
-	Memory string `yaml:"memory"`
-}
-out, err := oneyaml.Marshal(struct {
-	Name      string    `yaml:"name"`
-	Resources Resources `yaml:"resources,omitempty"`
-	Args      []string  `yaml:"args,omitempty"`
-	Env       []string  `yaml:"env,omitzero"`
-}{Name: "api", Args: []string{}, Env: []string{}})
-if err != nil {
-	log.Fatal(err)
-}
-fmt.Print(string(out))
-// Output:
-// name: api
-// env: []
-```
+| `MarshalYAML() (interface{}, error)` | the same method |
+| `UnmarshalYAML(*yaml.Node) error` | `UnmarshalYAML(oneyaml.Node) error`, see [Hooks](#hooks) |
+| `UnmarshalYAML(func(interface{}) error) error` | the same method |
+| `yaml.Node` for reading | `Document.Root()` and `oneyaml.Node`, a read-only view |
+| `yaml.Node` as a field, to keep part of a document unparsed | `Document.Get(pointer, &node)` |
+| `yaml.Node` to change a file | `Document.Set`, `Remove`, `Rename`, `SetHeadComment`, `SetLineComment`, `ApplyPatch` ([Editing a file](#editing-a-file)) |
+| `yaml.TypeError` with `Errors []string` | `*oneyaml.TypeError`; `All()` returns every mismatch with its path and position |
+| `omitempty` | the same, except that a struct is zero only when all its fields are, unexported ones included |
+| `flow` and `inline` | the same |
+| no `omitzero` | `omitzero`, as in `encoding/json` |
+| a field with no `yaml` tag uses its lower-cased Go name | a `json` tag is used first |
 
 ## Behaviour that differs
 
-The `oneyaml` package follows YAML 1.2 with the Core schema. yaml.v3 follows a mix of 1.1 and 1.2. The differences you are likely to meet:
+The `oneyaml` package reads YAML 1.2 with the Core schema; yaml.v3 reads a mix of 1.1 and 1.2.
 
-- **`yes`, `no`, `on`, `off` are strings.** A bool field refuses them with a `*TypeError` that names the path and position. Write `true` and `false`, or use the compat package.
-
-<!-- example: ExampleUnmarshal_yesIsAString -->
-```go
-var cfg struct {
-	Debug bool `yaml:"debug"`
-}
-err := oneyaml.Unmarshal([]byte("debug: yes\n"), &cfg)
-var te *oneyaml.TypeError
-if errors.As(err, &te) {
-	fmt.Println(te.Path, te.Line, te.Column)
-}
-// Output: /debug 1 8
-```
-
-- **`0755` is the integer 755**, not octal. `0o755` is octal.
-- **A date is a string** in a generic value; there is no implicit `time.Time`.
-- **The `<<` key is an ordinary key** unless you pass `MergeKeys()`.
-- **A nil slice is written as `null`**, not `[]`. The default indentation is two spaces, not four.
-- **Type errors are collected**, as in yaml.v3: a value that does not fit is skipped, the rest is read, and one `*TypeError` reports every mismatch; the read stops at the 100th, and fewer are reported when their paths are very long. A syntax error, a limit error or an error from your own hook stops the read at once and is returned alone.
-- **A duplicate key is an error**, as in yaml.v3, and more keys count as duplicates. Keys are compared by value, so `1` and `0x1` clash, which yaml.v3 allows. A key repeated inside a value the target ignores, such as `x: {y: 1, y: 2}` read into a struct with no field `x`, is refused too; yaml.v3 does not look there. The rules are in the [`Unmarshal` reference](https://pkg.go.dev/oneyaml.dev/go#Unmarshal).
+- **`yes`, `no`, `on` and `off` are strings**, and a bool field refuses them with a `*TypeError`.
+- **`0755` is the integer 755**; `0o755` is octal.
+- **A date is a string** in a generic value.
+- **`<<` is an ordinary key** unless you pass `MergeKeys()`.
+- **A nil slice is written as `null`**, and the default indent is two spaces, not four.
+- **Duplicate keys are compared by value**, so `1` and `0x1` clash, and keys inside values the target ignores are checked too.
 
 <!-- example: Example_fromYAMLv3Forms -->
 ```go
@@ -186,20 +120,7 @@ fmt.Print(string(out))
 
 ## Hooks
 
-When it reads a value, the `oneyaml` package tries a type's methods in this order: `UnmarshalYAML(oneyaml.Node) error`, then `UnmarshalYAML(func(any) error) error`, then `UnmarshalText` for a scalar, then `UnmarshalJSON`. When it writes, the order is `MarshalYAML() (any, error)`, `MarshalText`, then `MarshalJSON`. For a type written for yaml.v3:
-
-| Method on your type | With the `oneyaml` package |
-|---|---|
-| `UnmarshalYAML(value *yaml.Node) error` | a `*TypeError` that names the type and the accepted forms. Change the parameter to `oneyaml.Node`, which has the same `Decode` method |
-| `UnmarshalYAML(unmarshal func(interface{}) error) error` | called as yaml.v3 calls it |
-| `MarshalYAML() (interface{}, error)` | called as yaml.v3 calls it |
-| `MarshalYAML` or `UnmarshalYAML` with any other signature | a `*TypeError` |
-| `UnmarshalText` and `MarshalText` | used for scalars, as in yaml.v3 |
-| `UnmarshalJSON` and `MarshalJSON`, and no YAML or text method | used, with the value passed as JSON text; yaml.v3 ignores them. Numbers arrive with their digits as written, on their own or inside a mapping or sequence; forms JSON cannot spell, such as `0x1F` or `.5`, are rewritten (`31`, `0.5`) |
-
-A method with a signature the package does not call is reported, not skipped, so a type is never quietly filled field by field when you meant it to read itself. The compat package keeps yaml.v3's own form: with the import swapped, `UnmarshalYAML(*yaml.Node) error` works unchanged in your own code. Hooks in other modules need the steps under [hooks you do not own](#check-after-the-swap).
-
-In the example, `legacySize` has yaml.v3's `UnmarshalYAML(n *yaml.Node) error` and `Size` is the same type moved over, with `UnmarshalYAML(n oneyaml.Node) error`. Both bodies are `return n.Decode(&s.Bytes)`.
+Reading tries `UnmarshalYAML(oneyaml.Node) error`, then `UnmarshalYAML(func(any) error) error`, then `UnmarshalText` for a scalar, then `UnmarshalJSON`. Writing tries `MarshalYAML() (any, error)`, `MarshalText`, then `MarshalJSON`. yaml.v3's `UnmarshalYAML(*yaml.Node) error` is reported as a `*TypeError`: change the parameter to `oneyaml.Node`, which has the same `Decode` method. Here `legacySize` has the yaml.v3 form and `Size` the moved one; both bodies are `return n.Decode(&s.Bytes)`:
 
 <!-- example: ExampleUnmarshaler_fromYAMLv3 -->
 ```go
@@ -223,25 +144,9 @@ fmt.Println(after.Limit.Bytes)
 // 512
 ```
 
-The older form needs no change. `Tags` here has `UnmarshalYAML(unmarshal func(any) error) error` and reads either a sequence or a comma-separated string:
-
-<!-- example: ExampleUnmarshal_funcHook -->
-```go
-var doc struct {
-	A Tags `yaml:"a"`
-	B Tags `yaml:"b"`
-}
-if err := oneyaml.Unmarshal([]byte("a: [x, y]\nb: \"p,q,r\"\n"), &doc); err != nil {
-	log.Fatal(err)
-}
-fmt.Println(doc.A, doc.B)
-// Output:
-// [x y] [p q r]
-```
-
 ## Editing a file
 
-yaml.v3 can keep comments by loading into a `yaml.Node`, changing it and encoding the whole tree again, so the encoder decides the layout. With `Document` you set the value you mean and everything else stays as it was:
+yaml.v3 edits by changing a `yaml.Node` tree and encoding all of it again, so the encoder decides the layout. With `Document` you set the value you mean and the rest of the file stays:
 
 <!-- example: Example_fromYAMLv3Node -->
 ```go
@@ -260,8 +165,4 @@ fmt.Print(string(doc.Bytes()))
 // replicas: 3
 ```
 
-The same holds for the other changes yaml.v3 makes through a `yaml.Node`. To rename a key, call `Rename(pointer, newKey)` instead of setting the key node's `Value`. To change a comment, call `SetHeadComment` or `SetLineComment` instead of setting the node's `HeadComment` or `LineComment` field. Both edit the file in place, and the rest of it stays as it was.
-
-The rules for the style of the new value, for adding, removing and renaming keys, for comments and for anchors are in [Editing](editing.md). For how the libraries compare, see [Comparison](comparison.md).
-
-The supported Go versions are listed under [Stability](../README.md#stability) in the README.
+Instead of setting a key node's `Value`, call `Rename`; instead of setting `HeadComment` or `LineComment`, call `SetHeadComment` or `SetLineComment`. [Editing](editing.md) has the rules.

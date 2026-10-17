@@ -161,34 +161,37 @@ func ExampleNode() {
 	// true 2 two
 }
 
-// The quick start: Set rewrites a value in its own style and leaves the comments
-// and every other byte as they were.
+// The quick start: read a file into a struct, then edit it in place. The edit
+// changes one value and leaves the comments and every other byte as they were.
 func Example_quickStart() {
 	src := []byte(`# deploy settings
 name: api
-replicas: 2   # raised by the release job
-script: |
-  make build
+replicas: 2 # raised by the release job
 `)
+	// Read into a struct, as with encoding/json.
+	var cfg struct {
+		Name     string `yaml:"name"`
+		Replicas int    `yaml:"replicas"`
+	}
+	if err := oneyaml.Unmarshal(src, &cfg); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(cfg.Name, cfg.Replicas)
 
+	// Edit in place: everything else, comments included, stays byte for byte.
 	doc, err := oneyaml.Parse(src)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := doc.Set("/replicas", 3); err != nil {
+	if err := doc.Set("/replicas", cfg.Replicas+1); err != nil {
 		log.Fatal(err)
 	}
-	if err := doc.Set("/script", "make build\nmake test\n"); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Print(string(doc.Bytes()))
+	fmt.Print(doc)
 	// Output:
+	// api 2
 	// # deploy settings
 	// name: api
-	// replicas: 3   # raised by the release job
-	// script: |
-	//   make build
-	//   make test
+	// replicas: 3 # raised by the release job
 }
 
 func ExampleDocument_Decode() {

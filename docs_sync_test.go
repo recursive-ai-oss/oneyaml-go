@@ -232,11 +232,11 @@ var (
 //
 // The pages that must hold regions hold them.
 func TestDocsGeneratedBlocksAreWellFormed(t *testing.T) {
-	kinds := map[string]bool{"bench-hero": true, "bench-full": true, "conformance-line": true, "conformance-deviations": true}
+	kinds := map[string]bool{"bench-hero": true, "bench-chart": true, "bench-full": true, "conformance-line": true, "conformance-deviations": true}
 	reports := map[string]bool{"conformance-summary": true, "conformance": true}
 	required := map[string][]string{
-		"README.md":           {"bench-hero", "conformance-summary"},
-		"docs/performance.md": {"bench-full"},
+		"README.md":           {"bench-chart"},
+		"docs/performance.md": {"bench-hero", "bench-full"},
 		"docs/conformance.md": {"conformance"},
 	}
 	srcRE := regexp.MustCompile(`(?:src|srcset)="([^"]+)"`)

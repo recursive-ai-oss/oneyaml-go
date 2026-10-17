@@ -1,50 +1,16 @@
 # Patches
 
-How to apply a patch to a YAML file. The operations are those of JSON Patch ([RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)), the paths are JSON Pointers ([RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)), and merge patches follow JSON Merge Patch ([RFC 7396](https://www.rfc-editor.org/rfc/rfc7396)), but they are applied to YAML with YAML's data model, not to JSON. The edits follow the rules in [Editing](editing.md): only the values a patch touches change, in their own style, and comments elsewhere are kept.
-
-There are three entry points on `Document`:
+How to apply a JSON Patch ([RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)) or a JSON Merge Patch ([RFC 7396](https://www.rfc-editor.org/rfc/rfc7396)) to a YAML file. Patches edit by the rules of [Editing](editing.md): only the values they touch change, and comments elsewhere stay.
 
 | Method | Takes |
 |---|---|
-| `ApplyPatch(rfc6902 []byte)` | an RFC 6902 patch as JSON text, or as a YAML sequence of operations ([details](#patches-written-in-yaml)) |
+| `ApplyPatch(rfc6902 []byte)` | an RFC 6902 patch as JSON, or as a YAML list of operations |
 | `Apply(ops ...PatchOp)` | the same operations as Go values: `PatchAdd`, `PatchRemove`, `PatchReplace`, `PatchMove`, `PatchCopy`, `PatchTest` |
-| `ApplyMergePatch(rfc7396 []byte)` | an RFC 7396 merge patch as JSON text, or as YAML ([details](#patches-written-in-yaml)) |
-
-## YAML rules at a glance
-
-Four rules follow from applying the RFCs to YAML:
-
-- **`test` compares YAML values.** The integer `1` and the float `1.0` are different values, so a `test` of one against the other fails, where RFC 6902 would call them equal as JSON numbers ([the test operation](#the-test-operation)).
-- **A pointer token matches a key by its scalar text.** `/1` finds the integer key `1` as well as the string key `"1"` ([Pointers](#pointers)).
-- **A write through an alias is refused** with `ErrAliasWrite`, because it would change every place that shares the anchored node. Patch the anchored node instead ([Aliases](#aliases)).
-- **Text that starts like JSON is JSON.** When the first significant byte of the patch is `[` or `{`, the patch is read as JSON and only JSON, so a flow-style YAML patch such as `[{op: test, path: /a, value: 1}]` is refused because its keys are not quoted. Write it as JSON, or as a YAML block list ([Patches written in YAML](#patches-written-in-yaml)).
-
-<!-- example: ExampleDocument_ApplyPatch_yamlRules -->
-```go
-doc, err := oneyaml.Parse([]byte("replicas: 1\n"))
-if err != nil {
-	log.Fatal(err)
-}
-// 1 is an integer and 1.0 a float, so this test fails.
-err = doc.ApplyPatch([]byte(`[{"op": "test", "path": "/replicas", "value": 1.0}]`))
-fmt.Println(errors.Is(err, oneyaml.ErrTestFailed))
-
-// Text that starts with [ is read as JSON, and these keys are not quoted.
-err = doc.ApplyPatch([]byte(`[{op: test, path: /replicas, value: 1}]`))
-fmt.Println(errors.Is(err, oneyaml.ErrInvalidPatch))
-
-// The same operation as a YAML block list.
-err = doc.ApplyPatch([]byte("- {op: test, path: /replicas, value: 1}\n"))
-fmt.Println(err)
-// Output:
-// true
-// true
-// <nil>
-```
+| `ApplyMergePatch(rfc7396 []byte)` | an RFC 7396 merge patch as JSON or YAML |
 
 ## A patch is atomic
 
-If any operation fails, the document is unchanged, including the operations before the one that failed. The error is an `*EditError` whose `Index` is the position of the failing operation and whose kind you match with `errors.Is`.
+If any operation fails, the document is unchanged, the operations before it included. The error is an `*EditError` whose `Index` is the failing operation.
 
 <!-- example: ExampleDocument_ApplyPatch -->
 ```go
@@ -114,38 +80,48 @@ fmt.Print(string(doc.Bytes()))
 //   - y
 ```
 
-`add` inserts before an index, as RFC 6902 says; `Document.Set` assigns. `move` removes then adds, except that between two mappings the destination is written first, so a mapping never collapses to `{}` halfway.
+A patch applies to one document: the first of a stream, or the one you select with `Doc(i)`.
 
-## Pointers
+## YAML rules at a glance
 
-Operations address values with [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) pointers. A token matches a mapping key by the key's text, so `/1` finds the integer key `1` as well as the string key `"1"`:
+The RFCs are written for JSON. Applied to YAML:
 
-<!-- example: ExampleDocument_ApplyPatch_pointerText -->
+- **`test` compares YAML values**, see [below](#the-test-operation).
+- **A pointer token matches a key by its text**, so `/1` finds the integer key `1` as well as the string key `"1"`. Build paths from data with `oneyaml.Pointer`. Two keys with the same text make the pointer ambiguous (`ErrAmbiguousKey`).
+- **A write through an alias is refused** with `ErrAliasWrite`; patch the anchored node instead. Removing or moving an anchored node that an alias uses is refused with `ErrAnchorInUse`. A `copy` of a value that holds aliases writes them out as copies where their anchor would be missing.
+- **Text that starts with `[` or `{` is JSON**, so a flow-style YAML patch with unquoted keys is refused; write it as JSON or as a YAML block list.
+- **Merge keys:** with `MergeKeys()`, the rules in [Merge keys](editing.md#merge-keys) apply.
+
+<!-- example: ExampleDocument_ApplyPatch_yamlRules -->
 ```go
-doc, err := oneyaml.Parse([]byte("1: one\n\"2\": two\n"))
+doc, err := oneyaml.Parse([]byte("replicas: 1\n"))
 if err != nil {
 	log.Fatal(err)
 }
-err = doc.ApplyPatch([]byte(`[
-	{"op": "replace", "path": "/1", "value": "uno"},
-	{"op": "replace", "path": "/2", "value": "dos"}
-]`))
-if err != nil {
-	log.Fatal(err)
-}
-fmt.Print(string(doc.Bytes()))
+// 1 is an integer and 1.0 a float, so this test fails.
+err = doc.ApplyPatch([]byte(`[{"op": "test", "path": "/replicas", "value": 1.0}]`))
+fmt.Println(errors.Is(err, oneyaml.ErrTestFailed))
+
+// Text that starts with [ is read as JSON, and these keys are not quoted.
+err = doc.ApplyPatch([]byte(`[{op: test, path: /replicas, value: 1}]`))
+fmt.Println(errors.Is(err, oneyaml.ErrInvalidPatch))
+
+// The same operation as a YAML block list.
+err = doc.ApplyPatch([]byte("- {op: test, path: /replicas, value: 1}\n"))
+fmt.Println(err)
 // Output:
-// 1: uno
-// "2": dos
+// true
+// true
+// <nil>
 ```
 
-Inside a token, `/` is written `~1` and `~` is written `~0`. When a key comes from data, build the path with `oneyaml.Pointer`, which escapes each token: `oneyaml.PatchRemove(oneyaml.Pointer("metadata", "labels", key))` removes the label `app.kubernetes.io/name` when `key` holds it ([Editing](editing.md) shows the pointer it builds).
+### The test operation
 
-A pointer addresses the keys written in the file. With `MergeKeys()`, `test` and the `from` of `copy` also read a key that a `<<` merge brings in, and `remove`, `replace` and `move` of such a key are refused with `ErrAliasWrite`; [Merge keys](editing.md#merge-keys) has the rules. If two keys have the same text the pointer is ambiguous and the operation fails with `ErrAmbiguousKey`. A key that is itself a collection cannot be addressed by a pointer. A pointer that is not valid fails with `ErrInvalidPointer`; a patch that is not valid fails with `ErrInvalidPatch`. Patch text must be UTF-8.
+`test` compares by the YAML data model under the Core schema: `1` and `1.0` differ, `0x1F` equals `31`, and a mapping key matches a JSON object key only if it is a string. RFC 6902 section 4.6 compares JSON values, so it would call `1` and `1.0` equal.
 
 ## Patches written in YAML
 
-`ApplyPatch` also takes a patch kept as a YAML file: a block list of operations with the same members as the JSON form. It applies exactly as the JSON patch with the same operations does:
+`ApplyPatch` takes a YAML block list of operations with the same members as the JSON form:
 
 <!-- example: ExampleDocument_ApplyPatch_yaml -->
 ```go
@@ -173,19 +149,9 @@ fmt.Print(doc)
 //   tier: web
 ```
 
-The first significant byte, after white space and a byte order mark, decides how the text is read. Text that starts with `[` or `{` is JSON, and only JSON, so its errors are JSON errors. A flow-style YAML patch such as `[{op: add, path: /a, value: 1}]` is therefore refused, because its keys are not quoted; write it as JSON. All other text is read as YAML, so a block list whose items are flow mappings (`- {op: add, path: /a, value: 1}`) is read. The non-specific tag `!` is allowed and makes a scalar a string, so `value: ! 12` writes the string `"12"`.
+A YAML patch is refused with `ErrInvalidPatch` when it is not a single list, uses an alias, a tag other than a core one or `!`, or a collection as a key, repeats a key, or is not valid YAML (the error gives the line and column). `!` makes a scalar a string.
 
-A YAML patch fails with `ErrInvalidPatch` when it:
-
-- holds more than one document, or is not a list;
-- uses an alias, a tag outside the core schema such as `!foo`, or a collection as a key, none of which JSON can express;
-- names a key twice in a mapping, judged by value as the decoder judges it, so `{1: a, 0x1: b}` and `{null: 1, ~: 2}` are refused;
-- has a scalar that cannot be read, such as a double-quoted escape that is not a Unicode character;
-- is not valid YAML. The error gives the line and column.
-
-A YAML patch nested deeper than the depth limit fails with a `*LimitError`.
-
-`ApplyMergePatch` reads YAML the same way: text that starts with `{` or `[`, or is valid JSON, is JSON, and any other text is one YAML document of any kind (a mapping, usually) with the same refusals as a YAML list of operations. The members of a merge patch are named by strings, so a mapping key that is not a string, such as `1: 5`, `true: 5` or an empty key, is refused with `ErrInvalidPatch` at any depth, with its line and column. Quote it (`"1": 5`) to name the member `1`.
+`ApplyMergePatch` reads YAML the same way, with one more rule: every key must be a string, so quote `"1": 5` to name the member `1`.
 
 <!-- example: ExampleDocument_ApplyMergePatch_yaml -->
 ```go
@@ -213,92 +179,15 @@ fmt.Print(string(doc.Bytes()))
 // tier: gold
 ```
 
-## Aliases
-
-Reads follow aliases. Writes do not: a patch that would write through an alias is refused with `ErrAliasWrite`, because it would change every place that shares the anchored node. Patch the anchored node instead, and the change shows through every alias.
-
-<!-- example: ExampleDocument_ApplyPatch_aliasRefused -->
-```go
-doc, err := oneyaml.Parse([]byte("base: &b\n  x: 1\ncopy: *b\n"))
-if err != nil {
-	log.Fatal(err)
-}
-err = doc.ApplyPatch([]byte(`[
-	{"op": "replace", "path": "/base/x", "value": 2},
-	{"op": "replace", "path": "/copy/x", "value": 3}
-]`))
-fmt.Println(errors.Is(err, oneyaml.ErrAliasWrite))
-fmt.Print(string(doc.Bytes()))
-// Output:
-// true
-// base: &b
-//   x: 1
-// copy: *b
-```
-
-Removing or moving an anchored node that an alias still uses is refused with `ErrAnchorInUse`. When a `copy` or `add` takes a value that holds aliases, the value is written at its destination without its anchor, and an alias that would no longer have its anchor in front of it is written out as a copy. Written-out aliases count against the alias budget described in [Limits](limits.md).
-
-## One document per patch
-
-A patch applies to the document the `Document` addresses, which is the first document of a stream unless you select another with `Doc(i)`.
-
-<!-- example: ExampleDocument_ApplyPatch_stream -->
-```go
-doc, err := oneyaml.Parse([]byte("a: 1\n---\na: 1\n"))
-if err != nil {
-	log.Fatal(err)
-}
-if err := doc.Doc(1).ApplyPatch([]byte(`[{"op": "replace", "path": "/a", "value": 2}]`)); err != nil {
-	log.Fatal(err)
-}
-fmt.Print(string(doc.Bytes()))
-// Output:
-// a: 1
-// ---
-// a: 2
-```
-
-## The test operation
-
-`test` compares by the YAML data model under the Core schema, not by JSON text. `1` and `1.0` are different, `0x1F` equals `31`, and a mapping key matches a JSON object key only if it is a string. This is stricter than RFC 6902 section 4.6, which compares JSON values.
-
-<!-- example: ExampleDocument_Apply_testByValue -->
-```go
-doc, err := oneyaml.Parse([]byte("n: 1\n"))
-if err != nil {
-	log.Fatal(err)
-}
-fmt.Println(doc.Apply(oneyaml.PatchTest("/n", 1)))
-err = doc.Apply(oneyaml.PatchTest("/n", 1.0))
-fmt.Println(errors.Is(err, oneyaml.ErrTestFailed))
-// Output:
-// <nil>
-// true
-```
-
 ## Merge patches
 
-A merge patch deletes a member with `null`, merges an object into the mapping it meets and replaces anything else, so an array replaces the whole sequence. An empty object changes nothing. Deletions are applied after the other members of the same mapping. With `MergeKeys()`, a member `null` for a key that only a `<<` merge source has is refused with `ErrAliasWrite` ([Merge keys](editing.md#merge-keys)). Merging an object into an alias is refused:
-
-<!-- example: ExampleDocument_ApplyMergePatch_alias -->
-```go
-doc, err := oneyaml.Parse([]byte("base: &b {x: 1}\ncopy: *b\n"))
-if err != nil {
-	log.Fatal(err)
-}
-err = doc.ApplyMergePatch([]byte(`{"copy": {"x": 2}}`))
-fmt.Println(errors.Is(err, oneyaml.ErrAliasWrite))
-// Output:
-// true
-```
-
-A complete merge patch walkthrough, with the comments kept, is in the reference for [`Document.ApplyMergePatch`](https://pkg.go.dev/oneyaml.dev/go#Document.ApplyMergePatch).
+A merge patch deletes a member with `null`, merges an object into the mapping it meets, and replaces anything else, so an array replaces the whole sequence. Merging an object into an alias is refused with `ErrAliasWrite`.
 
 ## Bounds
 
-A patch can ask for a lot of work: `copy` can double a document at every step, and some edits re-read a large part of the file. Two limits bound a patch, and both apply under the default limits:
+A patch can ask for a lot of work, so it runs under limits even by default:
 
-- the bytes that copies and written-out aliases may produce are charged to the alias-bytes limit;
-- the text that a patch's edits have to read again is bounded by `LimitSet.MaxPatchWorkRatio`.
+- the bytes that copies and written-out aliases produce count against `MaxAliasBytes`;
+- the text a patch's edits read again is bounded by `MaxPatchWorkRatio`.
 
-With a `MaxInputBytes` limit (as `Untrusted()` sets), the patch text itself may be at most an eighth of it (at least 64 KiB, and never more than the limit), because a patch is read into a list of operations that takes far more memory than the same amount of document, and the result may not exceed the input-size limit. The default limits set no input bound. A patch that goes past a bound fails with a `*LimitError` and changes nothing. See [Limits](limits.md).
+With `MaxInputBytes` set (as `Untrusted()` sets it), the patch text may be at most an eighth of it (but at least 64 KiB, and never more than the bound itself), and the result may not exceed it. A patch past a bound fails with a `*LimitError` and changes nothing. See [Limits](limits.md).
