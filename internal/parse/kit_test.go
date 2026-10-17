@@ -20,6 +20,7 @@ import (
 // test is skipped when it is unset.
 type kitCase struct {
 	ID        string `json:"id"`
+	dir       string
 	Input     string `json:"input"`
 	Operation struct {
 		Type string `json:"type"`
@@ -74,6 +75,7 @@ func TestKitParseAndDiagnostics(t *testing.T) {
 			t.Fatal(err)
 		}
 		checked++
+		kc.dir = dir
 		if msg := checkKitCase(&kc, dir, src); msg != "" {
 			t.Errorf("%s: %s", kc.ID, msg)
 		} else {
@@ -84,10 +86,14 @@ func TestKitParseAndDiagnostics(t *testing.T) {
 }
 
 func checkKitCase(kc *kitCase, dir string, src []byte) string {
-	// The public entry points transcode UTF-16 and UTF-32 before scanning.
-	if utf8, _, err := encoding.Convert(src); err == nil {
-		src = utf8
+	// The public entry points transcode UTF-16 and UTF-32 before scanning, and
+	// report a malformed unit found there as the error of the read, before any
+	// event, so such a case is judged on the transcoding error.
+	utf8, _, cerr := encoding.Convert(src)
+	if cerr != nil {
+		return checkKitError(kc, cerr, nil)
 	}
+	src = utf8
 	lines, err := eventLines(src)
 	joined := strings.Join(lines, "\n")
 	if out, problem := reconstruct(src); problem != "" || string(out) != string(src) {
@@ -103,6 +109,16 @@ func checkKitCase(kc *kitCase, dir string, src []byte) string {
 		}
 		return ""
 	}
+	return checkKitError(kc, err, lines)
+}
+
+// checkKitError judges a refusal: category, position, and the events read
+// before it (lines is nil when nothing was scanned).
+func checkKitError(kc *kitCase, err error, lines []string) string {
+	if kc.Expect.Kind != "error" {
+		return "rejected: " + err.Error()
+	}
+	joined := strings.Join(lines, "\n")
 	var pe *parse.Error
 	if !errors.As(err, &pe) {
 		return "accepted"
@@ -114,7 +130,7 @@ func checkKitCase(kc *kitCase, dir string, src []byte) string {
 		return fmt.Sprintf("position %d:%d, want %d:%d (%s)", pe.Line, pe.Column, kc.Expect.Line, kc.Expect.Column, pe.Msg)
 	}
 	if kc.Expect.Events != "" {
-		want, _ := os.ReadFile(filepath.Join(dir, kc.Expect.Events))
+		want, _ := os.ReadFile(filepath.Join(kc.dir, kc.Expect.Events))
 		if joined != strings.TrimRight(string(want), "\n") {
 			return fmt.Sprintf("events before the error differ:\nwant\n%s\ngot\n%s", want, joined)
 		}
