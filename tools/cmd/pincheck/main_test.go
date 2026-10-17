@@ -48,8 +48,17 @@ func TestMismatchFails(t *testing.T) {
 
 func TestMissingRevisionFails(t *testing.T) {
 	root := tree(t, "8452eac464a2")
-	write(t, root, "README.md", "no regions here\n")
+	write(t, root, "docs/conformance.md", "no regions here\n")
 	if p := run(root); len(p) != 1 {
 		t.Fatalf("want one problem, got %v", p)
+	}
+}
+
+// The README may carry no conformance figures at all.
+func TestReadmeWithoutRegionsPasses(t *testing.T) {
+	root := tree(t, "8452eac464a2")
+	write(t, root, "README.md", "no regions here\n")
+	if p := run(root); len(p) != 0 {
+		t.Fatalf("unexpected problems: %v", p)
 	}
 }

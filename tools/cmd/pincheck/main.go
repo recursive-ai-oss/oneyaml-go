@@ -4,8 +4,8 @@
 //
 //	pincheck [-root dir]
 //
-// The regions (between kit-report markers in README.md and docs/conformance.md)
-// state "kit revision `<short hash>`"; the workflow pins the kit with a full
+// The regions (between kit-report markers in docs/conformance.md, which must
+// have one, and in README.md, if it has any) state "kit revision `<short hash>`"; the workflow pins the kit with a full
 // commit hash in a "repository: .../oneyaml-kit" step. The short hash must be a
 // prefix of the pin, otherwise the published figures were measured on a
 // different kit than the one CI runs.
@@ -74,14 +74,18 @@ func run(root string) []string {
 	if !ok {
 		return []string{"ci.yml: no pinned kit checkout (repository oneyaml-kit with a 40-digit ref) found"}
 	}
-	for _, name := range []string{"README.md", "docs/conformance.md"} {
+	for _, f := range []struct {
+		name     string
+		required bool
+	}{{"README.md", false}, {"docs/conformance.md", true}} {
+		name := f.name
 		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
 		if err != nil {
 			problems = append(problems, err.Error())
 			continue
 		}
 		revs := docRevisions(string(b))
-		if len(revs) == 0 {
+		if len(revs) == 0 && f.required {
 			problems = append(problems, name+": no kit revision found inside a kit-report region")
 		}
 		for _, r := range revs {
