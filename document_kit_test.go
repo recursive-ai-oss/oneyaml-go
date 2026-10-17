@@ -30,10 +30,12 @@ type kitCase struct {
 	ID string `json:"id"`
 	kitcase.Meta
 	Operation struct {
-		Type     string          `json:"type"`
-		Patch    json.RawMessage `json:"patch"`
-		Format   string          `json:"format"`
-		Document int             `json:"document"`
+		Type  string          `json:"type"`
+		Patch json.RawMessage `json:"patch"`
+		// PatchRecipe stands in for Patch when the patch is too large to store.
+		PatchRecipe json.RawMessage `json:"patch_recipe"`
+		Format      string          `json:"format"`
+		Document    int             `json:"document"`
 	} `json:"operation"`
 	Expect struct {
 		Kind      string `json:"kind"`
@@ -168,11 +170,20 @@ func TestKitEditCases(t *testing.T) {
 		if err := json.Unmarshal(raw, &kc); err != nil {
 			t.Fatalf("%s: %v", de.Name(), err)
 		}
+		if kc.Skip() {
+			skip++
+			continue
+		}
+		// A case without a patch is a broken case, never an empty patch.
+		patch, err := kitcase.PatchBytes(kc.Operation.Patch, kc.Operation.PatchRecipe, kc.Operation.Format)
+		if err != nil {
+			t.Fatalf("%s: %v", de.Name(), err)
+		}
 		merge := kc.Operation.Format == "merge-patch"
 		var ops []kitOp
 		basic := !merge
 		if !merge {
-			if err := json.Unmarshal(kc.Operation.Patch, &ops); err != nil {
+			if err := json.Unmarshal(patch, &ops); err != nil {
 				// Not an array of operations: the library must say so.
 				ops = nil
 				basic = false
@@ -182,10 +193,6 @@ func TestKitEditCases(t *testing.T) {
 					basic = false
 				}
 			}
-		}
-		if kc.Skip() {
-			skip++
-			continue
 		}
 		input, err := kc.Bytes(dir)
 		if err != nil {
@@ -199,19 +206,19 @@ func TestKitEditCases(t *testing.T) {
 		var opErr error
 		switch {
 		case merge:
-			opErr = d.Doc(kc.Operation.Document).ApplyMergePatch(kc.Operation.Patch)
+			opErr = d.Doc(kc.Operation.Document).ApplyMergePatch(patch)
 		case basic:
 			// add, remove and replace also run through the read-back oracle, and
 			// the public API must agree with it.
 			d2, _ := Parse(input)
 			opErr = applyKitOps(d, kc.Operation.Document, ops)
-			pubErr := d2.Doc(kc.Operation.Document).ApplyPatch(kc.Operation.Patch)
+			pubErr := d2.Doc(kc.Operation.Document).ApplyPatch(patch)
 			if (opErr == nil) != (pubErr == nil) || !bytes.Equal(d.Bytes(), d2.Bytes()) {
 				failed = append(failed, fmt.Sprintf("%s: ApplyPatch disagrees with the oracle path: %v / %v", de.Name(), pubErr, opErr))
 				continue
 			}
 		default:
-			opErr = d.Doc(kc.Operation.Document).ApplyPatch(kc.Operation.Patch)
+			opErr = d.Doc(kc.Operation.Document).ApplyPatch(patch)
 		}
 		var problem string
 		switch kc.Expect.Kind {

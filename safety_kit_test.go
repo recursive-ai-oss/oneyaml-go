@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"oneyaml.dev/go"
+	"oneyaml.dev/go/internal/kitcase"
 )
 
 // TestKitBoundedBothPaths runs every bounded safety case through the typed
@@ -33,47 +34,7 @@ func TestKitBoundedBothPaths(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			paths := []struct {
-				name string
-				run  func() error
-			}{
-				{"Unmarshal", func() error { var v any; return oneyaml.Unmarshal(in, &v) }},
-				{"Parse", func() error { _, err := oneyaml.Parse(in); return err }},
-			}
-			switch c.Operation.Type {
-			case "patch":
-				// A patch case is about the patch: parse the input, apply the
-				// patch, and judge the whole. The format picks the entry point, since
-				// a merge patch is an object, not an array of operations.
-				var apply func(*oneyaml.Document, []byte) error
-				switch c.Operation.Format {
-				case "", "json-patch":
-					apply = (*oneyaml.Document).ApplyPatch
-				case "merge-patch":
-					apply = (*oneyaml.Document).ApplyMergePatch
-				default:
-					t.Fatalf("unknown patch format %q", c.Operation.Format)
-				}
-				name := "ApplyPatch"
-				if c.Operation.Format == "merge-patch" {
-					name = "ApplyMergePatch"
-				}
-				paths = paths[:0]
-				paths = append(paths, struct {
-					name string
-					run  func() error
-				}{name, func() error {
-					d, err := oneyaml.Parse(in)
-					if err != nil {
-						return err
-					}
-					return apply(d, c.Operation.Patch)
-				}})
-			case "value", "events":
-				// Read-only cases: the two reader paths above.
-			default:
-				t.Fatalf("unknown operation type %q", c.Operation.Type)
-			}
+			paths := kitPaths(t, c, in)
 			for _, p := range paths {
 				var ms0, ms1 runtime.MemStats
 				runtime.GC()
@@ -82,19 +43,11 @@ func TestKitBoundedBothPaths(t *testing.T) {
 				err := p.run()
 				elapsed := time.Since(start)
 				runtime.ReadMemStats(&ms1)
-				// Bytes allocated is an upper bound on the growth; the case bound is
-				// on peak resident memory, which is measured by the caller.
+				// Bytes allocated is churn, only logged; the bound is on peak memory,
+				// checked in a child process below.
 				allocMB := float64(ms1.TotalAlloc-ms0.TotalAlloc) / (1 << 20)
 				t.Logf("%s: %v, %.0f MB allocated, err=%v", p.name, elapsed.Round(time.Millisecond), allocMB, err != nil)
-				// The case's time limit is a hang guard, not a speed check: it sits far
-				// above any reader that finishes, so only a stuck read trips it. Speed
-				// is measured by the benchmarks; the memory bound below is the real check.
-				if elapsed.Seconds() > c.Expect.TimeSeconds {
-					t.Errorf("%s took %v, hang guard %vs", p.name, elapsed, c.Expect.TimeSeconds)
-				}
-				if allocMB > c.Expect.MemoryMB {
-					t.Errorf("%s allocated %.0f MB, bound %v MB", p.name, allocMB, c.Expect.MemoryMB)
-				}
+				kitCheckChild(t, c, p.name, allocMB)
 				// An events case allows any outcome inside the bounds, since a generic
 				// value is not an event stream. The lossless Document keeps aliases and
 				// duplicate keys as written, so for it too only the cost and the kind of
@@ -114,4 +67,54 @@ func TestKitBoundedBothPaths(t *testing.T) {
 	if ran == 0 && only == "" {
 		t.Fatal("no bounded cases found")
 	}
+}
+
+// kitPath is one way of running a bounded case's operation.
+type kitPath struct {
+	name string
+	run  func() error
+}
+
+// kitPaths lists the paths a bounded case is run through.
+func kitPaths(t *testing.T, c kitCase, in []byte) []kitPath {
+	paths := []kitPath{
+		{"Unmarshal", func() error { var v any; return oneyaml.Unmarshal(in, &v) }},
+		{"Parse", func() error { _, err := oneyaml.Parse(in); return err }},
+	}
+	switch c.Operation.Type {
+	case "patch":
+		// A patch case is about the patch: parse the input, apply the
+		// patch, and judge the whole. The format picks the entry point, since
+		// a merge patch is an object, not an array of operations.
+		patch, err := kitcase.PatchBytes(c.Operation.Patch, c.Operation.PatchRecipe, c.Operation.Format)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var apply func(*oneyaml.Document, []byte) error
+		switch c.Operation.Format {
+		case "", "json-patch":
+			apply = (*oneyaml.Document).ApplyPatch
+		case "merge-patch":
+			apply = (*oneyaml.Document).ApplyMergePatch
+		default:
+			t.Fatalf("unknown patch format %q", c.Operation.Format)
+		}
+		name := "ApplyPatch"
+		if c.Operation.Format == "merge-patch" {
+			name = "ApplyMergePatch"
+		}
+		paths = paths[:0]
+		paths = append(paths, kitPath{name, func() error {
+			d, err := oneyaml.Parse(in)
+			if err != nil {
+				return err
+			}
+			return apply(d, patch)
+		}})
+	case "value", "events":
+		// Read-only cases: the two reader paths above.
+	default:
+		t.Fatalf("unknown operation type %q", c.Operation.Type)
+	}
+	return paths
 }

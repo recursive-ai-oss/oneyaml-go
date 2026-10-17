@@ -79,6 +79,13 @@ type part struct {
 		Suffix string `json:"suffix"`
 		Width  int    `json:"width"`
 	} `json:"numbers"`
+	// Product writes one string from each list of choices, for every
+	// combination, the first list varying slowest.
+	Product *struct {
+		Prefix  string     `json:"prefix"`
+		Suffix  string     `json:"suffix"`
+		Choices [][]string `json:"choices"`
+	} `json:"product"`
 }
 
 // Build turns a recipe (a JSON list of parts) into bytes. The size is worked
@@ -94,7 +101,31 @@ func Build(recipe json.RawMessage) ([]byte, error) {
 	var size int64
 	for _, p := range parts {
 		switch {
-		case p.Text != nil && p.Numbers == nil:
+		case p.Product != nil && p.Text == nil && p.Numbers == nil:
+			q := p.Product
+			if len(q.Choices) == 0 {
+				return nil, fmt.Errorf("recipe: a product needs choices")
+			}
+			// Count the combinations and the exact length before building.
+			n := int64(1)
+			for _, c := range q.Choices {
+				if len(c) == 0 {
+					return nil, fmt.Errorf("recipe: an empty list of choices")
+				}
+				n *= int64(len(c))
+				if n > maxRecipe {
+					return nil, fmt.Errorf("recipe: too large")
+				}
+			}
+			size += n * int64(len(q.Prefix)+len(q.Suffix))
+			for _, c := range q.Choices {
+				var sum int64
+				for _, x := range c {
+					sum += int64(len(x))
+				}
+				size += n / int64(len(c)) * sum
+			}
+		case p.Text != nil && p.Numbers == nil && p.Product == nil:
 			n := int64(1)
 			if p.Repeat != nil {
 				n = *p.Repeat
@@ -106,7 +137,7 @@ func Build(recipe json.RawMessage) ([]byte, error) {
 				return nil, fmt.Errorf("recipe: too large")
 			}
 			size += n * int64(len(*p.Text))
-		case p.Numbers != nil && p.Text == nil:
+		case p.Numbers != nil && p.Text == nil && p.Product == nil:
 			c := p.Numbers
 			if c.Count < 0 || c.Start < 0 || c.Width < 0 || c.Width > 64 {
 				return nil, fmt.Errorf("recipe: bad numbers part")
@@ -116,7 +147,7 @@ func Build(recipe json.RawMessage) ([]byte, error) {
 			}
 			size += c.Count * int64(len(c.Prefix)+len(c.Suffix)+max(c.Width, 1))
 		default:
-			return nil, fmt.Errorf("recipe: a part has either text or numbers")
+			return nil, fmt.Errorf("recipe: a part has exactly one of text, numbers or product")
 		}
 		if size > maxRecipe {
 			return nil, fmt.Errorf("recipe: builds more than %d bytes", maxRecipe)
@@ -126,6 +157,27 @@ func Build(recipe json.RawMessage) ([]byte, error) {
 	// buffer grows if needed but the limit above already caps the estimate.
 	out := make([]byte, 0, size)
 	for _, p := range parts {
+		if q := p.Product; q != nil {
+			idx := make([]int, len(q.Choices))
+			for {
+				out = append(out, q.Prefix...)
+				for i, c := range q.Choices {
+					out = append(out, c[idx[i]]...)
+				}
+				out = append(out, q.Suffix...)
+				k := len(idx) - 1
+				for ; k >= 0; k-- {
+					if idx[k]++; idx[k] < len(q.Choices[k]) {
+						break
+					}
+					idx[k] = 0
+				}
+				if k < 0 {
+					break
+				}
+			}
+			continue
+		}
 		if p.Text != nil {
 			n := int64(1)
 			if p.Repeat != nil {

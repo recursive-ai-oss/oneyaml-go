@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"sort"
 	"testing"
-	"time"
 
 	"oneyaml.dev/go"
 	"oneyaml.dev/go/internal/kitcase"
@@ -26,7 +25,9 @@ type kitCase struct {
 		Type    string          `json:"type"`
 		Profile string          `json:"profile"`
 		Patch   json.RawMessage `json:"patch"`
-		Format  string          `json:"format"`
+		// PatchRecipe stands in for Patch when the patch is too large to store.
+		PatchRecipe json.RawMessage `json:"patch_recipe"`
+		Format      string          `json:"format"`
 	} `json:"operation"`
 	kitcase.Meta
 	Expect struct {
@@ -179,9 +180,7 @@ func TestKitSchemaAndSafety(t *testing.T) {
 		var ms0, ms1 runtime.MemStats
 		runtime.GC()
 		runtime.ReadMemStats(&ms0)
-		start := time.Now()
 		docs, gotErr := readAll(in)
-		elapsed := time.Since(start)
 		runtime.ReadMemStats(&ms1)
 		allocMB := float64(ms1.TotalAlloc-ms0.TotalAlloc) / (1 << 20)
 
@@ -211,21 +210,27 @@ func TestKitSchemaAndSafety(t *testing.T) {
 			}
 		case "bounded":
 			events := c.Operation.Type == "events"
-			// The time limit is a hang guard, not a speed check; memory is the real bound.
-			if elapsed.Seconds() > c.Expect.TimeSeconds {
-				problem = fmt.Sprintf("took %v, hang guard %vs", elapsed, c.Expect.TimeSeconds)
-			} else if allocMB > c.Expect.MemoryMB {
-				problem = fmt.Sprintf("allocated %.0f MB, bound %v MB", allocMB, c.Expect.MemoryMB)
-			} else if events {
+			// The time limit is a hang guard, not a speed check. The memory bound is
+			// on peak resident memory, so it is measured on a child run of the read.
+			child := kitRunChild(t, c.ID, kitReadAllPath)
+			switch {
+			case child.Wall.Seconds() > c.Expect.TimeSeconds:
+				problem = fmt.Sprintf("took %v, hang guard %vs", child.Wall, c.Expect.TimeSeconds)
+			case child.OK && child.PeakMB > c.Expect.MemoryMB:
+				problem = fmt.Sprintf("peak memory %.0f MB, bound %v MB", child.PeakMB, c.Expect.MemoryMB)
+			case !child.OK && !c.Slow() && allocMB > c.Expect.MemoryMB:
+				// No peak RSS on this OS: allocation is an upper bound, fair for small cases.
+				problem = fmt.Sprintf("allocated %.0f MB, bound %v MB (no peak RSS on this OS)", allocMB, c.Expect.MemoryMB)
+			case events:
 				// An events case allows any outcome that stays inside the bounds: the
 				// generic value is not an event stream, so only cost is checked.
-			} else if gotErr != nil {
+			case gotErr != nil:
 				if !categoryAllowed(c.Expect.Error, kitCategory(gotErr)) || c.Expect.Error == nil {
 					problem = fmt.Sprintf("error %s, allowed %v (%v)", kitCategory(gotErr), c.Expect.Error, gotErr)
 				}
-			} else if c.Expect.Accept == nil {
+			case c.Expect.Accept == nil:
 				problem = "answered, but only an error is allowed"
-			} else {
+			default:
 				problem = checkKitValue(c.dir, c.Expect.Accept.Value, c.Expect.Accept.File, docs, nil)
 			}
 		default:
