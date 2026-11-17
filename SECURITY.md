@@ -31,3 +31,17 @@ These are known limits, not bugs. Read [Limits](docs/limits.md) before you handl
 - `NoLimits()` removes every bound, including alias expansion. Never use it on input you do not trust.
 - `Marshal` writes a value that is shared in several places once per place, as `encoding/json` does, so its output can be far larger than the value in memory.
 - A `Document` uses 32-bit offsets. `Parse` refuses input of 2 GiB or more; keep documents far below that.
+
+## Verifying release tags
+
+Release tags from the next release on are signed with this SSH key (ED25519, fingerprint `SHA256:Cmu68ap6cWakfmwSOfgVewO0/qAgYyJSAXKKGHEL3Gc`). Earlier tags are unsigned.
+
+```
+release@recursiveai.org namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBWeSlBxtshveYF/hQ94IoO9shp4K8gQSH+FuUtBTF99
+```
+
+To verify a tag, save that line to a file named `allowed_signers` and run:
+
+```
+git -c gpg.ssh.allowedSignersFile=allowed_signers tag -v <tag>
+```
